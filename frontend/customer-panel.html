@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Müşteri Paneli - Roof Tattoo Gallery</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" type="image/png" href="img/logo.png" />
+    <link rel="shortcut icon" type="image/png" href="img/logo.png" />
+    <link rel="stylesheet" href="mobile-safe.css?v=20260603140000" />
+    <link rel="stylesheet" href="customer-panel.css?v=20260613205000" />
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+
+<body>
+    <div class="customer-panel">
+        <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <img src="img/logo.png" alt="Roof Tattoo Gallery" class="sidebar-logo">
+                <h2>Müşteri Paneli</h2>
+            </div>
+
+            <div class="sidebar-user">
+                <div class="user-avatar">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <div class="user-info">
+                    <div id="user-name" class="user-name">-</div>
+                    <div id="user-phone" class="user-phone">-</div>
+                    <div id="sidebar-loyalty-points" class="sidebar-loyalty-points" hidden>
+                        <i class="fas fa-star"></i> <span id="sidebar-points-value">0</span> puan
+                    </div>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-section="appointments">
+                    <i class="fas fa-calendar-check"></i>
+                    <span>Randevularım</span>
+                </a>
+                <a href="#" class="nav-item" data-section="requests">
+                    <i class="fas fa-file-signature"></i>
+                    <span>Randevu Talepleri</span>
+                </a>
+                <a href="#" class="nav-item" data-section="history">
+                    <i class="fas fa-history"></i>
+                    <span>Geçmiş</span>
+                </a>
+                <a href="#" class="nav-item" data-section="profile">
+                    <i class="fas fa-user-cog"></i>
+                    <span>Profil</span>
+                </a>
+            </nav>
+
+            <button id="logout-btn" class="logout-btn">
+                <i class="fas fa-sign-out-alt"></i>
+                <span>Çıkış Yap</span>
+            </button>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="content-header">
+                <h1 id="section-title">Randevularım</h1>
+                <div class="header-actions">
+                    <button class="new-appointment-btn" id="new-appointment-btn">
+                        <i class="fas fa-calendar-plus"></i>
+                        <span>Yeni Randevu Al</span>
+                    </button>
+                    <button class="theme-toggle-btn" id="theme-toggle" title="Tema Değiştir">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <button class="mobile-menu-btn" id="mobile-menu-btn">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Appointments Section -->
+            <div id="section-appointments" class="content-section active">
+                <div class="section-filters">
+                    <button class="filter-btn active" data-filter="upcoming">
+                        <i class="fas fa-clock"></i> Yaklaşan
+                    </button>
+                    <button class="filter-btn" data-filter="all">
+                        <i class="fas fa-list"></i> Tümü
+                    </button>
+                </div>
+
+                <div id="appointments-container" class="appointments-grid">
+                    <p class="loading-text"><i class="fas fa-spinner fa-spin"></i> Yükleniyor...</p>
+                </div>
+            </div>
+
+            <!-- Tattoo Requests Section -->
+            <div id="section-requests" class="content-section">
+                <p class="section-hint">
+                    <i class="fas fa-info-circle"></i>
+                    Sanatçı inceleyip onayladıktan sonra saat seçim linki <strong>Randevularım</strong> bölümünde görünür.
+                </p>
+                <div id="requests-container" class="appointments-grid">
+                    <p class="loading-text"><i class="fas fa-spinner fa-spin"></i> Yükleniyor...</p>
+                </div>
+            </div>
+
+            <!-- History Section -->
+            <div id="section-history" class="content-section">
+                <div class="section-filters">
+                    <button class="filter-btn active" data-filter="completed">
+                        <i class="fas fa-check-circle"></i> Tamamlanan
+                    </button>
+                    <button class="filter-btn" data-filter="all">
+                        <i class="fas fa-list"></i> Tümü
+                    </button>
+                </div>
+
+                <div id="history-container" class="appointments-grid">
+                    <p class="loading-text"><i class="fas fa-spinner fa-spin"></i> Yükleniyor...</p>
+                </div>
+            </div>
+
+            <!-- Profile Section -->
+            <div id="section-profile" class="content-section">
+                <div class="loyalty-card" id="loyalty-card">
+                    <div class="loyalty-card-header">
+                        <div class="loyalty-card-icon"><i class="fas fa-gem"></i></div>
+                        <div>
+                            <h3>Sadakat Puanlarım</h3>
+                            <p class="loyalty-card-sub">Her tamamlanan dövme puan kazandırır</p>
+                        </div>
+                    </div>
+                    <div class="loyalty-balance">
+                        <span id="loyalty-balance" class="loyalty-balance-value">0</span>
+                        <span class="loyalty-balance-label">puan</span>
+                    </div>
+                    <div class="loyalty-progress-wrap">
+                        <div class="loyalty-progress-label">
+                            <span>Tamamlanan dövme</span>
+                            <span id="loyalty-milestone-text">0 / 5</span>
+                        </div>
+                        <div class="loyalty-progress-bar">
+                            <div id="loyalty-progress-fill" class="loyalty-progress-fill" style="width:0%"></div>
+                        </div>
+                    </div>
+                    <p id="loyalty-status-msg" class="loyalty-status-msg">Yükleniyor...</p>
+                    <div id="loyalty-active-code" class="loyalty-active-code" hidden></div>
+                    <button type="button" id="loyalty-redeem-btn" class="loyalty-redeem-btn" hidden>
+                        <i class="fas fa-gift"></i> İndirim Kodu Al
+                    </button>
+                    <div id="loyalty-history" class="loyalty-history"></div>
+                </div>
+
+                <div class="profile-card">
+                    <div class="profile-header">
+                        <div class="profile-avatar">
+                            <i class="fas fa-user-circle"></i>
+                        </div>
+                        <h3 id="profile-name">-</h3>
+                    </div>
+                    <div class="profile-info">
+                        <div class="profile-row">
+                            <span class="profile-label"><i class="fas fa-phone"></i> Telefon:</span>
+                            <span id="profile-phone" class="profile-value">-</span>
+                        </div>
+                        <div class="profile-row">
+                            <span class="profile-label"><i class="fas fa-calendar-alt"></i> Üyelik Tarihi:</span>
+                            <span class="profile-value">Kayıtlı Müşteri</span>
+                        </div>
+                    </div>
+                    <div class="profile-note">
+                        <i class="fas fa-info-circle"></i>
+                        <p>Bilgilerinizi güncellemek için lütfen bizimle iletişime geçin.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cancel Confirmation Modal -->
+    <div id="cancel-modal-overlay" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-exclamation-triangle"></i> Randevu İptali</h3>
+                <button class="modal-close-btn" onclick="closeCancelModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Bu randevuyu iptal etmek istediğinize emin misiniz?</p>
+                <div id="cancel-appointment-details" class="appointment-details-preview"></div>
+                <div class="modal-warning">
+                    <i class="fas fa-info-circle"></i>
+                    <span>İptal edilen randevular geri alınamaz.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary-btn" onclick="closeCancelModal()">Vazgeç</button>
+                <button id="confirm-cancel-btn" class="danger-btn">İptal Et</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logout Confirmation Modal -->
+    <div id="logout-modal-overlay" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-sign-out-alt"></i> Çıkış Yap</h3>
+                <button class="modal-close-btn" onclick="closeLogoutModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Çıkış yapmak istediğinizden emin misiniz?</p>
+                <div class="modal-warning">
+                    <i class="fas fa-info-circle"></i>
+                    <span>Tekrar giriş yapmak için telefon numaranızı ve doğrulama kodunu kullanmanız gerekecek.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary-btn" onclick="closeLogoutModal()">İptal</button>
+                <button id="confirm-logout-btn" class="danger-btn">Çıkış Yap</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="page-footer">
+        <p>Created by <a href="https://www.linkedin.com/in/muhammed-behl%C3%BCl-alar/" target="_blank"
+                rel="noopener noreferrer">BehlulAlar</a></p>
+    </footer>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast"></div>
+
+    <script src="customer-panel.js?v=20260613193000"></script>
+</body>
+
+</html>

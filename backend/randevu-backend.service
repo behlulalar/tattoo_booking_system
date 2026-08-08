@@ -1,0 +1,50 @@
+[Unit]
+Description=Randevu Backend Service (Gunicorn)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=notify
+User=root
+Group=root
+
+# WorkingDirectory: Projenin tam yolu
+WorkingDirectory=/opt/randevu/backend
+
+# Environment: Virtual environment path
+Environment="PATH=/opt/randevu/venv/bin"
+Environment="PYTHONPATH=/opt/randevu/backend"
+
+# ExecStart: Gunicorn komutu
+# --preload: App'i önce yükle (verification_codes memory paylaşımı için gerekli)
+# Her worker'ın kendi DB pool'u olacak (pool başlatması app yüklendikten sonra)
+ExecStart=/opt/randevu/venv/bin/gunicorn \
+    -w 4 \
+    --threads 2 \
+    --bind 0.0.0.0:3000 \
+    --timeout 120 \
+    --max-requests 1000 \
+    --max-requests-jitter 50 \
+    --preload \
+    --access-logfile /opt/randevu/backend/gunicorn_access.log \
+    --error-logfile /opt/randevu/backend/gunicorn_error.log \
+    --log-level info \
+    --pid /opt/randevu/backend/gunicorn.pid \
+    app:app
+
+# Graceful reload
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Timeout
+TimeoutStopSec=30
+
+# Security (root kullanıcısı için NoNewPrivileges ve PrivateTmp kaldırıldı)
+# NoNewPrivileges=true
+# PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

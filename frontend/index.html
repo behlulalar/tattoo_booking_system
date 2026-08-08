@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="deploy-system" content="roof-tattoo-gallery" />
+    <meta name="deploy-domain" content="tattoo.roof.behlulalar.online" />
+    <title>Roof Tattoo Gallery</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <link rel="icon" type="image/png" href="img/logo.png" />
+    <link rel="shortcut icon" type="image/png" href="img/logo.png" />
+    <link rel="stylesheet" href="style.css?v=20260804151000" />
+    <link rel="stylesheet" href="mobile-safe.css?v=20260804151000" />
+    <!-- Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <!-- Display font (splash + başlıklar) -->
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+    <!-- Flatpickr -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/tr.js"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+
+<body>
+    <!-- Background Video -->
+    <div class="bg-video-wrap">
+        <video class="bg-video" autoplay muted loop playsinline disablePictureInPicture>
+            <source src="img/background.mp4" type="video/mp4">
+        </video>
+        <div class="bg-video-overlay"></div>
+    </div>
+
+    <!-- Splash / Loading Screen -->
+    <div id="splash-screen" class="splash-screen" aria-hidden="true">
+        <div class="splash-inner">
+            <div class="splash-logo-stack">
+                <div class="splash-title-reveal">
+                    <div class="splash-title-top">Roof Tattoo</div>
+                    <div class="splash-title-bottom">Gallery</div>
+                </div>
+            </div>
+
+            <div class="splash-progress" aria-hidden="true">
+                <div class="splash-progress-fill"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="booking-page is-phone-step">
+        <!-- Sol hızlı erişim ikonları -->
+        <nav class="side-dock" aria-label="Hızlı erişim">
+            <a href="customer-login.html" class="side-dock-btn side-dock-btn--login" id="dock-customer-login"
+                title="Müşteri Girişi" aria-label="Müşteri Girişi">
+                <span class="side-dock-glyph" aria-hidden="true"><i class="fas fa-user"></i></span>
+            </a>
+            <a href="https://www.instagram.com/rooftattoogallery/" class="side-dock-btn side-dock-btn--instagram"
+                target="_blank" rel="noopener noreferrer" title="Instagram" aria-label="Instagram">
+                <span class="side-dock-glyph" aria-hidden="true"><i class="fab fa-instagram"></i></span>
+            </a>
+            <a href="https://wa.me/905379121841" class="side-dock-btn side-dock-btn--whatsapp"
+                id="sidebar-whatsapp-link" target="_blank" rel="noopener noreferrer" title="WhatsApp"
+                aria-label="WhatsApp">
+                <span class="side-dock-glyph" aria-hidden="true"><i class="fab fa-whatsapp"></i></span>
+            </a>
+            <a href="tel:+905379121841" class="side-dock-btn side-dock-btn--phone" id="sidebar-phone-link"
+                title="Telefon" aria-label="Telefon">
+                <span class="side-dock-glyph" aria-hidden="true"><i class="fas fa-phone"></i></span>
+            </a>
+        </nav>
+
+        <!-- Sol Kolon -->
+        <div class="booking-left">
+            <div class="booking-center booking-center-phone">
+                <!-- Stepper (Tattoo flow) -->
+                <div class="stepper">
+                    <div class="step active">
+                        <div class="step-icon"><i class="fas fa-phone"></i></div>
+                    </div>
+                    <div class="step">
+                        <div class="step-icon"><i class="fas fa-user"></i></div>
+                    </div>
+                    <div class="step">
+                        <div class="step-icon"><i class="fas fa-user-tie"></i></div>
+                    </div>
+                    <div class="step">
+                        <div class="step-icon"><i class="fas fa-palette"></i></div>
+                    </div>
+                    <div class="step">
+                        <div class="step-icon"><i class="fas fa-check-circle"></i></div>
+                    </div>
+                </div>
+
+                <!-- İçerik (Adım 1: İletişim Bilgileri) -->
+                <div class="step-content step-content-phone">
+                    <h2>İletişim Bilgileri</h2>
+                    <div class="divider"></div>
+
+                    <form id="phone-form" class="auth-modal-form">
+                        <label for="phone">Telefon Numarası:</label>
+                        <div class="phone-input-wrapper auth-phone-wrap">
+                            <span class="phone-prefix">+90</span>
+                            <input type="tel" id="phone" name="phone" placeholder="5XX XXX XX XX" maxlength="10" />
+                            <button type="button" class="phone-check-btn" id="phone-check-btn">
+                                ▶
+                            </button>
+                        </div>
+                        <p class="help-text">
+                            Başında 0 olmadan 10 haneli telefon numaranızı giriniz.
+                        </p>
+                        <div id="phone-form-error" class="customer-error-message" style="display: none; margin-top: 12px;"></div>
+
+                        <button type="submit" class="primary-btn">
+                            Numarayı Doğrula
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="verify-overlay" style="display: none;">
+                <div id="verify-modal" class="verify-code-modal">
+                    <button id="verify-cancel-btn" class="verify-close-btn" type="button" aria-label="Kapat">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    <div class="verify-modal-header">
+                        <div class="verify-modal-icon" aria-hidden="true">
+                            <i class="fas fa-mobile-alt"></i>
+                        </div>
+                        <h2>Doğrulama Kodu</h2>
+                    </div>
+                    <p class="verify-info">WhatsApp'a gönderilen 6 haneli kodu girin. iOS/Android klavyede kod önerisi çıkabilir.</p>
+                    <div id="countdown-timer" class="verify-countdown">Kalan süre: <span id="timer">2:00</span></div>
+                    <form id="verify-form" class="auth-modal-form">
+                        <label id="verify-otp-boxes" class="otp-single-box" for="verify-otp-field">
+                            <input type="tel" id="verify-otp-field" class="otp-field-visible" maxlength="6"
+                                inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code"
+                                name="one-time-code" enterkeyhint="done"
+                                aria-label="6 haneli doğrulama kodu" placeholder="" />
+                        </label>
+                        <input type="hidden" id="code" name="code" value="" />
+                        <div id="verify-error" class="customer-error-message"></div>
+                        <button type="button" id="verify-paste-btn" class="secondary-btn verify-paste-btn">
+                            <i class="fas fa-paste"></i> Panodan yapıştır
+                        </button>
+                        <button type="submit" class="primary-btn"><i class="fas fa-check"></i> Doğrula</button>
+                    </form>
+                    <button id="resend-btn" class="secondary-btn" style="display: none;"><i class="fas fa-redo"></i>
+                        Tekrar Kod Gönder</button>
+                </div>
+            </div>
+
+            <!-- Karşılama Modalı -->
+            <div id="welcome-overlay" style="display: none;">
+                <div id="welcome-modal">
+                    <div class="welcome-icon-wrapper">
+                        <i class="fas fa-hand-sparkles"></i>
+                    </div>
+                    <h2>Hoş Geldiniz!</h2>
+                    <p id="welcome-name"></p>
+                    <button id="welcome-continue-btn" class="primary-btn">Devam Et</button>
+                </div>
+            </div>
+
+            <!-- Başarı Modalı -->
+            <div id="success-overlay" style="display: none;">
+                <div id="success-modal">
+                    <div class="success-icon"><i class="fas fa-check"></i></div>
+                    <h2 id="success-title">İşlem Başarılı!</h2>
+                    <div id="success-ref-block" class="success-ref-block" style="display: none;">
+                        <div id="success-ref-code" class="success-ref-code" aria-label="Referans numarası"></div>
+                        <button type="button" id="success-ref-copy-btn" class="success-ref-copy-btn">
+                            <i class="fas fa-copy"></i> Numarayı Kopyala
+                        </button>
+                    </div>
+                    <p id="success-message">İşlem başarıyla tamamlandı.</p>
+                    <div id="success-whatsapp-block" class="success-whatsapp-block" style="display: none;">
+                        <p id="success-whatsapp-hint" class="success-whatsapp-hint"></p>
+                        <a id="success-whatsapp-btn" class="success-whatsapp-btn" href="#" target="_blank" rel="noopener noreferrer">
+                            <i class="fab fa-whatsapp"></i> WhatsApp'tan Ulaşın
+                        </a>
+                    </div>
+                    <button id="success-ok-btn" type="button" class="primary-btn success-btn">Tamam</button>
+                </div>
+            </div>
+
+            <!-- Adım 2: Kişisel Bilgiler -->
+            <div id="customer-info-section" class="step-content" style="display: none;">
+                <h2><i class="fas fa-user"></i> Kişisel Bilgiler</h2>
+                <div class="divider"></div>
+
+                <form id="customer-info-form">
+                    <div class="form-group">
+                        <label for="customer-name">Ad</label>
+                        <input type="text" id="customer-name" placeholder="Adınız" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="customer-surname">Soyad</label>
+                        <input type="text" id="customer-surname" placeholder="Soyadınız" required />
+                    </div>
+
+                    <div id="customer-info-error" class="customer-error-message" style="display:none; margin-top: 12px;"></div>
+
+                    <button type="submit" class="primary-btn">Devam Et</button>
+                </form>
+            </div>
+
+            <!-- Adım 2: Sanatçı Seçimi -->
+            <div id="artist-section" class="step-content" style="display: none;">
+                <h2><i class="fas fa-user-tie"></i> Sanatçı Seçimi</h2>
+                <div class="divider"></div>
+
+                <div id="artist-cards"></div>
+
+                <button id="artist-continue-btn" class="primary-btn">Devam Et</button>
+            </div>
+
+            <!-- Adım 4: Tarz & Bölge -->
+            <div id="tattoo-config-section" class="step-content tattoo-config-section" style="display: none;">
+                <div class="tattoo-config-header">
+                    <h2><i class="fas fa-palette"></i> Tarz & Bölge</h2>
+                    <a href="#" class="discover-styles-btn" id="discover-styles-btn" role="button"
+                        aria-label="Tarzları keşfet" title="Tarzları keşfet">
+                        <i class="fas fa-compass" aria-hidden="true"></i>
+                        <span>Tarzları Keşfet</span>
+                    </a>
+                </div>
+                <div class="divider tattoo-config-divider"></div>
+
+                <div class="tattoo-config-layout">
+                    <div class="tattoo-config-silhouette-panel">
+                        <p class="silhouette-hint">Vücut haritasından veya listeden bölge seçin. Üst sırt ve alt sırt / bel yalnızca listeden seçilebilir.</p>
+                        <div class="body-silhouette-wrap" id="body-silhouette-wrap">
+                            <div id="pain-map-wrap"></div>
+                        </div>
+                        <div id="pain-map-legend" class="pain-map-legend-slot"></div>
+                        <p id="selected-region-label" class="selected-region-label">Bölge seçilmedi</p>
+                        <div id="private-zone-notice" class="private-zone-notice" style="display: none;" role="status">
+                            <i class="fas fa-shield-alt" aria-hidden="true"></i>
+                            <div class="private-zone-notice-copy">
+                                <strong>Mahremiyetinize önem veriyoruz</strong>
+                                <p id="private-zone-notice-text"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tattoo-config-form-panel" id="tattoo-config-form-panel">
+                        <div class="config-undecided-top">
+                            <button type="button" id="tattoo-config-undecided-btn" class="config-alt-btn config-alt-btn--outline">
+                                <i class="fas fa-forward"></i>
+                                <span>Henüz kararımı vermedim</span>
+                            </button>
+                            <p class="config-alt-hint">Tarz, bölge veya boyut seçmeden talep oluşturulur; sanatçı sizinle iletişime geçer.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="config-label">1. Dövme tarzı</label>
+                            <div id="style-buttons" class="style-btn-grid"></div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="config-label">2. Vücut bölgesi</label>
+                            <div class="region-scroll-wrap" id="region-scroll-wrap">
+                                <button type="button" class="region-scroll-hint region-scroll-hint--up" aria-label="Yukarı kaydır" tabindex="-1">
+                                    <i class="fas fa-chevron-up"></i>
+                                </button>
+                                <div id="region-buttons" class="region-btn-grid"></div>
+                                <button type="button" class="region-scroll-hint region-scroll-hint--down" aria-label="Daha fazla bölge">
+                                    <span>Daha fazla bölge</span>
+                                    <i class="fas fa-chevron-down region-scroll-bounce"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="config-size-panel" class="config-size-panel" style="display: none;">
+                            <label class="config-label">3. Büyüklük</label>
+                            <div id="config-size-buttons" class="size-btn-grid"></div>
+                        </div>
+
+                        <div id="tattoo-config-error" class="customer-error-message" style="display:none;"></div>
+
+                        <div class="form-group loyalty-code-field">
+                            <label class="config-label" for="tattoo-loyalty-code">
+                                <i class="fas fa-gift"></i> İndirim kodunuz varsa girin
+                            </label>
+                            <input
+                                type="text"
+                                id="tattoo-loyalty-code"
+                                class="loyalty-code-input"
+                                placeholder="Örn: LOYAL-A1B2C3 (opsiyonel)"
+                                autocomplete="off"
+                                spellcheck="false"
+                            />
+                            <p class="config-alt-hint">Sadakat puanınızla aldığınız tek kullanımlık kodu buraya yazın.</p>
+                        </div>
+
+                        <div class="config-alt-actions">
+                            <button type="button" id="tattoo-config-consultation-btn" class="config-alt-btn config-alt-btn--primary">
+                                <i class="fas fa-comments"></i>
+                                <span>Ön görüşme yapmak istiyorum</span>
+                            </button>
+                            <p class="config-alt-hint">Görüşme talebi oluşturulur; sanatçı sizinle iletişime geçerek randevu planlar.</p>
+                        </div>
+
+                        <div class="button-group">
+                            <button type="button" id="tattoo-config-back-btn" class="secondary-btn">← Geri</button>
+                            <button type="button" id="tattoo-config-continue-btn" class="primary-btn" disabled>Talebi Gönder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tarz & Bölge — mobil kaydırma ipuçları -->
+            <div id="tattoo-page-scroll-hints" class="tattoo-page-scroll-hints" hidden>
+                <button type="button" id="tattoo-page-scroll-up" class="tattoo-page-scroll-btn tattoo-page-scroll-btn--up" aria-label="Yukarı kaydır">
+                    <i class="fas fa-chevron-up"></i>
+                </button>
+                <button type="button" id="tattoo-page-scroll-down" class="tattoo-page-scroll-banner" aria-label="Aşağı kaydır">
+                    <span class="tattoo-page-scroll-label">Aşağı kaydırın</span>
+                    <i class="fas fa-chevron-down tattoo-scroll-bounce"></i>
+                </button>
+            </div>
+
+            <!-- Adım 4: Hizmet Seçimi -->
+            <div id="service-section" class="step-content" style="display: none;">
+                <h2><i class="fas fa-cut"></i> Hizmet Seçimi</h2>
+                <div class="divider"></div>
+
+                <div id="service-cards"></div>
+
+                <div class="button-group">
+                    <button id="service-back-btn" class="secondary-btn">← Geri</button>
+                    <button id="service-continue-btn" class="primary-btn">Devam Et</button>
+                </div>
+            </div>
+
+            <!-- Adım 5: Tarih/Saat Seçimi -->
+            <div id="datetime-section" class="step-content" style="display: none;">
+                <h2><i class="fas fa-calendar-alt"></i> Tarih & Saat Seçimi</h2>
+                <div class="divider"></div>
+
+                <!-- Tarih Seçimi -->
+                <div class="date-selector">
+                    <label>Tarih Seçin:</label>
+                    <div id="date-buttons"></div>
+                </div>
+
+                <!-- Saat Seçimi -->
+                <div id="time-slots-container" style="display: none;">
+                    <div id="selected-date-text"></div>
+
+                    <div class="time-group">
+                        <div class="time-group-header"><i class="fas fa-sun"></i> Sabah</div>
+                        <div id="morning-slots" class="time-slots-row"></div>
+                    </div>
+
+                    <div class="time-group">
+                        <div class="time-group-header"><i class="fas fa-cloud-sun"></i> Öğle</div>
+                        <div id="afternoon-slots" class="time-slots-row"></div>
+                    </div>
+
+                    <div class="time-group">
+                        <div class="time-group-header"><i class="fas fa-moon"></i> Akşam</div>
+                        <div id="evening-slots" class="time-slots-row"></div>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button id="datetime-back-btn" class="secondary-btn">← Geri</button>
+                    <button id="datetime-continue-btn" class="primary-btn" disabled>İleri →</button>
+                </div>
+            </div>
+
+            <!-- Adım 6: Randevu Onayı -->
+            <div id="confirmation-section" class="step-content" style="display: none;">
+                <h2><i class="fas fa-check-circle"></i> Randevu Özeti</h2>
+                <div class="divider"></div>
+
+                <!-- Randevu Bilgileri -->
+                <div class="summary-box">
+                    <h4><i class="fas fa-clipboard-list"></i> Randevu Bilgileri</h4>
+                    <div class="summary-row">
+                        <span class="summary-label">Sanatçı:</span>
+                        <span id="summary-artist" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Hizmet:</span>
+                        <span id="summary-service" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Tarih:</span>
+                        <span id="summary-date" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Saat:</span>
+                        <span id="summary-time" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-row total">
+                        <span class="summary-label">Toplam:</span>
+                        <span id="summary-price" class="summary-value">-</span>
+                    </div>
+                </div>
+
+                <!-- Kişisel Bilgiler -->
+                <div class="summary-box">
+                    <h4><i class="fas fa-user"></i> Kişisel Bilgileriniz</h4>
+                    <div class="summary-row">
+                        <span class="summary-label">Ad Soyad:</span>
+                        <span id="summary-name" class="summary-value">-</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Telefon:</span>
+                        <span id="summary-phone" class="summary-value">-</span>
+                    </div>
+                </div>
+
+                <!-- Dükkan Bilgileri -->
+                <div class="summary-box">
+                    <h4><i class="fas fa-map-marker-alt"></i> Dükkan Bilgileri</h4>
+                    <div class="summary-row">
+                        <span class="summary-label">Adres:</span>
+                        <span id="summary-address" class="summary-value"> Erenler Merkez Mahallesi 1161. Sokak NO: 5/B Erenler / Sakarya</span>
+                    </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Telefon:</span>
+                        <span id="summary-business-phone" class="summary-value">0536 946 94 54</span>
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button id="confirm-back-btn" class="secondary-btn">← Geri</button>
+                    <button id="confirm-btn" class="primary-btn confirm-btn"><i class="fas fa-check"></i> Randevuyu
+                        Onayla</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sağ Kolon (Görsel) kaldırıldı -->
+    </div>
+
+    <!-- Footer -->
+    <footer class="page-footer">
+        <p>Created by <a href="https://www.linkedin.com/in/muhammed-behl%C3%BCl-alar/" target="_blank"
+                rel="noopener noreferrer">BehTech</a></p>
+    </footer>
+
+    <!-- Tarzları Keşfet vitrin modalı -->
+    <div id="discover-styles-overlay" class="discover-styles-overlay" style="display: none;" aria-hidden="true">
+        <div class="discover-styles-modal" role="dialog" aria-modal="true" aria-labelledby="discover-styles-title">
+            <div class="discover-styles-modal-header">
+                <h3 id="discover-styles-title"><i class="fas fa-compass"></i> Tarzları Keşfet</h3>
+                <button type="button" id="discover-styles-close" class="discover-styles-close" aria-label="Kapat">&times;</button>
+            </div>
+            <p class="discover-styles-intro">Roof sanatçılarının çalıştığı tarzlardan örnekler. Kendi fikriniz için ilham alın — seçim yapmak zorunda değilsiniz.</p>
+            <div id="discover-styles-grid" class="discover-styles-grid"></div>
+        </div>
+    </div>
+
+    <script src="style-showcase-data.js?v=20260804151000"></script>
+    <script src="pain-map.js?v=20260804151000"></script>
+    <script src="otp-autofill.js?v=20260804151000"></script>
+    <script src="app.js?v=20260804151000"></script>
+</body>
+
+</html>

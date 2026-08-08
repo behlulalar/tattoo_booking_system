@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Saat Seçimi — Roof Tattoo Gallery</title>
+  <link rel="icon" type="image/png" href="img/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      overflow-x: hidden;
+    }
+
+    body {
+      min-height: 100dvh;
+      background: #111;
+      color: #fff;
+      font-family: 'Montserrat', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+      overflow-x: hidden;
+      max-width: 100%;
+    }
+
+    .slot-page {
+      width: 100%;
+      max-width: 700px;
+      margin: 0 auto;
+      flex: 1 0 auto;
+      padding-bottom: 16px;
+    }
+
+    .slot-page-footer {
+      flex-shrink: 0;
+      width: 100%;
+      max-width: 700px;
+      margin: 0 auto;
+      text-align: center;
+      padding: 10px 18px max(12px, env(safe-area-inset-bottom));
+      pointer-events: none;
+    }
+
+    .slot-page-footer a {
+      pointer-events: all;
+    }
+
+    .page-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 22px;
+      text-align: left;
+    }
+
+    .page-header .logo {
+      width: auto;
+      max-width: 88px;
+      max-height: 88px;
+      height: auto;
+      object-fit: contain;
+      flex-shrink: 0;
+    }
+
+    .page-header-text {
+      min-width: 0;
+    }
+
+    .page-header h1 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 1.65rem;
+      letter-spacing: 1.5px;
+      color: #fff;
+      line-height: 1.1;
+    }
+
+    .page-header p {
+      color: rgba(255,255,255,0.45);
+      font-size: 0.78rem;
+      margin-top: 4px;
+      letter-spacing: 0.02em;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
+      padding: 22px 20px;
+      margin-bottom: 14px;
+    }
+
+    .card h2 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 1.15rem;
+      letter-spacing: 1.2px;
+      color: #fff;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card h2 i { font-size: 0.85rem; opacity: 0.65; }
+
+    .offer-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .meta-badge {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      padding: 6px 12px;
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.8);
+    }
+    .meta-badge span { color: #fff; font-weight: 600; }
+    .meta-badge--price {
+      background: rgba(201, 162, 39, 0.15);
+      border-color: rgba(201, 162, 39, 0.4);
+    }
+    .meta-badge--price span { color: #c9a227; font-size: 1rem; }
+
+    .date-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .date-row label {
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.55);
+      font-weight: 600;
+      width: 100%;
+    }
+    select#date-select {
+      flex: 1;
+      min-width: 0;
+      width: 100%;
+      max-width: 100%;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      color: #fff;
+      font-family: 'Montserrat', sans-serif;
+      font-size: 16px;
+    }
+    select#date-select option { background: #1a1a1a; }
+
+    .btn-primary {
+      padding: 10px 18px;
+      background: #fff;
+      border: none;
+      border-radius: 10px;
+      color: #000;
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 600;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: opacity .2s;
+      min-height: 42px;
+    }
+    .btn-primary:hover { opacity: 0.88; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .slots-title {
+      font-size: 0.78rem;
+      color: rgba(255,255,255,0.45);
+      margin-bottom: 10px;
+    }
+
+    .slot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .slot-btn {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 10px;
+      color: #fff;
+      font-family: 'Montserrat', sans-serif;
+      font-weight: 600;
+      font-size: 0.82rem;
+      padding: 8px 6px;
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      line-height: 1.2;
+      min-height: 44px;
+    }
+    .slot-start {
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
+    .slot-end {
+      font-size: 0.68rem;
+      opacity: 0.5;
+      font-weight: 400;
+    }
+    .slot-btn:hover { background: rgba(255,255,255,0.12); }
+    .slot-btn.selected {
+      background: #fff;
+      color: #000;
+      border-color: #fff;
+    }
+    .slot-btn.selected .slot-end { opacity: 0.5; }
+    .slot-btn.selected-block {
+      background: rgba(255,255,255,0.25);
+      border: 2px solid rgba(255,255,255,0.7);
+      color: #fff;
+      font-weight: 700;
+      cursor: default;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.2);
+    }
+    .slot-btn.booked {
+      background: rgba(220, 50, 50, 0.18);
+      border-color: rgba(220, 50, 50, 0.45);
+      color: rgba(255, 100, 100, 0.8);
+      cursor: not-allowed;
+      opacity: 0.75;
+    }
+    .slot-btn.booked .slot-start { text-decoration: line-through; }
+    .slot-btn.unavailable {
+      background: rgba(255,255,255,0.03);
+      border-color: rgba(255,255,255,0.07);
+      color: rgba(255,255,255,0.2);
+      cursor: not-allowed;
+    }
+
+    .error-msg {
+      color: #ff7070;
+      font-size: 0.85rem;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .private-zone-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: rgba(201, 162, 39, 0.12);
+      border: 1px solid rgba(201, 162, 39, 0.28);
+      color: rgba(255, 255, 255, 0.88);
+      font-size: 0.8rem;
+      line-height: 1.4;
+    }
+
+    .private-zone-banner i {
+      color: #c9a227;
+      margin-top: 2px;
+      flex-shrink: 0;
+    }
+
+    .private-zone-banner strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #e8c96a;
+    }
+
+    .private-zone-banner p {
+      margin: 0;
+      color: rgba(255, 255, 255, 0.72);
+    }
+
+    /* Loading / Success states */
+    #loading-state { text-align: center; padding: 48px 0; }
+    #loading-state .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #error-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: #ff7070;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    #error-state i { font-size: 2.5rem; margin-bottom: 16px; opacity: 0.8; }
+
+    #success-state {
+      text-align: center;
+      padding: 48px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+    #success-state i { font-size: 3rem; color: #6fffc0; margin-bottom: 16px; }
+    #success-state h2 { font-family: 'Bebas Neue', sans-serif; font-size: 1.8rem; letter-spacing: 2px; margin-bottom: 10px; }
+    #success-state p { color: rgba(255,255,255,0.6); font-size: 0.9rem; }
+
+    #confirm-btn {
+      width: 100%;
+    }
+
+    @media (min-width: 520px) {
+      .page-header .logo {
+        max-width: 100px;
+        max-height: 100px;
+      }
+      .page-header h1 { font-size: 1.85rem; }
+      .card { padding: 24px 22px; }
+      .slot-grid { grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; }
+    }
+
+    @media (max-width: 519px) {
+      body { padding: max(14px, env(safe-area-inset-top)) 12px 0; }
+      .page-header {
+        gap: 12px;
+        margin-bottom: 16px;
+      }
+      .page-header .logo {
+        max-width: 56px;
+        max-height: 56px;
+      }
+      .page-header h1 { font-size: 1.35rem; letter-spacing: 1px; }
+      .page-header p { font-size: 0.72rem; }
+      .card { padding: 14px 12px; margin-bottom: 10px; border-radius: 12px; }
+      .card h2 { font-size: 1rem; margin-bottom: 10px; }
+      .meta-badge { padding: 5px 9px; font-size: 0.74rem; }
+      .meta-badge--price span { font-size: 0.88rem; }
+      .date-row { margin-bottom: 12px; }
+      .date-row .btn-primary { width: 100%; }
+      .slot-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+      .slot-btn { min-height: 40px; padding: 7px 4px; border-radius: 8px; }
+      .slot-start { font-size: 0.85rem; }
+      .slot-end { font-size: 0.62rem; }
+      .btn-primary { min-height: 40px; font-size: 0.84rem; padding: 9px 14px; }
+      #loading-state, #error-state, #success-state { padding: 32px 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="slot-page">
+
+    <div class="page-header">
+      <img src="img/logo.png" alt="Roof Tattoo Gallery" class="logo" />
+      <div class="page-header-text">
+        <h1>Saat Seçimi</h1>
+        <p>Roof Tattoo Gallery</p>
+      </div>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading-state" class="card">
+      <div class="spinner"></div>
+      <p style="color:rgba(255,255,255,0.5);font-size:0.9rem;">Teklif bilgileri yükleniyor...</p>
+    </div>
+
+    <!-- Error (invalid / expired link) -->
+    <div id="error-state" class="card" style="display:none;">
+      <i class="fas fa-exclamation-circle"></i>
+      <h2 id="error-title" style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:1px;margin-bottom:8px;"></h2>
+      <p id="error-desc" style="color:rgba(255,255,255,0.5);font-size:0.9rem;"></p>
+    </div>
+
+    <!-- Main booking UI -->
+    <div id="main-ui" style="display:none;">
+      <!-- Offer info -->
+      <div class="card">
+        <h2><i class="fas fa-info-circle"></i> Teklif Detayları</h2>
+        <div class="offer-meta" id="offer-meta"></div>
+      </div>
+
+      <!-- Date + slot selection -->
+      <div class="card">
+        <h2><i class="fas fa-calendar-alt"></i> Tarih & Saat Seçin</h2>
+        <div id="private-zone-banner" class="private-zone-banner" style="display:none;">
+          <i class="fas fa-shield-alt"></i>
+          <div>
+            <strong>Mahremiyetinize önem veriyoruz</strong>
+            <p id="private-zone-banner-text"></p>
+          </div>
+        </div>
+        <div class="date-row">
+          <label for="date-select">Tarih</label>
+          <select id="date-select"></select>
+        </div>
+
+        <div id="slots-wrap" style="display:none;">
+          <p class="slots-title" id="slots-title"></p>
+          <div class="slot-grid" id="slots-grid"></div>
+          <button id="confirm-btn" class="btn-primary" type="button" disabled>Seçimi Onayla</button>
+          <div class="error-msg" id="slot-error"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Success -->
+    <div id="success-state" class="card" style="display:none;">
+      <i class="fas fa-check-circle"></i>
+      <h2>Randevunuz Oluşturuldu!</h2>
+      <p id="success-detail"></p>
+    </div>
+
+  </div>
+
+  <script src="slot-select.js?v=20260615210000"></script>
+
+  <footer class="slot-page-footer">
+    <p style="margin:0; font-size:0.8rem; color:rgba(150,150,150,0.5); font-family:'Montserrat',sans-serif;">
+      Created by <a href="https://www.linkedin.com/in/muhammed-behlül-alar/" target="_blank" rel="noopener noreferrer"
+        style="color:rgba(201,162,39,0.65); text-decoration:none; font-weight:500;">BehTech</a>
+    </p>
+  </footer>
+</body>
+</html>

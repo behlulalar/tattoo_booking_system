@@ -1,0 +1,431 @@
+/* =============================================
+   MOBILE-SAFE — tüm paneller (randevu, admin, müşteri)
+   Yatay kayma ve iOS odak zoom'unu önler
+   ============================================= */
+
+html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    overflow-x: hidden;
+    width: 100%;
+}
+
+body {
+    overflow-x: hidden;
+    max-width: 100%;
+}
+
+/* iOS Safari: 16px altı input odakta sayfayı zoomlar (OTP kutuları hariç) */
+input[type="text"]:not(.otp-field):not(.otp-field-visible),
+input[type="tel"]:not(.otp-field):not(.otp-field-visible),
+input[type="email"],
+input[type="password"],
+input[type="number"],
+input[type="search"],
+input[type="date"],
+input[type="time"],
+input[type="url"],
+select,
+textarea {
+    font-size: 16px;
+}
+
+.booking-page,
+.customer-login-page,
+.customer-panel,
+#dashboard-page,
+#login-page,
+.page,
+.slot-page {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+.booking-left,
+.main-content {
+    max-width: 100%;
+}
+
+.stepper,
+#date-buttons,
+.calendar-scroll-container,
+.sch-table-scroll,
+.gcal-scroll,
+.apt-table-wrap {
+    max-width: 100%;
+}
+
+img,
+svg {
+    max-width: 100%;
+    height: auto;
+}
+
+video:not(.bg-video) {
+    max-width: 100%;
+    height: auto;
+}
+
+button,
+a,
+.primary-btn,
+.secondary-btn,
+.apt-status-btn,
+.style-btn,
+.size-btn,
+.region-btn,
+.slot-btn,
+.filter-btn,
+.nav-item,
+.date-btn,
+.time-slot,
+.artist-card,
+.login-remember-wrap {
+    touch-action: manipulation;
+}
+
+#verify-modal,
+#customer-login-modal,
+#customer-verify-modal {
+    width: min(92vw, 400px) !important;
+    max-width: 400px !important;
+    box-sizing: border-box;
+}
+
+@media (max-width: 768px) {
+    /* Taşma önleme — yalnızca mobil (masaüstüne dokunmaz) */
+    .booking-center .step-content,
+    #artist-section,
+    #tattoo-config-section,
+    #tattoo-details-section,
+    #customer-info-section,
+    #service-section,
+    #datetime-section,
+    #confirmation-section {
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    /* Telefon adımı kartı — kompakt, success-modal boyutuna yakın */
+    .booking-center.booking-center-phone {
+        width: 100%;
+        max-width: min(92vw, 340px);
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .booking-center .step-content-phone {
+        width: 100%;
+        padding: 18px 16px 16px;
+        border-radius: 14px;
+    }
+
+    .booking-center .step-content-phone h2 {
+        font-size: 1.05rem;
+        margin-bottom: 8px;
+    }
+
+    .booking-center .step-content-phone .divider {
+        width: 72px;
+        margin-bottom: 14px;
+    }
+
+    .booking-center .step-content-phone .auth-modal-form {
+        width: 100%;
+        align-items: stretch;
+    }
+
+    .booking-center .step-content-phone label,
+    .booking-center .step-content-phone .help-text {
+        max-width: 100%;
+    }
+
+    .booking-center .step-content-phone .auth-phone-wrap {
+        max-width: 100%;
+    }
+
+    .booking-center .step-content-phone .primary-btn {
+        width: 100%;
+        max-width: 100%;
+        margin-top: 14px;
+        padding: 12px 18px;
+    }
+
+    .booking-center .step-content {
+        padding: 20px 16px 18px;
+    }
+
+    .tattoo-config-section {
+        max-width: 100% !important;
+    }
+
+    .style-btn,
+    .size-btn,
+    .region-btn,
+    .config-alt-btn {
+        font-size: 14px;
+        padding: 14px 18px;
+        min-height: 48px;
+    }
+
+    #phone,
+    .phone-prefix,
+    .phone-check-btn {
+        font-size: 16px;
+    }
+
+    #verify-modal .otp-field-visible,
+    #customer-verify-modal .otp-field-visible {
+        font-size: 22px !important;
+        letter-spacing: 0.34em !important;
+    }
+
+    .primary-btn,
+    .login-btn,
+    .new-appointment-btn {
+        font-size: 16px;
+        min-height: 48px;
+    }
+
+    .main-content {
+        overflow-x: hidden;
+        padding-left: max(16px, env(safe-area-inset-left, 0px));
+        padding-right: max(16px, env(safe-area-inset-right, 0px));
+    }
+
+    .appointments-grid {
+        grid-template-columns: 1fr !important;
+    }
+
+    .apt-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .calendar-scroll-container,
+    .sch-table-scroll {
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .content-header h1 {
+        font-size: 1.5rem;
+        word-break: break-word;
+    }
+
+    .filter-btn {
+        font-size: 15px;
+        min-height: 44px;
+    }
+
+    .appointment-card {
+        padding: 18px;
+    }
+
+    .appointment-card:hover {
+        transform: none;
+    }
+
+    /* Sanatçı seçimi — mobil kart düzeni (masaüstüne dokunmaz) */
+    #artist-section {
+        padding-left: 14px;
+        padding-right: 14px;
+        overflow: visible;
+    }
+
+    #artist-cards {
+        gap: 10px;
+        overflow: visible;
+    }
+
+    .artist-card {
+        gap: 10px;
+        padding: 12px 10px;
+        min-height: 0;
+        align-items: center;
+        overflow: visible;
+    }
+
+    .artist-info {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .artist-name {
+        font-size: 13px !important;
+        letter-spacing: 0.05em !important;
+        line-height: 1.25;
+        margin-bottom: 2px;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+    }
+
+    .artist-title {
+        font-size: 10px !important;
+        letter-spacing: 0.04em !important;
+        line-height: 1.25;
+    }
+
+    .artist-radio {
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+    }
+
+    .artist-card.selected .artist-radio::after {
+        width: 10px;
+        height: 10px;
+    }
+
+    .artist-photo {
+        width: 46px !important;
+        height: 46px !important;
+        font-size: 20px !important;
+        flex-shrink: 0;
+    }
+
+    .artist-portfolio-link {
+        flex: 0 0 auto !important;
+        min-width: 0 !important;
+        width: auto !important;
+        margin-left: auto;
+        padding: 8px !important;
+        gap: 0 !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        z-index: 2;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .artist-portfolio-link span {
+        display: none !important;
+    }
+
+    .artist-portfolio-link i {
+        font-size: 24px !important;
+        line-height: 1;
+    }
+
+    /* Başarı modalı — kompakt, footer ile çakışmasın */
+    #success-overlay {
+        align-items: flex-start;
+        justify-content: center;
+        padding: max(12px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom));
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    #success-modal {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        width: min(94vw, 320px);
+        max-width: none;
+        padding: 18px 14px 16px;
+        margin: auto;
+        flex-shrink: 0;
+    }
+
+    #success-modal .success-icon {
+        width: 52px;
+        height: 52px;
+        font-size: 24px;
+        margin: 0 auto 12px;
+    }
+
+    #success-modal h2 {
+        font-size: 1.25rem;
+        line-height: 1.15;
+        margin-bottom: 6px;
+    }
+
+    #success-modal p,
+    #success-message {
+        font-size: 13px;
+        line-height: 1.4;
+        margin-bottom: 12px;
+    }
+
+    .success-ref-block {
+        gap: 10px;
+        margin: 0 0 12px;
+    }
+
+    .success-ref-code {
+        font-size: clamp(28px, 7.5vw, 36px);
+        letter-spacing: 0.12em;
+    }
+
+    .success-ref-copy-btn,
+    .success-whatsapp-btn,
+    #success-ok-btn.success-btn {
+        width: 100%;
+        max-width: none;
+        min-width: 0;
+        min-height: 48px;
+        padding: 12px 16px;
+        font-size: 14px;
+        box-sizing: border-box;
+    }
+
+    .success-whatsapp-block {
+        padding: 12px;
+        margin: 0 0 12px;
+    }
+
+    .success-whatsapp-hint {
+        font-size: 12px;
+        line-height: 1.4;
+        margin-bottom: 10px;
+    }
+
+    #success-ok-btn.success-btn {
+        margin-top: 4px;
+    }
+}
+
+@media (max-width: 600px) {
+    .booking-center.booking-center-phone {
+        max-width: min(94vw, 300px);
+    }
+
+    .booking-center .step-content-phone {
+        padding: 16px 14px 14px;
+    }
+
+    .booking-center .step-content-phone h2 {
+        font-size: 1rem;
+    }
+
+    .booking-left {
+        padding-left: max(12px, env(safe-area-inset-left, 0px));
+        padding-right: max(12px, env(safe-area-inset-right, 0px));
+    }
+
+    .stepper {
+        width: 100%;
+        max-width: 100%;
+        padding-bottom: 4px;
+    }
+
+    .button-group {
+        flex-direction: column;
+    }
+
+    .button-group .primary-btn,
+    .button-group .secondary-btn {
+        width: 100%;
+    }
+}
+
+@media (hover: none) {
+    .side-dock-btn:hover {
+        transform: none;
+    }
+
+    .artist-card:hover {
+        transform: none;
+    }
+}

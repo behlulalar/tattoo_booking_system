@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280" role="img" aria-label="Irezumi örnek">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a0f0f"/>
+      <stop offset="100%" stop-color="#c0392b"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="280" fill="url(#g)"/>
+  <rect x="24" y="24" width="352" height="232" rx="12" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="2"/>
+  <circle cx="200" cy="118" r="52" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="2"/>
+  <path d="M148 118 Q200 72 252 118 Q200 164 148 118" fill="rgba(255,255,255,0.06)"/>
+  <text x="200" y="210" text-anchor="middle" fill="rgba(255,255,255,0.35)" font-family="Arial,sans-serif" font-size="13" letter-spacing="2">IREZUMI</text>
+  <text x="200" y="232" text-anchor="middle" fill="rgba(255,255,255,0.22)" font-family="Arial,sans-serif" font-size="10">Örnek görsel — JPG ile değiştirilebilir</text>
+</svg>

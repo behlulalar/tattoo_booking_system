@@ -1,0 +1,202 @@
+/* =============================================
+ * MANUEL GELİR AYARLAMALARI - ADJUSTMENTS (FINAL v2)
+ * ============================================= */
+
+.adjustments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.adjustment-item {
+    background: var(--dark-bg);
+    border-radius: 8px;
+    padding: 15px;
+    border-left: 4px solid var(--accent);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.adjustment-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.adjustment-item.income {
+    border-left-color: var(--success);
+}
+
+.adjustment-item.expense {
+    border-left-color: var(--danger);
+}
+
+.adjustment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.adjustment-type {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+}
+
+.adjustment-type i {
+    width: 20px;
+}
+
+.adjustment-item.income .adjustment-type {
+    color: var(--success);
+}
+
+.adjustment-item.expense .adjustment-type {
+    color: var(--danger);
+}
+
+.adjustment-amount {
+    font-size: 1.2em;
+    font-weight: 700;
+}
+
+.adjustment-item.income .adjustment-amount {
+    color: var(--success);
+}
+
+.adjustment-item.expense .adjustment-amount {
+    color: var(--danger);
+}
+
+.adjustment-description {
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.adjustment-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 15px;
+    color: var(--text-muted);
+    font-size: 0.9em;
+}
+
+.adjustment-date,
+.adjustment-creator {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.adjustment-footer .btn-sm {
+    padding: 5px 10px;
+    font-size: 0.85em;
+}
+
+/* Yeni Ayarlama Butonu - filter-btn ile Aynı Stil */
+#add-adjustment-btn {
+    padding: 10px 20px !important;
+    background: var(--accent) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    color: #000 !important;
+    font-size: 0.9rem !important;
+    font-weight: 500 !important;
+    cursor: pointer;
+    transition: all 0.2s !important;
+}
+
+#add-adjustment-btn:hover {
+    background: var(--accent-hover) !important;
+}
+
+#add-adjustment-btn i {
+    margin-right: 6px;
+}
+
+/* Modal - service-modal gibi */
+.adjustment-modal {
+    background: var(--bg-card);
+    border-radius: 12px;
+    max-width: 600px;
+    width: 90%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.adjustment-modal .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+}
+
+.adjustment-modal .modal-header h2 {
+    font-size: 1.25rem;
+    color: var(--accent);
+}
+
+.adjustment-modal .modal-body {
+    padding: 24px;
+}
+
+#adjustment-form .form-group {
+    margin-bottom: 20px;
+}
+
+#adjustment-form label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+#adjustment-form select,
+#adjustment-form input,
+#adjustment-form textarea {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 1rem;
+    transition: border-color 0.3s;
+}
+
+#adjustment-form textarea {
+    resize: vertical;
+    font-family: inherit;
+    min-height: 80px;
+}
+
+#adjustment-form select:focus,
+#adjustment-form input:focus,
+#adjustment-form textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Kaydet Butonu */
+#adjustment-form button[type="submit"] {
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+    border: none;
+    border-radius: 8px;
+    color: #000;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    margin-top: 10px;
+}
+
+#adjustment-form button[type="submit"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 15px rgba(201, 162, 39, 0.4);
+}

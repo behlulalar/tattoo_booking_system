@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /sp-admin-x7k.html
+
+Sitemap: https://tattoo.roof.behlulalar.online/sitemap.xml
