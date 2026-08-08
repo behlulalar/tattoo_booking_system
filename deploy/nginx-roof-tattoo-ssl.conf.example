@@ -1,0 +1,36 @@
+# Sadece tattoo.roof.behlulalar.online → /opt/roof_tattoo (Roof Tattoo Gallery)
+# tattoo.behlulalar.online → ayrı config: ../Dövme_Randevu_Sistemi/deploy/nginx-tattoo-randevu.conf.example
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name tattoo.roof.behlulalar.online;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name tattoo.roof.behlulalar.online;
+
+    ssl_certificate /etc/letsencrypt/live/tattoo.roof.behlulalar.online/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tattoo.roof.behlulalar.online/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    root /opt/roof_tattoo/frontend;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://unix:/opt/roof_tattoo/run/gunicorn.sock:;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120;
+    }
+}

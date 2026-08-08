@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="deploy-system" content="roof-tattoo-gallery" />
+    <title>Müşteri Girişi - Roof Tattoo Gallery</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="icon" type="image/png" href="img/logo.png" />
+    <link rel="shortcut icon" type="image/png" href="img/logo.png" />
+    <link rel="stylesheet" href="style.css?v=20260615120000" />
+    <link rel="stylesheet" href="customer-login.css?v=20260613204000" />
+    <link rel="stylesheet" href="mobile-safe.css?v=20260613204000" />
+    <link rel="prefetch" href="customer-panel.html" />
+    <link rel="prefetch" href="customer-panel.css?v=20260613190000" />
+    <link rel="prefetch" href="customer-panel.js?v=20260613193000" />
+    <link rel="preload" href="img/logo.png" as="image" />
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+
+<body class="customer-login-page app-ready">
+    <main class="customer-login-shell">
+        <header class="customer-login-brand">
+            <img src="img/logo.png" alt="Roof Tattoo Gallery" width="160" height="160" decoding="async" />
+        </header>
+
+        <a href="index.html" class="customer-login-back">
+            <i class="fas fa-arrow-left" aria-hidden="true"></i>
+            <span>Randevu sayfasına dön</span>
+        </a>
+
+        <section id="customer-login-step" class="customer-login-step">
+            <div id="customer-login-modal" class="customer-login-card">
+                <h2>Müşteri Girişi</h2>
+                <p class="verify-info">Kayıtlı telefon numaranızla giriş yapın</p>
+
+                <form id="customer-login-form" class="auth-modal-form">
+                    <label for="customer-login-phone">Telefon Numarası:</label>
+                    <div class="phone-input-wrapper auth-phone-wrap">
+                        <span class="phone-prefix">+90</span>
+                        <input type="tel" id="customer-login-phone" name="phone" placeholder="5XX XXX XX XX"
+                            maxlength="10" required autocomplete="tel" />
+                    </div>
+                    <p class="help-text">Daha önce randevu aldığınız telefon numaranızı girin.</p>
+                    <div id="customer-login-error" class="customer-error-message"></div>
+                    <button type="submit" class="primary-btn customer-login-submit">
+                        <i class="fas fa-paper-plane" aria-hidden="true"></i> Kod Gönder
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <section id="customer-verify-step" class="customer-login-step" hidden>
+            <div id="customer-verify-modal" class="customer-verify-card verify-code-modal">
+                <button type="button" id="customer-verify-back-btn" class="customer-login-inline-back" aria-label="Telefon adımına dön">
+                    <i class="fas fa-arrow-left" aria-hidden="true"></i>
+                    <span>Geri</span>
+                </button>
+                <div class="verify-modal-header">
+                    <div class="verify-modal-icon" aria-hidden="true">
+                        <i class="fas fa-mobile-alt"></i>
+                    </div>
+                    <h2>Doğrulama Kodu</h2>
+                </div>
+                <p class="verify-info">WhatsApp'a gönderilen 6 haneli kodu girin. Klavyede kod önerisi çıkabilir.</p>
+                <div id="customer-countdown-timer" class="verify-countdown">Kalan süre: <span id="customer-timer">2:00</span></div>
+                <form id="customer-verify-form" class="auth-modal-form">
+                    <label id="customer-verify-otp-boxes" class="otp-single-box" for="customer-otp-field">
+                        <input type="tel" id="customer-otp-field" class="otp-field-visible" maxlength="6"
+                            inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code"
+                            name="one-time-code" enterkeyhint="done"
+                            aria-label="6 haneli doğrulama kodu" placeholder="" />
+                    </label>
+                    <input type="hidden" id="customer-code" name="code" value="" />
+                    <div id="customer-verify-error" class="customer-error-message"></div>
+                    <button type="button" id="customer-verify-paste-btn" class="secondary-btn verify-paste-btn">
+                        <i class="fas fa-paste"></i> Panodan yapıştır
+                    </button>
+                    <button type="submit" class="primary-btn customer-login-submit">
+                        <i class="fas fa-check" aria-hidden="true"></i> Giriş Yap
+                    </button>
+                </form>
+                <button type="button" id="customer-resend-btn" class="secondary-btn" style="display: none;">
+                    <i class="fas fa-redo" aria-hidden="true"></i> Tekrar Kod Gönder
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <footer class="page-footer">
+        <p>Created by <a href="https://www.linkedin.com/in/muhammed-behl%C3%BCl-alar/" target="_blank"
+                rel="noopener noreferrer">BehTech</a></p>
+    </footer>
+
+    <script src="otp-autofill.js?v=20260615120000"></script>
+    <script src="customer-login.js?v=20260615120000"></script>
+</body>
+
+</html>

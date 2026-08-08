@@ -1,0 +1,30 @@
+[Unit]
+Description=Roof Tattoo Gallery Backend (Gunicorn)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=roofapp
+Group=www-data
+WorkingDirectory=/opt/roof_tattoo/backend
+EnvironmentFile=/opt/roof_tattoo/backend/.env
+Environment="PATH=/opt/roof_tattoo/venv/bin"
+Environment="GUNICORN_BIND=unix:/opt/roof_tattoo/run/gunicorn.sock"
+Environment="GUNICORN_WORKERS=4"
+Environment="GUNICORN_THREADS=2"
+Environment="GUNICORN_TIMEOUT=120"
+Environment="GUNICORN_MAX_REQUESTS=1000"
+Environment="GUNICORN_MAX_REQUESTS_JITTER=50"
+
+ExecStartPre=/bin/mkdir -p /opt/roof_tattoo/run
+ExecStartPre=/bin/chown roofapp:www-data /opt/roof_tattoo/run
+ExecStartPre=/bin/chmod 750 /opt/roof_tattoo/run
+ExecStart=/opt/roof_tattoo/venv/bin/gunicorn -c /opt/roof_tattoo/backend/gunicorn.conf.py app:app
+Restart=always
+RestartSec=5
+KillSignal=SIGQUIT
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

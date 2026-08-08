@@ -1,0 +1,3669 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+:root {
+    /* Dövme Stüdyo Paleti */
+    --accent: #8B4513;
+    /* Saddlebrown */
+    --accent-hover: #A0522D;
+    /* Sienna */
+    --accent-light: #DEB887;
+    /* Burlywood */
+    --gold: #c9a227;
+    /* Altın vurgular */
+    --gold-hover: #d4af37;
+    --burgundy: #722F37;
+    /* Bordo */
+    --burgundy-light: #8B3A42;
+    --success: #28a745;
+    /* Yeşil - müsait */
+    --danger: #dc3545;
+    /* Kırmızı - dolu */
+    --cream: #FFF8DC;
+    /* Krem arka plan */
+    --font-ui: "Montserrat", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: "Bebas Neue", "Montserrat", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --page-footer-clearance: max(48px, calc(32px + env(safe-area-inset-bottom)));
+    --page-footer-phone-clearance: max(96px, calc(80px + env(safe-area-inset-bottom)));
+}
+
+body {
+    font-family: var(--font-ui);
+    background-color: #000000;
+    color: #111111;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    max-width: 100%;
+}
+
+/* Splash / Loading Screen */
+.splash-screen {
+    position: fixed;
+    inset: 0;
+    background: #000;
+    color: #fff;
+    z-index: 5000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    opacity: 0;
+    transition: opacity 320ms ease;
+}
+
+.splash-screen.show {
+    opacity: 1;
+}
+
+.splash-screen.hide {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.splash-inner {
+    width: min(920px, 100%);
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+/* Ported from sefa_web/components/LoadingScreen.tsx (Framer Motion -> CSS) */
+.splash-logo-stack {
+    margin-bottom: 18px;
+    animation: splashLogoScale 800ms ease-out forwards;
+    opacity: 0;
+    transform: scale(0.5);
+}
+
+.splash-title-reveal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    clip-path: inset(0 100% 0 0);
+    filter: drop-shadow(0 0 30px rgba(255, 255, 255, 0.3)) drop-shadow(0 0 60px rgba(156, 163, 175, 0.2));
+}
+
+.splash-screen.show .splash-title-reveal {
+    animation: splashTitleClip 2500ms ease-in-out 300ms forwards;
+}
+
+.splash-title-top,
+.splash-title-bottom {
+    font-family: "UnifrakturMaguntia", var(--font-ui), serif;
+    color: #ffffff;
+    line-height: 1.05;
+}
+
+.splash-title-top {
+    font-size: clamp(48px, 9vw, 82px);
+    letter-spacing: 0.02em;
+}
+
+.splash-title-bottom {
+    margin-top: 8px;
+    font-size: clamp(40px, 7vw, 64px);
+    letter-spacing: 0.04em;
+}
+
+.splash-progress {
+    width: min(256px, 72vw);
+    height: 2px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    overflow: hidden;
+    margin: 18px auto 0;
+    opacity: 0;
+}
+
+.splash-screen.show .splash-progress {
+    animation: splashFadeIn 300ms ease 200ms forwards;
+}
+
+.splash-progress-fill {
+    height: 100%;
+    width: 0%;
+    border-radius: 999px;
+    background: #ffffff;
+}
+
+.splash-screen.show .splash-progress-fill {
+    animation: splashProgressFill 2500ms ease-in-out 300ms forwards;
+}
+
+@keyframes splashLogoScale {
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes splashTitleClip {
+    to {
+        clip-path: inset(0 0% 0 0);
+    }
+}
+
+@keyframes splashProgressFill {
+    to {
+        width: 100%;
+    }
+}
+
+@keyframes splashFadeIn {
+    to {
+        opacity: 1;
+    }
+}
+
+@media (max-width: 600px) {
+    .splash-logo-stack {
+        margin-bottom: 14px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .splash-screen {
+        transition: none;
+    }
+    .splash-logo-stack,
+    .splash-screen.show .splash-title-reveal,
+    .splash-screen.show .splash-progress,
+    .splash-screen.show .splash-progress-fill {
+        animation: none !important;
+    }
+    .splash-logo-stack {
+        opacity: 1;
+        transform: none;
+    }
+    .splash-title-reveal {
+        clip-path: none;
+    }
+    .splash-progress {
+        opacity: 1;
+    }
+    .splash-progress-fill {
+        width: 100%;
+    }
+}
+
+/* =============================================
+   BACKGROUND VIDEO
+   ============================================= */
+
+.bg-video-wrap {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.bg-video {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    min-width: 100%;
+    min-height: 100%;
+    width: auto;
+    height: auto;
+    transform: translate(-50%, -50%);
+    object-fit: cover;
+    object-position: center;
+}
+
+/* Koyu overlay — içeriğin okunabilirliğini korur */
+.bg-video-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+}
+
+/* Keep app hidden until splash completes */
+body:not(.app-ready) .booking-page,
+body:not(.app-ready) .page-footer {
+    visibility: hidden;
+}
+
+/* Ana layout: solda form, sağda fotoğraf - viewport'a sığar, sayfa kaymaz */
+.booking-page {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    align-items: stretch;
+    position: relative;
+    font-family: var(--font-display);
+    letter-spacing: 0.06em;
+}
+
+/* Form ve uzun metinler: Bebas Neue yerine okunaklı UI fontu */
+.booking-page input[type="text"],
+.booking-page input[type="tel"],
+.booking-page input[type="file"],
+.booking-page select,
+.booking-page textarea,
+.booking-page #phone {
+    font-family: var(--font-ui);
+    letter-spacing: normal;
+}
+
+.booking-page .phone-prefix,
+.booking-page .help-text,
+.booking-page .verify-info,
+.booking-page .customer-error-message {
+    font-family: var(--font-ui);
+    letter-spacing: normal;
+}
+
+.booking-page #welcome-name,
+.booking-page #success-message {
+    font-family: var(--font-ui);
+    letter-spacing: normal;
+}
+
+.booking-page .summary-value {
+    font-family: var(--font-ui);
+    letter-spacing: normal;
+}
+
+.booking-page #verify-modal h2,
+.booking-page #welcome-modal h2,
+.booking-page #success-modal h2,
+.booking-page #customer-verify-modal h2,
+.customer-login-page #customer-login-modal h2,
+.customer-login-page #customer-verify-modal h2 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.booking-page #countdown-timer.verify-countdown,
+.booking-page #customer-countdown-timer.verify-countdown {
+    font-family: var(--font-display);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 400;
+}
+
+/* Sol taraf - içerik taşarsa sadece bu kolon kayar */
+.booking-left {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    padding: 40px 60px;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Stepper + content block centered */
+.booking-center {
+    width: min(640px, 100%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.booking-center .stepper {
+    justify-content: center;
+    width: 100%;
+}
+
+.booking-center .step-content {
+    width: 100%;
+    text-align: left;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    border-radius: 16px;
+    padding: 26px 26px 22px;
+}
+
+/* Stepper dots: white on black background */
+.booking-center .step {
+    background: #000000;
+    border: 2px solid rgba(255, 255, 255, 0.18);
+}
+
+.booking-center .step-icon {
+    color: #ffffff;
+}
+
+.booking-center .divider {
+    background-color: #ffffff;
+}
+
+/* Dark card inputs inside centered content */
+.booking-center .step-content label {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.booking-center .phone-input-wrapper {
+    display: flex;
+    align-items: stretch;
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    overflow: hidden;
+    background-color: rgba(255, 255, 255, 0.06);
+    margin-bottom: 8px;
+    min-height: 52px;
+}
+
+.booking-center .form-group input[type="text"],
+.booking-center .form-group select,
+.booking-center .form-group textarea {
+    background-color: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #ffffff;
+}
+
+.booking-center .phone-prefix {
+    border-right-color: rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.booking-center #phone {
+    flex: 1;
+    min-width: 0;
+    color: #ffffff;
+    padding: 14px 12px;
+    font-size: 18px;
+    letter-spacing: 1px;
+    border: none;
+    background: transparent;
+}
+
+.booking-center .phone-prefix {
+    padding: 14px 16px;
+    font-size: 16px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.booking-center .phone-check-btn {
+    padding: 0 14px;
+    flex-shrink: 0;
+    font-size: 16px;
+}
+
+.booking-center .help-text {
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.booking-center .phone-check-btn {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.booking-center .form-group input[type="text"]::placeholder,
+.booking-center #phone::placeholder,
+.booking-center .form-group textarea::placeholder {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.booking-center .primary-btn {
+    background-color: #ffffff;
+    color: #000000;
+}
+
+/* Mobilde booking-left ortalama */
+@media (max-width: 768px) {
+    .booking-left {
+        padding: 20px 20px 24px 20px;
+        align-items: center;
+        justify-content: center;
+        min-height: 100dvh;
+    }
+
+    .booking-center {
+        width: 100%;
+        max-width: 480px;
+        margin: 0 auto;
+        align-items: center;
+    }
+
+    .booking-center .stepper {
+        justify-content: center;
+        width: 100%;
+    }
+
+    .booking-center .step-content {
+        width: 100%;
+        margin: 0 auto;
+    }
+
+    /* booking-center dışındaki section'lar */
+    .booking-left > #artist-section,
+    .booking-left > #tattoo-config-section,
+#tattoo-details-section,
+    .booking-left > #customer-info-section,
+    .booking-left > #service-section,
+    .booking-left > #datetime-section,
+    .booking-left > #confirmation-section {
+        width: 100%;
+        max-width: 480px;
+        margin: 0 auto;
+        box-sizing: border-box;
+    }
+}
+
+/* Sağ taraf (fotoğraf) - dikeyde ekranı tam kaplar, altta beyazlık kalmaz */
+.booking-right {
+    display: none;
+}
+
+/* Logo alanı */
+.logo {
+    margin-bottom: 20px;
+    text-align: center;
+    position: relative;
+}
+
+.logo img {
+    display: none;
+}
+
+
+/* =============================================
+   SOL DOCK — minimal hızlı erişim ikonları
+   ============================================= */
+
+.side-dock {
+    position: fixed;
+    left: max(20px, env(safe-area-inset-left));
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1001;
+    display: grid;
+    grid-template-columns: 32px;
+    justify-items: center;
+    row-gap: 26px;
+}
+
+.side-dock-btn {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    margin: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+    color: rgba(255, 255, 255, 0.82);
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 0.22s ease, color 0.22s ease, opacity 0.22s ease;
+    opacity: 0.88;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.side-dock-glyph {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    line-height: 0;
+}
+
+.side-dock-glyph i {
+    display: block;
+    font-size: 20px;
+    line-height: 1;
+    text-align: center;
+}
+
+/* fa-user optik merkez düzeltmesi */
+.side-dock-btn--login .side-dock-glyph i {
+    transform: translateX(1px);
+}
+
+.side-dock-btn:hover,
+.side-dock-btn:focus-visible {
+    transform: scale(1.14);
+    color: #ffffff;
+    opacity: 1;
+    outline: none;
+}
+
+.side-dock-btn--instagram:hover,
+.side-dock-btn--instagram:focus-visible {
+    color: #f0b4d8;
+}
+
+.side-dock-btn--whatsapp:hover,
+.side-dock-btn--whatsapp:focus-visible {
+    color: #6ee7a8;
+}
+
+.side-dock-btn--phone:hover,
+.side-dock-btn--phone:focus-visible {
+    color: #ffffff;
+}
+
+/* =============================================
+   MOBILE — alt orta yatay dock
+   ============================================= */
+
+@media (max-width: 768px) {
+    .side-dock {
+        top: auto;
+        bottom: max(54px, calc(42px + env(safe-area-inset-bottom)));
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        width: min(268px, calc(100vw - 48px));
+        grid-template-columns: unset;
+        row-gap: unset;
+        gap: 0;
+        padding: 0 4px;
+    }
+
+    .side-dock-btn {
+        width: 40px;
+        height: 40px;
+    }
+
+    .side-dock-glyph {
+        width: 22px;
+        height: 22px;
+    }
+
+    .side-dock-glyph i {
+        font-size: 20px;
+    }
+
+    .side-dock-btn--login .side-dock-glyph i {
+        transform: none;
+    }
+
+    /* Dock: sadece telefon numarası adımında */
+    .booking-page:not(.is-phone-step) .side-dock {
+        display: none;
+    }
+
+    .booking-left {
+        padding-bottom: var(--page-footer-phone-clearance);
+    }
+
+    .booking-page:not(.is-phone-step) .booking-left {
+        padding-bottom: var(--page-footer-clearance);
+    }
+
+    .page-footer {
+        position: relative;
+        z-index: 1;
+        flex-shrink: 0;
+        text-align: center;
+        padding: 10px 16px max(12px, env(safe-area-inset-bottom));
+    }
+
+    .page-footer p {
+        font-size: 0.75rem;
+        letter-spacing: 0.06em;
+    }
+}
+
+@media (max-width: 480px) {
+    .side-dock {
+        width: min(248px, calc(100vw - 40px));
+        bottom: max(50px, calc(38px + env(safe-area-inset-bottom)));
+    }
+
+    .side-dock-btn {
+        width: 38px;
+        height: 38px;
+    }
+
+    .side-dock-glyph i {
+        font-size: 19px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .side-dock-btn {
+        transition: none;
+    }
+
+    .side-dock-btn:hover,
+    .side-dock-btn:focus-visible {
+        transform: none;
+    }
+}
+
+/* Customer Login / Verify overlays */
+
+.customer-error-message {
+    color: #ff0000;
+    font-size: 0.9rem;
+    margin-top: 15px;
+    text-align: center;
+}
+
+#phone-form-error {
+    padding: 12px 16px;
+    background: #fff5f5;
+    border: 1px solid #ffcccc;
+    border-radius: 8px;
+}
+
+#customer-login-overlay,
+#customer-verify-overlay {
+    display: none !important;
+}
+
+/* Müşteri giriş sayfası — kart stilleri (#customer-login-modal ile paylaşılır) */
+#customer-login-modal h2 {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+/* Fix phone input wrapper alignment */
+#customer-login-modal .phone-input-wrapper {
+    display: flex;
+    align-items: center;
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    overflow: hidden;
+    background-color: rgba(255, 255, 255, 0.06);
+    margin-bottom: 20px;
+}
+
+#customer-login-modal .phone-prefix {
+    padding: 16px 18px;
+    font-size: 16px;
+    border-right: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.08);
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+    color: #ffffff;
+}
+
+#customer-login-phone {
+    flex: 1;
+    border: none;
+    padding: 16px 14px;
+    font-size: 18px;
+    outline: none;
+    background-color: transparent;
+    letter-spacing: 2px;
+    text-align: left;
+    color: #ffffff;
+}
+
+#customer-login-phone::placeholder {
+    color: rgba(255, 255, 255, 0.35);
+}
+
+#customer-login-modal label,
+#customer-verify-modal label:not(.otp-single-box) {
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 14px;
+    display: block;
+    text-align: left;
+    margin-bottom: 8px;
+}
+
+#customer-login-modal .help-text,
+#customer-verify-modal .help-text {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 13px;
+    text-align: left;
+    margin-bottom: 16px;
+}
+
+#customer-login-modal .verify-info {
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.logo-title {
+    font-family: var(--font-display);
+    font-size: 36px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.logo-subtitle {
+    font-size: 12px;
+    letter-spacing: 0.3em;
+    margin-top: 4px;
+}
+
+/* Stepper */
+.stepper {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    margin-bottom: 40px;
+}
+
+.step {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    border: 2px solid #d6d6d6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+/* Bağlantı çizgileri */
+.step::after {
+    content: "";
+    position: absolute;
+    right: -24px;
+    top: 50%;
+    width: 24px;
+    height: 2px;
+    background-color: #d6d6d6;
+    transform: translateY(-50%);
+}
+
+.step:last-child::after {
+    display: none;
+}
+
+.step-icon {
+    font-size: 18px;
+}
+
+/* Aktif step - kalın çerçeve */
+.step.active {
+    border-color: #000;
+    border-width: 3px;
+    background: #fff;
+}
+
+.step.active .step-icon {
+    color: #000;
+}
+
+/* Tamamlanan step - şeffaf */
+.step.completed {
+    border-color: #ccc;
+    background: rgba(0, 0, 0, 0.05);
+    opacity: 0.6;
+}
+
+.step.completed .step-icon {
+    color: #666;
+    display: none;
+}
+
+.step.completed::before {
+    content: '\f00c';
+    font-family: 'Font Awesome 6 Free';
+    font-weight: 900;
+    position: absolute;
+    font-size: 14px;
+    color: #333;
+    z-index: 2;
+}
+
+/* Step bağlantı çizgisi - tamamlanmış */
+.step.completed::after {
+    background: #ccc;
+}
+
+/* İçerik */
+.step-content {
+    max-width: 420px;
+}
+
+/* Başlık ve çizgi */
+.step-content h2 {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 400;
+    margin-bottom: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.divider {
+    width: 150px;
+    height: 2px;
+    background-color: #000;
+    margin-bottom: 24px;
+}
+
+/* Form stilleri */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group input[type="text"] {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 16px;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    background-color: #fafafa;
+    outline: none;
+    transition: border-color 0.3s;
+}
+
+.form-group input[type="text"]:focus {
+    border-color: #000;
+}
+
+.form-group select,
+.form-group textarea,
+.form-group input[type="file"] {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 16px;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    background-color: #fafafa;
+    outline: none;
+    transition: border-color 0.3s, box-shadow 0.3s, background-color 0.3s;
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 110px;
+    line-height: 1.35;
+}
+
+.form-group select {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-image:
+      linear-gradient(45deg, transparent 50%, #000 50%),
+      linear-gradient(135deg, #000 50%, transparent 50%),
+      linear-gradient(to right, transparent, transparent);
+    background-position:
+      calc(100% - 18px) calc(50% - 3px),
+      calc(100% - 13px) calc(50% - 3px),
+      100% 0;
+    background-size:
+      6px 6px,
+      6px 6px,
+      2.5em 2.5em;
+    background-repeat: no-repeat;
+    padding-right: 44px;
+}
+
+.form-group select:focus,
+.form-group textarea:focus,
+.form-group input[type="file"]:focus {
+    border-color: #000;
+    box-shadow: 0 0 0 4px rgba(0,0,0,0.08);
+    background-color: #fff;
+}
+
+.form-group input[type="file"] {
+    padding: 12px 12px;
+    background-color: #fff;
+}
+
+label {
+    display: block;
+    font-size: 14px;
+    margin-bottom: 10px;
+    font-weight: 500;
+}
+
+.phone-input-wrapper {
+    display: flex;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    overflow: hidden;
+    background-color: #fafafa;
+}
+
+.phone-prefix {
+    padding: 16px 18px;
+    font-size: 16px;
+    border-right: 1px solid #e0e0e0;
+    display: flex;
+    align-items: center;
+}
+
+#phone {
+    flex: 1;
+    border: none;
+    padding: 12px 14px;
+    font-size: 16px;
+    outline: none;
+    background-color: transparent;
+}
+
+.phone-check-btn {
+    border: none;
+    padding: 0 16px;
+    cursor: pointer;
+    background-color: transparent;
+    font-size: 14px;
+}
+
+.help-text {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #666666;
+}
+
+/* Devam Et butonu */
+.primary-btn {
+    margin-top: 24px;
+    padding: 16px 38px;
+    border-radius: 999px;
+    border: none;
+    background-color: #000000;
+    color: #ffffff;
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    display: inline-block;
+}
+
+
+/* Doğrulama Modal Overlay */
+#verify-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 500 !important; /* Error overlay (99999) daha yüksek olacak */
+}
+
+/* Randevu / doğrulama modalları — #success-modal ile aynı kart boyutu */
+#verify-modal.verify-code-modal,
+#customer-verify-modal.verify-code-modal {
+    background: #0a0a0a;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 40px 36px 36px;
+    border-radius: 24px;
+    text-align: center;
+    width: min(92vw, 420px);
+    max-width: 420px;
+    box-sizing: border-box;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+    animation: modalPop 0.3s ease;
+    position: relative;
+    color: #ffffff;
+}
+
+#customer-login-modal {
+    background: #111111;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 36px 32px;
+    border-radius: 20px;
+    text-align: center;
+    width: min(92vw, 400px);
+    max-width: 400px;
+    box-sizing: border-box;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    animation: modalPop 0.3s ease;
+    position: relative;
+    color: #ffffff;
+}
+
+/* İptal / Kapat Butonu */
+.verify-close-btn {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.7);
+    transition: all 0.2s ease;
+}
+
+.verify-close-btn:hover {
+    background: var(--danger);
+    color: white;
+}
+
+.verify-code-modal .verify-close-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+}
+
+.verify-code-modal .verify-modal-header {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin: 0 0 10px;
+    padding-right: 0;
+}
+
+.verify-code-modal .verify-modal-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    color: #ffffff;
+    line-height: 1;
+}
+
+#verify-modal.verify-code-modal h2,
+#customer-verify-modal.verify-code-modal h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #ffffff;
+}
+
+#customer-login-modal h2 {
+    margin: 0 0 8px;
+    font-size: 1.35rem;
+    font-family: var(--font-display);
+    letter-spacing: 0.08em;
+    color: #ffffff;
+}
+
+#customer-login-modal h2 i {
+    margin-right: 8px;
+    font-size: 1.1rem;
+}
+
+#verify-modal.verify-code-modal .verify-info,
+#customer-verify-modal.verify-code-modal .verify-info {
+    color: #a0a0a0;
+    margin: 0 0 18px;
+    font-size: 14px;
+    line-height: 1.5;
+    font-family: var(--font-ui);
+}
+
+.verify-info {
+    color: rgba(255, 255, 255, 0.55);
+    margin-bottom: 14px;
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+#countdown-timer.verify-countdown,
+#customer-countdown-timer.verify-countdown {
+    background: none;
+    border: none;
+    color: #ffffff;
+    padding: 0;
+    border-radius: 0;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0 0 22px;
+    display: block;
+}
+
+#countdown-timer.verify-countdown.warning,
+#customer-countdown-timer.verify-countdown.warning {
+    color: #ffb347;
+}
+
+#countdown-timer.verify-countdown.expired,
+#customer-countdown-timer.verify-countdown.expired {
+    color: #888888;
+}
+
+#countdown-timer,
+#customer-countdown-timer {
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: inline-block;
+}
+
+/* Telefon / kod — modal içinde normal genişlik (PC'de ekrana yayılmaz) */
+.auth-modal-form {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+}
+
+.auth-modal-form label,
+.auth-modal-form .help-text,
+.auth-modal-form .customer-error-message {
+    width: 100%;
+    max-width: 100%;
+    text-align: left;
+}
+
+.auth-phone-wrap,
+.booking-center .auth-phone-wrap {
+    width: 100%;
+    max-width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Tek satırlı OTP — görseldeki geniş aralıklı rakam kutusu */
+@keyframes otp-autofill {
+    from { opacity: 1; }
+    to { opacity: 1; }
+}
+
+#verify-modal .otp-single-box,
+#customer-verify-modal .otp-single-box {
+    display: block;
+    width: 100%;
+    margin: 0 auto 22px;
+    padding: 0;
+    text-align: center;
+    cursor: text;
+    -webkit-tap-highlight-color: transparent;
+}
+
+#verify-modal .otp-field-visible,
+#customer-verify-modal .otp-field-visible,
+.booking-page #verify-modal .otp-field-visible,
+.booking-page #customer-verify-modal .otp-field-visible {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 18px 20px;
+    min-height: 64px;
+    font-family: var(--font-ui);
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+    letter-spacing: 0.42em;
+    text-indent: 0.21em;
+    color: #ffffff;
+    background: #1a1a1a;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 14px;
+    outline: none;
+    caret-color: #ffffff;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    animation: otp-autofill 0.01s;
+}
+
+#verify-modal .otp-field-visible:-webkit-autofill,
+#customer-verify-modal .otp-field-visible:-webkit-autofill {
+    animation-name: otp-autofill;
+    animation-duration: 0.01s;
+}
+
+.verify-paste-btn {
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+#verify-modal .otp-single-box.is-focused .otp-field-visible,
+#customer-verify-modal .otp-single-box.is-focused .otp-field-visible {
+    border-color: rgba(255, 255, 255, 0.35);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+
+#verify-modal .otp-single-box.is-complete .otp-field-visible,
+#customer-verify-modal .otp-single-box.is-complete .otp-field-visible {
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+#verify-modal .auth-modal-form .customer-error-message,
+#customer-verify-modal .auth-modal-form .customer-error-message {
+    margin: 0 0 12px;
+    padding: 0;
+    text-align: center;
+    color: #ff6b6b;
+    font-size: 13px;
+    min-height: 18px;
+}
+
+#verify-modal.verify-code-modal .auth-modal-form .primary-btn,
+#customer-verify-modal.verify-code-modal .auth-modal-form .primary-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 4px;
+    padding: 16px 24px;
+    border-radius: 999px;
+    border: none;
+    background-color: #8f8f8f !important;
+    color: #ffffff !important;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background-color 0.2s ease, transform 0.15s ease;
+}
+
+#verify-modal.verify-code-modal .auth-modal-form .primary-btn:hover,
+#customer-verify-modal.verify-code-modal .auth-modal-form .primary-btn:hover {
+    background-color: #a0a0a0 !important;
+    color: #ffffff !important;
+}
+
+#verify-modal .auth-modal-form .primary-btn:disabled,
+#customer-verify-modal .auth-modal-form .primary-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.auth-modal-form .primary-btn,
+.auth-modal-form .secondary-btn {
+    width: 100%;
+    max-width: 100%;
+}
+
+#customer-login-modal .primary-btn {
+    margin-top: 0;
+    width: 100%;
+    max-width: 100%;
+    background-color: #ffffff !important;
+    color: #000000 !important;
+}
+
+#customer-login-modal .primary-btn:hover {
+    background-color: rgba(255, 255, 255, 0.88) !important;
+}
+
+#verify-modal .secondary-btn,
+#customer-verify-modal .secondary-btn {
+    margin-top: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    color: #ffffff;
+    background: transparent;
+}
+
+#verify-modal .secondary-btn:hover,
+#customer-verify-modal .secondary-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.55);
+    color: #ffffff;
+}
+
+/* Karşılama Modal */
+#welcome-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+#welcome-modal {
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 40px 50px;
+    border-radius: 20px;
+    text-align: center;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    animation: slideIn 0.3s ease-out;
+    color: #ffffff;
+}
+
+/* Welcome Icon Wrapper - Nötr renkler */
+.welcome-icon-wrapper {
+    width: 60px;
+    height: 60px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    font-size: 24px;
+    color: #ffffff;
+}
+
+#welcome-modal h2 {
+    font-size: 24px;
+    margin-bottom: 8px;
+    color: #ffffff;
+}
+
+#welcome-modal p {
+    font-size: 18px;
+    color: rgba(255, 255, 255, 0.65);
+    margin-bottom: 24px;
+    font-family: var(--font-ui);
+}
+
+#welcome-modal .primary-btn {
+    margin-top: 0;
+    background: #000;
+}
+
+#welcome-modal .primary-btn:hover {
+    background: #333;
+}
+
+/* Hata Alertbox */
+
+/* verify-modal primary-btn — .auth-modal-form .primary-btn (yukarıda) */
+
+.secondary-btn {
+    margin-top: 15px;
+    padding: 12px 24px;
+    border-radius: 999px;
+    border: 2px solid #000;
+    background-color: transparent;
+    color: #000;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+/* Tablet (768px - 1024px) */
+@media (max-width: 1024px) {
+    .booking-left {
+        padding: 30px 40px;
+    }
+
+    .logo img {
+        max-width: 200px;
+        margin: 15px auto;
+    }
+
+    .step {
+        width: 55px;
+        height: 55px;
+    }
+
+    .step-icon {
+        font-size: 16px;
+    }
+
+    .stepper {
+        gap: 18px;
+    }
+}
+
+/* Tablet - sadece küçük ayarlamalar */
+@media (max-width: 900px) {
+    .booking-left {
+        padding: 24px 30px;
+    }
+
+    .logo img {
+        max-width: 180px;
+        margin: 15px auto;
+    }
+
+    .step {
+        width: 50px;
+        height: 50px;
+    }
+
+    .step-icon {
+        font-size: 15px;
+    }
+
+    .stepper {
+        gap: 16px;
+    }
+}
+
+/* Mobil (600px altı) */
+@media (max-width: 600px) {
+    .auth-phone-wrap,
+    .otp-single-box,
+    .auth-modal-form .primary-btn {
+        max-width: 100%;
+    }
+
+    #verify-modal .otp-field-visible,
+    #customer-verify-modal .otp-field-visible {
+        font-size: 24px;
+        letter-spacing: 0.38em;
+        min-height: 56px;
+        padding: 16px 14px;
+    }
+
+    .booking-page {
+        flex-direction: column;
+    }
+
+    .booking-left {
+        flex: 1;
+        width: 100%;
+        padding: 16px 16px var(--page-footer-clearance) 16px;
+        align-items: center;
+        justify-content: center;
+        min-height: 0;
+    }
+
+    .booking-page.is-phone-step .booking-left {
+        padding-bottom: var(--page-footer-phone-clearance);
+    }
+
+    .booking-center,
+    .booking-left > #artist-section,
+    .booking-left > #tattoo-config-section,
+#tattoo-details-section,
+    .booking-left > #customer-info-section {
+        width: 100%;
+        max-width: 100%;
+        margin: 0 auto;
+    }
+
+    /* Sağ tarafı mobilde gizle */
+    .booking-right {
+        display: none;
+    }
+
+    /* Logo mobilde ortala */
+    .logo {
+        margin-bottom: 25px;
+        text-align: center;
+        position: relative;
+    }
+
+    .logo img {
+        max-width: 160px;
+        margin: 0 auto;
+        display: block;
+    }
+
+    .step {
+        width: 38px;
+        height: 38px;
+    }
+
+    .step-icon {
+        font-size: 12px;
+    }
+
+    .step::after {
+        width: 12px;
+        right: -12px;
+    }
+
+    .stepper {
+        gap: 12px;
+        overflow-x: auto;
+        justify-content: center;
+        padding: 0 10px;
+    }
+
+    .step-content h2 {
+        font-size: 19px;
+    }
+
+    .divider {
+        width: 100px;
+    }
+
+    .primary-btn {
+        width: 100%;
+        padding: 14px 24px;
+        font-size: 16px;
+    }
+
+    .booking-center .step-content {
+        padding: 18px 14px 16px;
+    }
+
+    .tattoo-config-section {
+        max-width: 100% !important;
+    }
+
+    .style-btn,
+    .size-btn,
+    .region-btn {
+        font-size: 15px;
+        min-height: 44px;
+    }
+}
+
+/* ====================== */
+/* SANATÇI KARTLARI       */
+/* ====================== */
+
+#artist-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    margin-bottom: 22px;
+}
+
+.artist-card {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    border-radius: 16px;
+    padding: 22px 24px;
+    min-height: 108px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: none;
+}
+
+.artist-card:hover {
+    background: rgba(255, 255, 255, 0.11);
+    border-color: rgba(255, 255, 255, 0.35);
+    transform: translateY(-2px);
+}
+
+.artist-card.selected {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* Radio Button */
+.artist-radio {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.artist-card.selected .artist-radio {
+    border-color: rgba(255, 255, 255, 0.85);
+}
+
+.artist-card.selected .artist-radio::after {
+    content: '';
+    width: 12px;
+    height: 12px;
+    background: #ffffff;
+    border-radius: 50%;
+}
+
+/* Fotoğraf */
+.artist-photo {
+    width: 62px;
+    height: 62px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.artist-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Bilgiler */
+.artist-info {
+    flex: 1;
+}
+
+.artist-name {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 18px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    color: #ffffff;
+}
+
+.artist-title {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.artist-portfolio-link {
+    margin-left: auto;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 88px;
+    padding: 8px 4px 4px;
+    text-decoration: none;
+    color: rgba(255, 255, 255, 0.72);
+    transition: color 0.25s ease, transform 0.25s ease;
+}
+
+.artist-portfolio-link:hover {
+    color: #ffffff;
+    transform: translateY(-1px);
+}
+
+.artist-portfolio-link i {
+    font-size: 30px;
+    line-height: 1;
+}
+
+.artist-portfolio-link span {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    text-align: center;
+    line-height: 1.3;
+    max-width: 92px;
+}
+
+.artist-hours {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.45);
+    margin-top: 4px;
+}
+
+@media (max-width: 600px) {
+    .artist-card {
+        padding: 18px 18px;
+        min-height: 86px;
+    }
+
+    .artist-photo {
+        width: 56px;
+        height: 56px;
+        font-size: 26px;
+    }
+
+    .artist-name {
+        font-size: 16px;
+        letter-spacing: 0.09em;
+    }
+
+    .artist-portfolio-link {
+        min-width: 72px;
+        gap: 6px;
+    }
+
+    .artist-portfolio-link i {
+        font-size: 26px;
+    }
+
+    .artist-portfolio-link span {
+        font-size: 9px;
+        max-width: 76px;
+    }
+}
+
+.primary-btn:disabled {
+    background-color: #ccc;
+    cursor: not-allowed;
+}
+
+/* ====================== */
+/* HİZMET KARTLARI        */
+/* ====================== */
+
+#service-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.service-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #ffffff;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 16px 20px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.service-card:hover {
+    border-color: #999;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.service-card.selected {
+    border-color: #000;
+    background: #f8f8f8;
+}
+
+.service-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.service-radio {
+    width: 20px;
+    height: 20px;
+    border: 2px solid #ccc;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.service-card.selected .service-radio {
+    border-color: #000;
+}
+
+.service-card.selected .service-radio::after {
+    content: '';
+    width: 10px;
+    height: 10px;
+    background: #000;
+    border-radius: 50%;
+}
+
+.service-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.service-name {
+    font-weight: 600;
+    font-size: 15px;
+    margin-bottom: 2px;
+}
+
+.service-duration {
+    font-size: 13px;
+    color: #888;
+}
+
+.service-price {
+    font-weight: 700;
+    font-size: 18px;
+    color: #000;
+}
+
+/* Button Group */
+.button-group {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.button-group .secondary-btn {
+    margin-top: 0;
+    flex: 1;
+}
+
+.button-group .primary-btn {
+    flex: 1;
+    margin-top: 0;
+}
+
+/* ====================== */
+/* TARİH/SAAT SEÇİMİ      */
+/* ====================== */
+
+.date-selector {
+    margin-bottom: 24px;
+}
+
+.date-selector label {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 12px;
+}
+
+#date-buttons {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding-bottom: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scroll-behavior: smooth;
+}
+
+.date-btn {
+    min-width: 64px;
+    flex: 0 0 64px;
+    padding: 12px 8px;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    background: #fff;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.date-btn:hover {
+    border-color: #999;
+}
+
+.date-btn.selected {
+    background: #000;
+    color: #fff;
+    border-color: #000;
+}
+
+.date-btn .day-name {
+    font-size: 11px;
+    color: #888;
+    margin-bottom: 4px;
+}
+
+.date-btn.selected .day-name {
+    color: #ccc;
+}
+
+.date-btn .day-num {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+#time-slots-container {
+    margin-bottom: 24px;
+}
+
+#selected-date-text {
+    font-weight: 500;
+    margin-bottom: 16px;
+    color: #333;
+}
+
+.time-group {
+    margin-bottom: 20px;
+}
+
+.time-group-header {
+    background: #f5f5f5;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-weight: 500;
+    margin-bottom: 12px;
+}
+
+.time-slots-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.time-slot {
+    min-width: 100px;
+    padding: 12px 16px;
+    border: 2px solid #e0e0e0;
+    border-radius: 10px;
+    background: #fff;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.time-slot:hover {
+    border-color: #999;
+}
+
+.time-slot.selected {
+    background: #000;
+    color: #fff;
+    border-color: #000;
+}
+
+.time-slot .slot-time {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.time-slot .slot-status {
+    font-size: 12px;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+/* Müsait - Yeşil */
+.time-slot .slot-status.status-available {
+    color: var(--success);
+    font-weight: 500;
+}
+
+/* Dolu - Kırmızı */
+.time-slot .slot-status.status-busy {
+    color: var(--danger);
+    font-weight: 500;
+}
+
+.time-slot.selected .slot-status {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.time-slot.disabled {
+    background: #f5f5f5;
+    color: #999;
+    cursor: not-allowed;
+    border-color: #e5e5e5;
+}
+
+.time-slot.disabled .slot-status {
+    color: var(--danger);
+}
+
+/* Font Awesome icon spacing */
+h2 i,
+h4 i,
+button i,
+.time-group-header i {
+    margin-right: 8px;
+}
+
+.havale-info-box h4 {
+    margin: 0 0 16px 0;
+    font-size: 16px;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.info-row:last-of-type {
+    border-bottom: none;
+}
+
+.info-label {
+    font-weight: 500;
+    color: #666;
+}
+
+.info-value {
+    font-weight: 600;
+    color: #000;
+}
+
+.havale-note {
+    margin: 16px 0 0 0;
+    padding: 12px;
+    background: #fff3cd;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #856404;
+}
+
+/* ====================== */
+/* RANDEVU ONAYI          */
+/* ====================== */
+
+.summary-box {
+    background: #f9f9f9;
+    border: 2px solid #e0e0e0;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+}
+
+.summary-box h4 {
+    margin: 0 0 16px 0;
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 400;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #333;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid #eee;
+}
+
+.summary-row:last-child {
+    border-bottom: none;
+}
+
+.summary-row.total {
+    border-top: 2px solid #000;
+    margin-top: 8px;
+    padding-top: 12px;
+}
+
+.summary-label {
+    color: #666;
+    font-family: var(--font-display);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 400;
+}
+
+.summary-value {
+    font-weight: 600;
+    color: #000;
+}
+
+.summary-row.total .summary-value {
+    font-size: 18px;
+    color: #c9a227;
+}
+
+.confirm-btn {
+    background: linear-gradient(135deg, #c9a227, #d4af37) !important;
+}
+
+.confirm-btn:hover {
+    background: linear-gradient(135deg, #d4af37, #e5c04b) !important;
+}
+
+/* ====================== */
+/* BAŞARI MODALI          */
+/* ====================== */
+
+#success-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+}
+
+#success-modal {
+    background: #111111;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 36px 32px;
+    border-radius: 20px;
+    text-align: center;
+    width: min(92vw, 400px);
+    max-width: 400px;
+    box-sizing: border-box;
+    animation: modalPop 0.3s ease;
+    position: relative;
+    z-index: 10001;
+}
+
+@keyframes modalPop {
+    from {
+        transform: scale(0.8);
+        opacity: 0;
+    }
+
+    to {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+.success-icon {
+    width: 72px;
+    height: 72px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    font-size: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 20px;
+}
+
+#success-modal h2 {
+    margin: 0 0 8px 0;
+    color: #ffffff;
+    font-family: var(--font-display);
+    letter-spacing: 0.1em;
+}
+
+#success-modal p {
+    color: rgba(255, 255, 255, 0.55);
+    font-family: var(--font-ui);
+    margin: 0 0 24px;
+    line-height: 1.45;
+    font-size: 14px;
+}
+
+.success-ref-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    margin: 4px 0 18px;
+    padding: 0;
+}
+
+.success-ref-code {
+    font-family: var(--font-display);
+    font-size: clamp(42px, 10vw, 52px);
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    color: #3ddc84;
+    text-shadow: 0 0 24px rgba(61, 220, 132, 0.45);
+    line-height: 1;
+    user-select: all;
+}
+
+.success-ref-copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    max-width: 280px;
+    padding: 14px 20px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: #0a0a0a;
+    background: #3ddc84;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    box-shadow: 0 4px 20px rgba(61, 220, 132, 0.35);
+}
+
+.success-ref-copy-btn:hover {
+    background: #52e896;
+    transform: scale(1.02);
+    box-shadow: 0 6px 28px rgba(61, 220, 132, 0.5);
+}
+
+.success-ref-copy-btn.copied {
+    background: #2eb86a;
+}
+
+.success-whatsapp-block {
+    width: 100%;
+    margin: 0 0 20px;
+    padding: 16px;
+    border-radius: 12px;
+    background: rgba(37, 211, 102, 0.08);
+    border: 1px solid rgba(37, 211, 102, 0.28);
+    text-align: left;
+}
+
+.success-whatsapp-hint {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.success-whatsapp-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px 20px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #fff;
+    background: #25d366;
+    border-radius: 999px;
+    text-decoration: none;
+    box-shadow: 0 4px 20px rgba(37, 211, 102, 0.35);
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.success-whatsapp-btn:hover {
+    background: #2ee676;
+    transform: scale(1.02);
+}
+
+.success-btn {
+    background: #ffffff !important;
+    color: #000000 !important;
+    min-width: 150px;
+}
+
+.success-btn:hover {
+    background: rgba(255, 255, 255, 0.88) !important;
+}
+
+body.success-modal-open .page-footer {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* =============================================
+   FOOTER
+   ============================================= */
+
+/* Footer */
+.page-footer {
+    flex-shrink: 0;
+    width: 100%;
+    margin-top: 0;
+    padding: 12px 24px;
+    background: transparent;
+    text-align: left;
+    font-family: var(--font-display);
+    letter-spacing: 0.08em;
+}
+
+.page-footer p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.75);
+    font-weight: 400;
+    text-transform: uppercase;
+}
+
+.page-footer a {
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: 400;
+    transition: all 0.3s ease;
+}
+
+.page-footer a:hover {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+@media (max-width: 600px) {
+    .page-footer {
+        text-align: center;
+        padding: 12px 16px;
+    }
+
+    .page-footer p {
+        font-size: 0.8rem;
+    }
+}
+
+/* Takvim popup (body altında): okunaklı metin */
+.flatpickr-calendar {
+    font-family: var(--font-ui) !important;
+    letter-spacing: normal !important;
+}
+
+/* =============================================
+   DARK PAGE — SECTIONS OUTSIDE .booking-center
+   Tüm step-content bölümleri için dark-theme
+   ============================================= */
+
+/* Label'lar beyaz */
+#tattoo-config-section,
+#tattoo-details-section label,
+#customer-info-section label,
+#artist-section label {
+    color: rgba(255, 255, 255, 0.85) !important;
+}
+
+/* help-text */
+#tattoo-config-section,
+#tattoo-details-section .help-text {
+    color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* Select, textarea dark */
+#tattoo-config-section,
+#tattoo-details-section select,
+#tattoo-config-section,
+#tattoo-details-section textarea {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+    color: #ffffff !important;
+}
+
+#tattoo-config-section,
+#tattoo-details-section select option {
+    background: #1a1a1a;
+    color: #ffffff;
+}
+
+#tattoo-config-section,
+#tattoo-details-section textarea::placeholder {
+    color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* Select ok işareti beyaz */
+#tattoo-config-section,
+#tattoo-details-section select {
+    background-image:
+      linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.7) 50%),
+      linear-gradient(135deg, rgba(255,255,255,0.7) 50%, transparent 50%),
+      linear-gradient(to right, transparent, transparent) !important;
+}
+
+/* Talebi Gönder + Geri butonları */
+#tattoo-config-section,
+#tattoo-details-section .primary-btn {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+}
+
+#tattoo-config-section,
+#tattoo-details-section .secondary-btn {
+    border-color: rgba(255, 255, 255, 0.4) !important;
+    color: rgba(255, 255, 255, 0.8) !important;
+}
+
+#tattoo-config-section,
+#tattoo-details-section .secondary-btn:hover {
+    background: rgba(255,255,255,0.08) !important;
+}
+
+/* =============================================
+   CUSTOM FILE UPLOAD BUTTON
+   ============================================= */
+
+.file-upload-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.file-upload-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 20px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1.5px solid rgba(255, 255, 255, 0.25);
+    border-radius: 10px;
+    color: rgba(255, 255, 255, 0.85);
+    font-family: var(--font-display);
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.file-upload-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.45);
+    color: #ffffff;
+}
+
+.file-upload-btn i {
+    font-size: 13px;
+    margin-right: 0;
+}
+
+.file-upload-name {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.45);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* =============================================
+   DARK PAGE OVERRIDES
+   artist-section / step-content h2 / stepper
+   ============================================= */
+
+/* Dövmeci kartları stepper genişliğiyle eşleşsin (masaüstü) */
+#artist-section {
+    width: min(640px, 100%);
+    max-width: none;
+}
+
+/* Dışarıdaki section'lara da şeffaf kart stili */
+#artist-section,
+#tattoo-config-section,
+#tattoo-details-section,
+#customer-info-section,
+#service-section,
+#datetime-section,
+#confirmation-section {
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 26px 26px 22px;
+    color: #ffffff;
+}
+
+/* "Dövmeci Seçimi" başlığı beyaz — section, booking-left içinde ama booking-center dışında */
+#artist-section h2,
+#customer-info-section h2,
+#tattoo-config-section,
+#tattoo-details-section h2,
+#service-section h2,
+#datetime-section h2,
+#confirmation-section h2 {
+    color: #ffffff !important;
+}
+
+/* Stepper: tamamlanan adımlardaki tik beyaz */
+.booking-center .step.completed::before {
+    color: #ffffff !important;
+}
+
+/* Stepper: aktif adım siyah zemin üzerinde (global .step.active beyaz arka plandan koru) */
+.booking-center .step.active {
+    background: #000000 !important;
+    border-color: rgba(255, 255, 255, 0.55) !important;
+    border-width: 2px !important;
+}
+
+.booking-center .step.active .step-icon {
+    color: #ffffff !important;
+}
+
+/* Stepper: tamamlanan adım da siyah zeminde */
+.booking-center .step.completed {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+}
+
+/* "Devam Et" butonu: beyaz zemin — siyah yazı */
+#artist-continue-btn,
+#tattoo-config-continue-btn,
+#service-continue-btn,
+#datetime-continue-btn {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+}
+
+/* =============================================
+   TATTOO CONFIG — Tarz, silüet, bölge, tahmin
+   ============================================= */
+
+.tattoo-config-section {
+    max-width: 920px !important;
+    width: 100%;
+}
+
+.tattoo-config-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.tattoo-config-header h2 {
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 0;
+}
+
+.discover-styles-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 2px;
+    padding: 10px 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.9);
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
+}
+
+.discover-styles-btn i {
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+.discover-styles-btn:hover,
+.discover-styles-btn:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.45);
+    color: #ffffff;
+    outline: none;
+    transform: translateY(-1px);
+}
+
+.tattoo-config-divider {
+    background-color: rgba(255, 255, 255, 0.35);
+    margin-top: 10px;
+}
+
+.tattoo-config-layout {
+    display: grid;
+    grid-template-columns: minmax(160px, 220px) 1fr;
+    gap: 20px 24px;
+    align-items: start;
+}
+
+.tattoo-config-silhouette-panel {
+    position: sticky;
+    top: 12px;
+}
+
+.silhouette-hint {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.55);
+    margin-bottom: 10px;
+    line-height: 1.45;
+    text-align: center;
+}
+
+.body-silhouette-wrap {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 14px;
+    padding: 10px 8px 6px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.pain-map-wrap {
+    width: 100%;
+    max-width: 330px;
+    margin: 0 auto;
+}
+
+.pain-map-root {
+    position: relative;
+}
+
+.pain-map-svg {
+    width: 100%;
+    height: auto;
+    max-height: 380px;
+    display: block;
+    margin: 0 auto;
+    filter: drop-shadow(0 0 20px rgba(168, 85, 247, 0.15));
+}
+
+.pain-map-outline {
+    pointer-events: none;
+}
+
+.pain-map-zones .pain-map-zone {
+    cursor: pointer;
+    transition: opacity 0.2s ease, stroke 0.2s ease, stroke-width 0.2s ease;
+    outline: none;
+}
+
+.pain-map-zones .pain-map-zone:hover,
+.pain-map-zones .pain-map-zone:focus-visible {
+    filter: brightness(1.15);
+    outline: none;
+}
+
+.pain-map-tooltip {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: rgba(18, 18, 22, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+}
+
+.pain-map-tooltip-title {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.pain-map-tooltip-pain {
+    margin: 4px 0 0;
+    font-size: 11px;
+}
+
+.pain-map-tooltip-dots {
+    display: flex;
+    gap: 4px;
+    margin-top: 6px;
+}
+
+.pain-map-tooltip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.pain-map-tooltip-dot.is-active {
+    background: currentColor;
+}
+
+.pain-map-legend-slot {
+    margin-top: 10px;
+}
+
+.pain-map-legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px 16px;
+}
+
+.pain-map-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.pain-map-legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.pain-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+.pain-tag-low { background: rgba(45, 156, 96, 0.35); color: #9be7b4; }
+.pain-tag-mid { background: rgba(230, 180, 60, 0.35); color: #ffe08a; }
+.pain-tag-high { background: rgba(220, 70, 60, 0.35); color: #ffb4a8; }
+
+.pain-tag-inline {
+    font-size: 11px;
+    vertical-align: middle;
+    margin-left: 4px;
+}
+
+.pain-legend-simple {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+}
+
+.pain-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.pain-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.pain-dot-low { background: #3d9c60; }
+.pain-dot-mid { background: #e6b43c; }
+.pain-dot-high { background: #dc463c; }
+
+.selected-region-label {
+    margin-top: 10px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.92);
+    min-height: 1.4em;
+    line-height: 1.5;
+}
+
+.selected-region-label strong {
+    font-weight: 600;
+    color: var(--gold-hover, #e8c872);
+}
+
+.selected-region-label.is-empty {
+    color: rgba(255, 255, 255, 0.35);
+    font-weight: 400;
+}
+
+.selected-region-label.is-empty strong {
+    color: inherit;
+    font-weight: 400;
+}
+
+.private-zone-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: rgba(201, 162, 39, 0.1);
+    border: 1px solid rgba(201, 162, 39, 0.28);
+    color: rgba(255, 255, 255, 0.88);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.private-zone-notice i {
+    color: var(--gold-hover);
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.private-zone-notice strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--gold-hover);
+}
+
+.private-zone-notice p {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.72);
+}
+
+.region-private-tag {
+    margin-left: 6px;
+    color: rgba(201, 162, 39, 0.85);
+    font-size: 10px;
+}
+
+.region-btn--private .region-btn-label {
+    padding-right: 2px;
+}
+
+.config-size-panel {
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.config-size-panel .estimate-card {
+    margin-top: 16px;
+}
+
+.size-btn-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.size-btn {
+    padding: 10px 12px;
+    font-size: 12px;
+    text-align: left;
+    color: rgba(255, 255, 255, 0.88);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.size-btn:hover {
+    border-color: var(--gold);
+}
+
+.size-btn.selected {
+    border-color: var(--gold);
+    background: rgba(201, 162, 39, 0.22);
+}
+
+.config-undecided-top {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.config-undecided-top .config-alt-btn {
+    margin-top: 0;
+}
+
+.config-alt-actions .config-alt-btn:first-child {
+    margin-top: 0;
+}
+
+.config-alt-actions {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.config-alt-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 12px;
+    padding: 14px 20px;
+    border-radius: 999px;
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-sizing: border-box;
+}
+
+.config-alt-btn i {
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
+.config-alt-btn--outline {
+    color: rgba(255, 255, 255, 0.85);
+    background: transparent;
+    border: 2px dashed rgba(255, 255, 255, 0.3);
+}
+
+.config-alt-btn--outline:hover {
+    border-color: rgba(255, 255, 255, 0.55);
+    color: #fff;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.config-alt-btn--primary {
+    color: #000000;
+    background-color: #ffffff;
+    border: none;
+}
+
+.config-alt-btn--primary:hover {
+    background-color: rgba(255, 255, 255, 0.88);
+}
+
+.config-alt-hint {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    line-height: 1.45;
+    text-align: center;
+    font-family: var(--font-ui);
+    letter-spacing: normal;
+    text-transform: none;
+}
+
+.loyalty-code-field {
+    margin: 18px 0 8px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.loyalty-code-field .config-label i {
+    margin-right: 6px;
+    color: #f5c542;
+}
+
+#tattoo-config-section .loyalty-code-field input.loyalty-code-input,
+.tattoo-config-form-panel .form-group input.loyalty-code-input {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(245, 197, 66, 0.45) !important;
+    background-color: #ffffff !important;
+    color: #1a1a1a !important;
+    -webkit-text-fill-color: #1a1a1a !important;
+    caret-color: #c9a227;
+    font-size: 1rem;
+    font-family: var(--font-ui);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+#tattoo-config-section .loyalty-code-field input.loyalty-code-input:focus,
+.tattoo-config-form-panel .form-group input.loyalty-code-input:focus {
+    border-color: #c9a227 !important;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(201, 162, 39, 0.25);
+}
+
+#tattoo-config-section .loyalty-code-field input.loyalty-code-input::placeholder,
+.tattoo-config-form-panel .form-group input.loyalty-code-input::placeholder {
+    color: rgba(0, 0, 0, 0.4) !important;
+    -webkit-text-fill-color: rgba(0, 0, 0, 0.4) !important;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+}
+
+.loyalty-code-field .config-alt-hint {
+    text-align: left;
+    margin-top: 8px;
+}
+
+.tattoo-config-form-panel.is-undecided-muted {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.config-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+    margin-bottom: 10px;
+    letter-spacing: 0.03em;
+}
+
+.style-btn-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+}
+
+.style-btn {
+    padding: 10px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    text-align: left;
+    color: rgba(255, 255, 255, 0.88);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    line-height: 1.3;
+}
+
+.style-btn:hover {
+    border-color: var(--gold);
+    background: rgba(201, 162, 39, 0.12);
+}
+
+.style-btn.selected {
+    border-color: var(--gold);
+    background: rgba(201, 162, 39, 0.22);
+    color: #fff;
+    box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35);
+}
+
+.region-btn-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 4px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+.region-scroll-wrap {
+    position: relative;
+}
+
+.region-scroll-hint {
+    position: absolute;
+    left: 0;
+    right: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.82);
+    font-family: var(--font-ui);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+    cursor: pointer;
+}
+
+.region-scroll-hint--up {
+    top: 0;
+    padding: 6px 8px 22px;
+    background: linear-gradient(to bottom, rgba(17, 17, 17, 0.96) 35%, transparent);
+}
+
+.region-scroll-hint--down {
+    bottom: 0;
+    padding: 22px 8px 6px;
+    background: linear-gradient(to top, rgba(17, 17, 17, 0.96) 35%, transparent);
+}
+
+.region-scroll-wrap.has-scroll-up .region-scroll-hint--up,
+.region-scroll-wrap.has-scroll-down .region-scroll-hint--down {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.region-scroll-hint i {
+    margin: 0;
+    display: block;
+    line-height: 1;
+    font-size: 12px;
+    text-align: center;
+}
+
+@keyframes tattooScrollBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(4px); }
+}
+
+.region-scroll-bounce,
+.tattoo-scroll-bounce {
+    animation: tattooScrollBounce 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .region-scroll-bounce,
+    .tattoo-scroll-bounce {
+        animation: none;
+    }
+}
+
+.region-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 10px;
+    font-size: 12px;
+    text-align: left;
+    color: rgba(255, 255, 255, 0.88);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.region-btn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.region-btn.pain-tier-low .region-btn-dot { background: #3d9c60; }
+.region-btn.pain-tier-mid .region-btn-dot { background: #e6b43c; }
+.region-btn.pain-tier-high .region-btn-dot { background: #dc463c; }
+
+.region-btn-label {
+    line-height: 1.25;
+}
+
+.region-btn:hover {
+    border-color: var(--gold);
+    background: rgba(201, 162, 39, 0.1);
+}
+
+.region-btn.selected {
+    border-color: var(--gold);
+    background: rgba(201, 162, 39, 0.22);
+    color: #fff;
+    box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35);
+}
+
+.estimate-card {
+    margin-top: 14px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, rgba(201, 162, 39, 0.15), rgba(0, 0, 0, 0.4));
+    border: 1px solid rgba(201, 162, 39, 0.35);
+    border-radius: 10px;
+}
+
+.estimate-card--compact {
+    margin-top: 12px;
+    padding: 12px 14px;
+}
+
+.estimate-label {
+    display: block;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.65);
+    margin-bottom: 4px;
+}
+
+.estimate-amount {
+    display: block;
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--gold-hover);
+    font-family: var(--font-display);
+    letter-spacing: 0.04em;
+}
+
+.estimate-note {
+    margin-top: 8px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.45);
+    line-height: 1.4;
+}
+
+.details-summary {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.8);
+    line-height: 1.5;
+}
+
+.details-summary strong {
+    color: var(--gold);
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .tattoo-config-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .discover-styles-btn {
+        align-self: flex-end;
+        margin-top: 0;
+        padding: 9px 14px;
+        font-size: 10px;
+    }
+
+    .tattoo-config-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .tattoo-config-silhouette-panel {
+        position: static;
+        max-width: 320px;
+        margin: 0 auto;
+    }
+
+    .pain-map-svg {
+        max-height: 340px;
+    }
+
+    .style-btn-grid,
+    .region-btn-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .region-btn-grid {
+        max-height: none;
+    }
+
+    .booking-left.is-tattoo-config-active {
+        justify-content: flex-start;
+        align-items: stretch;
+    }
+
+    .booking-left.is-tattoo-config-active > #tattoo-config-section {
+        margin-top: 0;
+    }
+
+    /* Tarz & Bölge — mobil sayfa kaydırma ipuçları */
+    .tattoo-page-scroll-hints[hidden] {
+        display: none !important;
+    }
+
+    .tattoo-page-scroll-hints:not([hidden]) {
+        display: block;
+    }
+
+    .tattoo-page-scroll-btn--up {
+        position: fixed;
+        top: max(10px, env(safe-area-inset-top));
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 998;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background: rgba(0, 0, 0, 0.72);
+        color: rgba(255, 255, 255, 0.9);
+        display: grid;
+        place-items: center;
+        line-height: 0;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+        cursor: pointer;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+    }
+
+    .tattoo-page-scroll-btn--up i {
+        margin: 0;
+        display: block;
+        line-height: 1;
+        font-size: 14px;
+        text-align: center;
+    }
+
+    .tattoo-page-scroll-hints.is-scrolled .tattoo-page-scroll-btn--up {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .tattoo-page-scroll-banner {
+        position: fixed;
+        left: 50%;
+        bottom: max(46px, calc(38px + env(safe-area-inset-bottom)));
+        transform: translateX(-50%);
+        z-index: 998;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        min-width: min(220px, calc(100vw - 48px));
+        padding: 10px 16px 8px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 999px;
+        background: rgba(0, 0, 0, 0.78);
+        color: rgba(255, 255, 255, 0.88);
+        font-family: var(--font-ui);
+        font-size: 12px;
+        letter-spacing: 0.03em;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s ease;
+        cursor: pointer;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .tattoo-page-scroll-banner i {
+        margin: 0;
+        display: block;
+        line-height: 1;
+        font-size: 14px;
+        text-align: center;
+    }
+
+    .tattoo-page-scroll-hints:not(.is-at-bottom) .tattoo-page-scroll-banner {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    #tattoo-config-section.tattoo-show-scroll-fade::after {
+        content: '';
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 80px;
+        pointer-events: none;
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.5), transparent);
+        z-index: 997;
+    }
+}
+
+/* =============================================
+   TARZLARI KEŞFET — vitrin modalı
+   ============================================= */
+
+body.discover-styles-open {
+    overflow: hidden;
+}
+
+.discover-styles-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+
+.discover-styles-modal {
+    width: min(960px, 100%);
+    max-height: min(90vh, 900px);
+    display: flex;
+    flex-direction: column;
+    background: rgba(12, 12, 12, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 18px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+    overflow: hidden;
+}
+
+.discover-styles-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 18px 22px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    flex-shrink: 0;
+}
+
+.discover-styles-modal-header h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.discover-styles-modal-header h3 i {
+    font-size: 16px;
+    opacity: 0.85;
+}
+
+.discover-styles-close {
+    width: 40px;
+    height: 40px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.discover-styles-close:hover,
+.discover-styles-close:focus-visible {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.35);
+    outline: none;
+}
+
+.discover-styles-intro {
+    margin: 0;
+    padding: 0 22px 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.58);
+    flex-shrink: 0;
+}
+
+.discover-styles-grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 4px 22px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.discover-style-card {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+}
+
+.discover-style-card:hover {
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.discover-style-card:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.55);
+    outline-offset: 2px;
+}
+
+.discover-style-card.is-expanded {
+    border-color: rgba(255, 255, 255, 0.5);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+    transform: scale(1.01);
+}
+
+.discover-style-card-image-wrap {
+    width: 100%;
+    flex: 0 0 auto;
+    overflow: hidden;
+    line-height: 0;
+    background: rgba(0, 0, 0, 0.35);
+    transition: background 0.25s ease;
+}
+
+.discover-style-card.is-expanded .discover-style-card-image-wrap {
+    background: #000000;
+}
+
+.discover-style-card-image {
+    width: 100%;
+    height: auto;
+    max-height: 220px;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+    transition: max-height 0.35s ease, object-fit 0.25s ease;
+}
+
+.discover-style-card.is-expanded .discover-style-card-image {
+    max-height: min(560px, 58vh);
+    aspect-ratio: auto;
+    object-fit: contain;
+}
+
+.discover-style-card-body {
+    flex: 0 0 auto;
+    padding: 14px 16px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.discover-style-card.is-expanded .discover-style-card-body {
+    padding: 16px 18px 18px;
+    gap: 8px;
+}
+
+.discover-style-card-title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: 0.06em;
+    line-height: 1.35;
+    text-transform: uppercase;
+    color: #ffffff;
+    transition: font-size 0.25s ease;
+}
+
+.discover-style-card.is-expanded .discover-style-card-title {
+    font-size: 17px;
+    letter-spacing: 0.08em;
+}
+
+.discover-style-card-subtitle {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.discover-style-card.is-expanded .discover-style-card-subtitle {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.discover-style-card-desc {
+    margin: 4px 0 0;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    line-height: 1.55;
+    color: rgba(255, 255, 255, 0.68);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    transition: font-size 0.25s ease, line-height 0.25s ease;
+}
+
+.discover-style-card.is-expanded .discover-style-card-desc {
+    display: block;
+    -webkit-line-clamp: unset;
+    font-size: 14px;
+    line-height: 1.65;
+    color: rgba(255, 255, 255, 0.82);
+}
+
+.discover-style-card-hint {
+    margin-top: 6px;
+    font-family: var(--font-ui);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.38);
+}
+
+.discover-style-card-hint .hint-collapsed,
+.discover-style-card-hint .hint-expanded {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.discover-style-card-hint .hint-expanded {
+    display: none;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.discover-style-card.is-expanded .discover-style-card-hint .hint-collapsed {
+    display: none;
+}
+
+.discover-style-card.is-expanded .discover-style-card-hint .hint-expanded {
+    display: inline-flex;
+}
+
+.discover-style-card-hint i {
+    font-size: 10px;
+}
+
+@media (max-width: 768px) {
+    .discover-styles-overlay {
+        padding: 0;
+        align-items: stretch;
+    }
+
+    .discover-styles-modal {
+        width: 100%;
+        max-height: 100vh;
+        max-height: 100dvh;
+        border-radius: 0;
+        border-left: none;
+        border-right: none;
+    }
+
+    .discover-styles-grid {
+        padding: 4px 14px 18px;
+        gap: 16px;
+    }
+
+    .discover-styles-modal-header {
+        padding: 16px 14px 10px;
+    }
+
+    .discover-styles-intro {
+        padding: 0 14px 12px;
+        font-size: 12px;
+    }
+}
+
+/* Tarzları Keşfet — tek sütun liste (kartlar üst üste binmesin) */

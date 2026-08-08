@@ -1,0 +1,39 @@
+### Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+### Virtualenv
+venv/
+.venv/
+
+### Environment / secrets
+backend/.env
+backend/.env.local
+backend/credentials.json
+backend/credentials/google-calendar.json
+backend/wapio_settings.json
+backend/evolution_settings.json
+
+### Logs / runtime artifacts
+*.log
+*.log.*
+*.pid
+backend/.scheduler.lock
+
+### Database dumps / backups (keep them elsewhere)
+backend/backups/
+backend/dump_*.sql
+backend/*_pgadmin.sql
+
+### OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.cursor/
+

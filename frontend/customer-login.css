@@ -1,0 +1,166 @@
+/* Müşteri girişi — sade siyah arka plan, video yok */
+
+.customer-login-page {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    color: #ffffff;
+    background: #000000;
+    position: relative;
+}
+
+.customer-login-shell {
+    flex: 1;
+    width: 100%;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+    box-sizing: border-box;
+}
+
+.customer-login-brand {
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.customer-login-brand img {
+    display: block;
+    width: min(148px, 42vw);
+    height: auto;
+    margin: 0 auto;
+    object-fit: contain;
+}
+
+.customer-login-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    margin-bottom: 20px;
+    color: rgba(255, 255, 255, 0.78);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+
+.customer-login-back:hover,
+.customer-login-back:focus-visible {
+    color: #ffffff;
+    outline: none;
+}
+
+.customer-login-back i {
+    margin: 0;
+    font-size: 13px;
+}
+
+.customer-login-step {
+    width: 100%;
+}
+
+.customer-login-step[hidden] {
+    display: none !important;
+}
+
+.customer-login-page #customer-login-modal,
+.customer-login-page #customer-verify-modal {
+    position: relative;
+    width: min(92vw, 420px);
+    max-width: 420px;
+    margin: 0 auto;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+    animation: none !important;
+}
+
+.customer-login-page #customer-login-modal h2 {
+    display: block;
+    text-align: center;
+}
+
+.customer-login-inline-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 18px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+
+.customer-login-inline-back:hover,
+.customer-login-inline-back:focus-visible {
+    color: #ffffff;
+    outline: none;
+}
+
+.customer-login-inline-back i {
+    margin: 0;
+    font-size: 13px;
+}
+
+.customer-login-page .customer-login-submit {
+    width: 100%;
+    max-width: 100%;
+    margin-top: 8px;
+}
+
+.customer-login-page .page-footer {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 10px 16px max(12px, env(safe-area-inset-bottom));
+    background: #000000;
+}
+
+.customer-login-page .customer-login-submit i {
+    margin: 0;
+}
+
+.customer-login-page.is-redirecting {
+    pointer-events: none;
+}
+
+.customer-login-page.is-redirecting .customer-login-shell {
+    opacity: 0.72;
+}
+
+@media (max-width: 600px) {
+    .customer-login-shell {
+        justify-content: flex-start;
+        padding-top: max(20px, env(safe-area-inset-top));
+    }
+
+    .customer-login-brand {
+        margin-bottom: 22px;
+    }
+
+    .customer-login-brand img {
+        width: min(128px, 38vw);
+    }
+
+    .customer-login-page #customer-login-modal,
+    .customer-login-page #customer-verify-modal {
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .customer-login-page *,
+    .customer-login-page *::before,
+    .customer-login-page *::after {
+        animation: none !important;
+        transition-duration: 0.01ms !important;
+    }
+}
