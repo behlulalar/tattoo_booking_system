@@ -34,13 +34,9 @@ function showErr(el, msg) {
 }
 
 (function initCustomerLoginPage() {
-  if (localStorage.getItem('customerToken') && localStorage.getItem('customerData')) {
-    window.location.replace('customer-panel.html');
-    return;
-  }
-
   const loginStep = document.getElementById('customer-login-step');
   const verifyStep = document.getElementById('customer-verify-step');
+  const sessionStep = document.getElementById('customer-session-step');
   const loginForm = document.getElementById('customer-login-form');
   const loginPhone = document.getElementById('customer-login-phone');
   const loginError = document.getElementById('customer-login-error');
@@ -58,21 +54,52 @@ function showErr(el, msg) {
   let phone = '';
   let timerInterval = null;
 
+  function setKeyboardInset() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    document.documentElement.style.setProperty('--keyboard-inset', `${covered}px`);
+  }
+
+  function scrollActionIntoView(form) {
+    const action = form?.querySelector('button[type="submit"], .customer-login-submit');
+    if (!action) return;
+    requestAnimationFrame(() => {
+      action.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }
+
+  window.visualViewport?.addEventListener('resize', () => {
+    setKeyboardInset();
+    const openForm = verifyStep?.hidden === false ? verifyForm : loginForm;
+    scrollActionIntoView(openForm);
+  });
+  window.visualViewport?.addEventListener('scroll', setKeyboardInset);
+
+  const hasSession = !!(localStorage.getItem('customerToken') && localStorage.getItem('customerData'));
+
   function showLoginStep() {
+    document.body.classList.remove('is-verify-open');
+    if (sessionStep) sessionStep.hidden = true;
     verifyStep.hidden = true;
     loginStep.hidden = false;
     if (verifyForm) verifyForm.reset();
     customerOtpApi.clearOtp();
     showErr(verifyError, '');
     clearInterval(timerInterval);
+    loginPhone?.focus({ preventScroll: true });
+    setTimeout(() => scrollActionIntoView(loginForm), 280);
   }
 
   function showVerifyStep() {
+    document.body.classList.add('is-verify-open');
+    if (sessionStep) sessionStep.hidden = true;
     loginStep.hidden = true;
     verifyStep.hidden = false;
     customerOtpApi.applyCode('123456');
     customerOtpApi.focusFirst();
     startTimer(120);
+    setTimeout(() => scrollActionIntoView(verifyForm), 320);
   }
 
   function startTimer(seconds) {
@@ -97,7 +124,24 @@ function showErr(el, msg) {
     timerSpan.textContent = `${m}:${String(s % 60).padStart(2, '0')}`;
   }
 
+  if (hasSession && sessionStep) {
+    loginStep.hidden = true;
+    verifyStep.hidden = true;
+    sessionStep.hidden = false;
+  }
+
+  document.getElementById('customer-session-continue')?.addEventListener('click', () => {
+    window.location.replace('customer-panel.html');
+  });
+  document.getElementById('customer-session-switch')?.addEventListener('click', () => {
+    localStorage.removeItem('customerToken');
+    localStorage.removeItem('customerData');
+    showLoginStep();
+  });
+
   verifyBackBtn?.addEventListener('click', showLoginStep);
+
+  loginPhone?.addEventListener('focus', () => setTimeout(() => scrollActionIntoView(loginForm), 280));
 
   loginForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -170,5 +214,7 @@ function showErr(el, msg) {
     startTimer(120);
   });
 
-  loginPhone?.focus();
+  if (!hasSession && window.matchMedia('(min-width: 769px)').matches) {
+    loginPhone?.focus({ preventScroll: true });
+  }
 })();

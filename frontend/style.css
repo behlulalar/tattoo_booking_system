@@ -137,8 +137,22 @@ body {
 }
 
 @media (max-width: 600px) {
+    .splash-screen {
+        padding: 16px;
+    }
+
     .splash-inner {
-        width: min(250px, 80vw);
+        width: min(148px, 46vw);
+    }
+
+    .splash-progress {
+        margin-top: 6px;
+    }
+}
+
+@media (max-width: 400px) {
+    .splash-inner {
+        width: min(140px, 46vw);
     }
 }
 
@@ -471,6 +485,7 @@ body:not(.app-ready) .page-footer {
     grid-template-columns: 32px;
     justify-items: center;
     row-gap: 26px;
+    overflow: visible;
 }
 
 .side-dock-btn {
@@ -486,9 +501,11 @@ body:not(.app-ready) .page-footer {
     color: rgba(255, 255, 255, 0.82);
     cursor: pointer;
     text-decoration: none;
-    transition: transform 0.22s ease, color 0.22s ease, opacity 0.22s ease;
+    transition: color 0.22s ease, opacity 0.22s ease;
     opacity: 0.88;
     -webkit-tap-highlight-color: transparent;
+    position: relative;
+    overflow: visible;
 }
 
 .side-dock-glyph {
@@ -497,6 +514,7 @@ body:not(.app-ready) .page-footer {
     display: grid;
     place-items: center;
     line-height: 0;
+    transition: transform 0.22s ease;
 }
 
 .side-dock-glyph i {
@@ -511,12 +529,82 @@ body:not(.app-ready) .page-footer {
     transform: translateX(1px);
 }
 
+.side-dock-hint {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    z-index: 2;
+    padding: 5px 8px;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #111111;
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+    white-space: nowrap;
+    pointer-events: none;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+    opacity: 0;
+    animation: dockHintPulse 5.5s ease-in-out infinite;
+}
+
+.side-dock-hint::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 10px;
+    border: 5px solid transparent;
+    border-top-color: #ffffff;
+}
+
+@keyframes dockHintPulse {
+    0%,
+    6% {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    14%,
+    48% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    58%,
+    100% {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+}
+
+@keyframes dockHintPulseMobile {
+    0%,
+    6% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(4px);
+    }
+    14%,
+    48% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+    58%,
+    100% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(4px);
+    }
+}
+
 .side-dock-btn:hover,
 .side-dock-btn:focus-visible {
-    transform: scale(1.14);
     color: #ffffff;
     opacity: 1;
     outline: none;
+}
+
+.side-dock-btn:hover .side-dock-glyph,
+.side-dock-btn:focus-visible .side-dock-glyph {
+    transform: scale(1.14);
 }
 
 .side-dock-btn--instagram:hover,
@@ -553,6 +641,7 @@ body:not(.app-ready) .page-footer {
         row-gap: unset;
         gap: 0;
         padding: 0 4px;
+        overflow: visible;
     }
 
     .side-dock-btn {
@@ -571,6 +660,18 @@ body:not(.app-ready) .page-footer {
 
     .side-dock-btn--login .side-dock-glyph i {
         transform: none;
+    }
+
+    .side-dock-hint {
+        left: 50%;
+        font-size: 10px;
+        padding: 5px 8px;
+        animation-name: dockHintPulseMobile;
+    }
+
+    .side-dock-hint::after {
+        left: 50%;
+        margin-left: -5px;
     }
 
     /* Dock: sadece telefon numarası adımında */
@@ -624,6 +725,23 @@ body:not(.app-ready) .page-footer {
     .side-dock-btn:hover,
     .side-dock-btn:focus-visible {
         transform: none;
+    }
+
+    .side-dock-btn:hover .side-dock-glyph,
+    .side-dock-btn:focus-visible .side-dock-glyph {
+        transform: none;
+    }
+
+    .side-dock-hint {
+        animation: none;
+        opacity: 1;
+        transform: none;
+    }
+
+    @media (max-width: 768px) {
+        .side-dock-hint {
+            transform: translateX(-50%);
+        }
     }
 }
 
@@ -976,8 +1094,13 @@ label {
     -webkit-backdrop-filter: blur(10px);
     display: flex;
     justify-content: center;
-    align-items: center;
+    align-items: flex-start;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
     z-index: 500 !important; /* Error overlay (99999) daha yüksek olacak */
+    padding: max(12px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
 }
 
 /* Randevu / doğrulama modalları — #success-modal ile aynı kart boyutu */
@@ -995,6 +1118,8 @@ label {
     animation: modalPop 0.3s ease;
     position: relative;
     color: #ffffff;
+    margin: auto;
+    flex-shrink: 0;
 }
 
 #customer-login-modal {

@@ -112,6 +112,11 @@ function setupOtpInput(containerEl, hiddenInputEl) {
     otpInput.focus({ preventScroll: true });
     containerEl.classList.add('is-focused');
     startAutofill();
+    const form = containerEl.closest('form');
+    const action = form?.querySelector('button[type="submit"], .primary-btn');
+    window.setTimeout(() => {
+      (action || otpInput).scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 280);
   };
 
   otpInput.addEventListener('input', syncFromField);

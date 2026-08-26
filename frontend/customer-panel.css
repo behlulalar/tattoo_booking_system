@@ -1183,8 +1183,8 @@ body {
     }
 
     .sidebar-logo {
-        max-width: 96px;
-        margin-bottom: 8px;
+        max-width: 64px;
+        margin-bottom: 6px;
     }
 
     .sidebar-header h2 {

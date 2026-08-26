@@ -69,8 +69,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Match sefa_web LoadingScreen timings (reveal ends ~2.8s) + short hold + fade out
   requestAnimationFrame(() => splash.classList.add('show'));
-  setTimeout(reveal, 2300);
+  const isMobile = window.matchMedia('(max-width: 768px)').matches;
+  setTimeout(reveal, isMobile ? 1750 : 2300);
 });
+
+function applyKeyboardInset() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+  document.documentElement.style.setProperty('--keyboard-inset', `${covered}px`);
+}
+window.visualViewport?.addEventListener('resize', applyKeyboardInset);
+window.visualViewport?.addEventListener('scroll', applyKeyboardInset);
 
 // =============================================
 // SOL DOCK — hızlı erişim ikonları
@@ -651,6 +661,12 @@ async function api(path, options = {}) {
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, status: res.status, data };
 }
+
+phoneInput?.addEventListener('focus', () => {
+  setTimeout(() => {
+    phoneForm?.querySelector('.primary-btn')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, 280);
+});
 
 phoneCheckBtn?.addEventListener('click', () => {
   phoneForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
