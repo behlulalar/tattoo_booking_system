@@ -2611,8 +2611,8 @@ def choose_offer_slot(token):
             return jsonify({'success': False, 'message': msg}), 409
 
         cursor.execute("""
-            INSERT INTO appointments (customer_id, staff_id, tattoo_request_id, appointment_date, appointment_time, status, duration_minutes, price)
-            VALUES (%s, %s, %s, %s, %s, 'confirmed', %s, %s)
+            INSERT INTO appointments (customer_id, staff_id, tattoo_request_id, appointment_date, appointment_time, status, duration_minutes, price, source)
+            VALUES (%s, %s, %s, %s, %s, 'confirmed', %s, %s, 'customer')
             RETURNING id
         """, (customer_id, staff_id, tr_id, formatted_date, time_str, int(duration_minutes), float(offer_price or 0)))
         new_appointment_id = cursor.fetchone()[0]
@@ -3086,7 +3086,8 @@ def get_admin_appointments():
                 tr.body_area,
                 tr.description,
                 tr.reference_image,
-                COALESCE(a.price, 0) as price
+                COALESCE(a.price, 0) as price,
+                a.source
             FROM appointments a
             JOIN customers c ON a.customer_id = c.id
             JOIN artists s ON a.staff_id = s.id
@@ -3177,7 +3178,8 @@ def get_admin_appointments():
                     'description': row[15],
                     'reference_image': row[16]
                 },
-                'price': float(row[17] or 0)
+                'price': float(row[17] or 0),
+                'source': row[18] or 'admin'
             })
         
         return jsonify({'success': True, 'appointments': appointments})
@@ -3353,9 +3355,9 @@ def admin_create_manual_appointment():
             INSERT INTO appointments (
                 customer_id, staff_id, tattoo_request_id,
                 appointment_date, appointment_time, status,
-                duration_minutes, price
+                duration_minutes, price, source
             )
-            VALUES (%s, %s, NULL, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, 'admin')
             RETURNING id
         """, (
             customer_id, staff_id, formatted_date, time_str,
@@ -3410,6 +3412,7 @@ def admin_create_manual_appointment():
                 'status': status,
                 'duration_minutes': duration_minutes,
                 'price': price,
+                'source': 'admin',
             },
             'customer': {
                 'id': cust[0],
@@ -6773,7 +6776,8 @@ def get_customer_appointments():
                 tr.id   AS tattoo_request_id,
                 tr.size,
                 tr.body_area,
-                tr.description
+                tr.description,
+                a.source
             FROM appointments a
             JOIN artists ar ON a.staff_id = ar.id
             LEFT JOIN tattoo_requests tr ON a.tattoo_request_id = tr.id
@@ -6840,6 +6844,7 @@ def get_customer_appointments():
                     'body_area': row[12],
                     'description': row[13]
                 } if row[10] else None,
+                'source': row[14] or 'admin',
             })
 
         if filter_type in ('upcoming', 'all'):

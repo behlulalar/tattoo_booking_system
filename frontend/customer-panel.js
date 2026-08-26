@@ -336,7 +336,10 @@ function renderAppointments(container, appointments) {
                             ${apt.time}
                         </div>
                     </div>
-                    <span class="status-badge ${apt.status}">${getStatusText(apt.status)}</span>
+                    <div class="apt-card-badges">
+                        ${appointmentSourceBadgeHtml(apt.source)}
+                        <span class="status-badge ${apt.status}">${getStatusText(apt.status)}</span>
+                    </div>
                 </div>
 
                 <div class="appointment-details">
@@ -551,7 +554,10 @@ function renderHistory(container, appointments) {
                             ${apt.time}
                         </div>
                     </div>
-                    <span class="status-badge ${apt.status}">${getStatusText(apt.status)}</span>
+                    <div class="apt-card-badges">
+                        ${appointmentSourceBadgeHtml(apt.source)}
+                        <span class="status-badge ${apt.status}">${getStatusText(apt.status)}</span>
+                    </div>
                 </div>
 
                 <div class="appointment-details">
@@ -615,6 +621,25 @@ function getStatusText(status) {
         'slot_pending': 'Saat seçimi'
     };
     return statusMap[status] || status;
+}
+
+function appointmentSourceKey(source) {
+    const key = String(source || 'admin').toLowerCase();
+    return ['customer', 'admin', 'google'].includes(key) ? key : 'admin';
+}
+
+function appointmentSourceText(source) {
+    const map = {
+        customer: 'Müşteri',
+        admin: 'Admin',
+        google: 'Google',
+    };
+    return map[appointmentSourceKey(source)];
+}
+
+function appointmentSourceBadgeHtml(source) {
+    const key = appointmentSourceKey(source);
+    return `<span class="source-badge source-${key}">${escapeHtml(appointmentSourceText(key))}</span>`;
 }
 
 function getPaymentText(method) {
