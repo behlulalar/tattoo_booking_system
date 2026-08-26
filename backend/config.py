@@ -159,6 +159,66 @@ GOOGLE_CALENDAR_CONFIG = {
     'timezone': os.getenv('GOOGLE_CALENDAR_TIMEZONE', 'Europe/Istanbul').strip(),
 }
 
+GOOGLE_CALENDAR_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'google_calendar_settings.json')
+
+
+def _merge_google_calendar_settings(stored: dict) -> dict:
+    stored = stored if isinstance(stored, dict) else {}
+    enabled = stored['enabled'] if 'enabled' in stored else GOOGLE_CALENDAR_CONFIG['enabled']
+    return {
+        'enabled': _parse_bool(enabled, default=False),
+        'credentials_path': GOOGLE_CALENDAR_CONFIG['credentials_path'],
+        'calendar_id': (stored.get('calendar_id') if 'calendar_id' in stored else GOOGLE_CALENDAR_CONFIG['calendar_id'] or '').strip(),
+        'timezone': (
+            stored.get('timezone')
+            if stored.get('timezone')
+            else GOOGLE_CALENDAR_CONFIG['timezone']
+            or 'Europe/Istanbul'
+        ).strip(),
+    }
+
+
+def get_google_calendar_config():
+    """Google Calendar ayarları — önce google_calendar_settings.json, sonra .env."""
+    try:
+        if os.path.exists(GOOGLE_CALENDAR_SETTINGS_FILE):
+            with open(GOOGLE_CALENDAR_SETTINGS_FILE, 'r') as f:
+                stored = json.load(f)
+                if isinstance(stored, dict):
+                    return _merge_google_calendar_settings(stored)
+    except Exception:
+        pass
+    return _merge_google_calendar_settings({})
+
+
+def save_google_calendar_config(calendar_id=None, enabled=None, timezone=None):
+    existing = {}
+    try:
+        if os.path.exists(GOOGLE_CALENDAR_SETTINGS_FILE):
+            with open(GOOGLE_CALENDAR_SETTINGS_FILE, 'r') as f:
+                loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    existing = loaded
+    except Exception:
+        pass
+
+    current = _merge_google_calendar_settings(existing)
+    if calendar_id is not None:
+        current['calendar_id'] = (calendar_id or '').strip()
+    if enabled is not None:
+        current['enabled'] = _parse_bool(enabled, default=False)
+    if timezone is not None:
+        current['timezone'] = (timezone or '').strip() or current['timezone']
+
+    payload = {
+        'enabled': current['enabled'],
+        'calendar_id': current['calendar_id'],
+        'timezone': current['timezone'],
+    }
+    with open(GOOGLE_CALENDAR_SETTINGS_FILE, 'w') as f:
+        json.dump(payload, f, indent=4)
+    return True
+
 LOYALTY_CONFIG = {
     'enabled': os.getenv('LOYALTY_ENABLED', 'true').strip().lower() in ('1', 'true', 'yes'),
     'points_per_completion': int(os.getenv('LOYALTY_POINTS_PER_COMPLETION', '100')),

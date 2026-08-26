@@ -14,6 +14,8 @@ from typing import Any
 import requests
 
 from config import get_evolution_config
+from error_codes import E_WA_001, E_WA_003
+from logging_setup import log_error, log_warning
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +138,7 @@ def _request(
             body = None
         return res.status_code, body, raw
     except Exception as e:
-        logger.error(f"Evolution API isteği başarısız {method} {path}: {e}")
+        log_error(logger, E_WA_001, "Evolution API istegi basarisiz", exc=e, method=method, path=path)
         return 0, None, str(e)
 
 
@@ -332,7 +334,7 @@ def ensure_instance_ready_for_send(cfg: dict | None = None, max_wait_sec: float 
     logger.warning("Evolution bağlantısı kapalı — instance restart deneniyor")
     r_status, _, r_raw = restart_instance(name, cfg)
     if r_status and not (200 <= r_status < 300):
-        logger.error(f"Evolution restart HTTP {r_status}: {r_raw[:200]}")
+        log_error(logger, E_WA_001, "Evolution instance restart basarisiz", http_status=r_status, response=r_raw[:200])
         return False
     time.sleep(3)
     deadline = time.time() + max_wait_sec
@@ -356,7 +358,7 @@ def send_text(
     cfg = cfg or get_evolution_config()
     name = _instance_name(cfg)
     if not name or not _api_key(cfg):
-        logger.warning("Evolution api_key veya instance_name eksik — mesaj gönderilemedi")
+        log_warning(logger, E_WA_003, "Evolution api_key veya instance_name eksik, mesaj gonderilemedi")
         return False
 
     target = resolve_evolution_send_target(
@@ -398,10 +400,17 @@ def send_text(
                 remote_jid_alt=remote_jid_alt,
             )
 
-        logger.error(f"Evolution sendText HTTP {status}: {target} — {raw[:300]}")
+        log_error(
+            logger,
+            E_WA_001,
+            "Evolution sendText HTTP hatasi",
+            http_status=status,
+            target=target,
+            response=(raw or "")[:300],
+        )
         return False
     except Exception as e:
-        logger.error(f"Evolution sendText hata ({target}): {e}")
+        log_error(logger, E_WA_001, "Evolution sendText beklenmeyen hata", exc=e, target=target)
         return False
 
 

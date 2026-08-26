@@ -3,12 +3,15 @@ Phase 1: One-way sync PostgreSQL appointments -> single shared Google Calendar.
 Google -> system is NOT implemented (manual calendar events are ignored).
 """
 import logging
+import json
 import os
 from datetime import date, datetime, timedelta, time as dt_time
 
 import psycopg2
 
-from config import DATABASE_CONFIG, GOOGLE_CALENDAR_CONFIG, SITE_CONFIG
+from config import DATABASE_CONFIG, SITE_CONFIG, get_google_calendar_config
+from error_codes import E_GCAL_001
+from logging_setup import log_error
 
 logger = logging.getLogger(__name__)
 
@@ -128,16 +131,36 @@ _REGION_LABELS = {
 
 
 def is_google_calendar_enabled():
-    if not GOOGLE_CALENDAR_CONFIG.get('enabled'):
+    cfg = get_google_calendar_config()
+    if not cfg.get('enabled'):
         return False
-    if not GOOGLE_CALENDAR_CONFIG.get('calendar_id'):
-        logger.warning('Google Calendar: GOOGLE_CALENDAR_ID tanımlı değil')
+    if not cfg.get('calendar_id'):
+        logger.warning('Google Calendar: takvim kimliği tanımlı değil')
         return False
-    cred_path = GOOGLE_CALENDAR_CONFIG.get('credentials_path')
+    cred_path = cfg.get('credentials_path')
     if not cred_path or not os.path.isfile(cred_path):
         logger.warning('Google Calendar: credentials dosyası bulunamadı: %s', cred_path)
         return False
     return True
+
+
+def get_service_account_email():
+    cfg = get_google_calendar_config()
+    cred_path = cfg.get('credentials_path')
+    if not cred_path or not os.path.isfile(cred_path):
+        return None
+    try:
+        with open(cred_path, 'r') as f:
+            data = json.load(f)
+        return (data.get('client_email') or '').strip() or None
+    except Exception:
+        return None
+
+
+def credentials_file_ok():
+    cfg = get_google_calendar_config()
+    cred_path = cfg.get('credentials_path')
+    return bool(cred_path and os.path.isfile(cred_path))
 
 
 def _get_calendar_service():
@@ -147,12 +170,79 @@ def _get_calendar_service():
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
 
+    cfg = get_google_calendar_config()
     creds = service_account.Credentials.from_service_account_file(
-        GOOGLE_CALENDAR_CONFIG['credentials_path'],
+        cfg['credentials_path'],
         scopes=_SCOPES,
     )
     _CALENDAR_SERVICE = build('calendar', 'v3', credentials=creds, cache_discovery=False)
     return _CALENDAR_SERVICE
+
+
+def _subscribe_calendar(service, calendar_id):
+    """Servis hesabının calendarList'ine ekle (paylaşıldıktan sonra gerekli)."""
+    try:
+        service.calendarList().insert(body={'id': calendar_id}).execute()
+    except Exception:
+        pass
+
+
+def probe_google_calendar(calendar_id=None):
+    cfg = get_google_calendar_config()
+    calendar_id = (calendar_id or cfg.get('calendar_id') or '').strip()
+    email = get_service_account_email()
+    if not credentials_file_ok():
+        return {'ok': False, 'message': 'Google kimlik dosyası sunucuda yok.'}
+    if not calendar_id:
+        return {'ok': False, 'message': 'Takvim kimliği boş.'}
+    try:
+        service = _get_calendar_service()
+        _subscribe_calendar(service, calendar_id)
+        cal = service.calendars().get(calendarId=calendar_id).execute()
+        return {
+            'ok': True,
+            'calendar_id': cal.get('id') or calendar_id,
+            'summary': cal.get('summary') or calendar_id,
+            'time_zone': cal.get('timeZone') or cfg.get('timezone'),
+        }
+    except Exception as e:
+        hint = email or 'servis hesabı e-postası'
+        return {
+            'ok': False,
+            'message': (
+                f'Takvime erişilemedi. Google Takvim ayarlarından bu takvimi '
+                f'{hint} adresiyle paylaşın ve “Etkinlikleri değiştir” izni verin.'
+            ),
+            'error': str(e)[:240],
+        }
+
+
+def list_accessible_calendars():
+    if not credentials_file_ok():
+        return []
+    try:
+        service = _get_calendar_service()
+        items = []
+        page_token = None
+        while True:
+            resp = service.calendarList().list(pageToken=page_token, maxResults=50).execute()
+            for item in resp.get('items') or []:
+                cal_id = (item.get('id') or '').strip()
+                if not cal_id:
+                    continue
+                items.append({
+                    'id': cal_id,
+                    'summary': item.get('summary') or cal_id,
+                    'primary': bool(item.get('primary')),
+                    'access_role': item.get('accessRole') or '',
+                })
+            page_token = resp.get('nextPageToken')
+            if not page_token:
+                break
+        return items
+    except Exception as e:
+        logger.warning('Google Calendar listesi alınamadı: %s', e)
+        return []
 
 
 def _connect():
@@ -184,7 +274,7 @@ def _as_date(value):
 
 def _appointment_window(appointment_date, appointment_time, duration_minutes):
     """Admin paneldeki saat ile birebir (duvar saati + IANA timezone)."""
-    tz_name = GOOGLE_CALENDAR_CONFIG.get('timezone', 'Europe/Istanbul')
+    tz_name = get_google_calendar_config().get('timezone', 'Europe/Istanbul')
     day = _as_date(appointment_date)
     time_str = _time_to_str(appointment_time)
     hour, minute = map(int, time_str.split(':'))
@@ -367,7 +457,7 @@ def sync_appointment_to_google(appointment_id):
 
         payload = _build_event_body(row)
         existing_id = payload.pop('existing_event_id', None)
-        calendar_id = GOOGLE_CALENDAR_CONFIG['calendar_id']
+        calendar_id = get_google_calendar_config()['calendar_id']
         service = _get_calendar_service()
         body = {
             key: payload[key]
@@ -403,7 +493,7 @@ def sync_appointment_to_google(appointment_id):
     except Exception as e:
         if conn:
             conn.rollback()
-        logger.error('Google Calendar sync hatası (apt #%s): %s', appointment_id, e, exc_info=True)
+        log_error(logger, E_GCAL_001, "Google Takvim senkronu basarisiz", exc=e, appointment_id=appointment_id)
         return None
     finally:
         if conn:
@@ -418,7 +508,7 @@ def delete_google_calendar_event(google_event_id):
     try:
         service = _get_calendar_service()
         service.events().delete(
-            calendarId=GOOGLE_CALENDAR_CONFIG['calendar_id'],
+            calendarId=get_google_calendar_config()['calendar_id'],
             eventId=google_event_id,
         ).execute()
         logger.info('Google Calendar etkinlik silindi: %s', google_event_id)
@@ -428,7 +518,7 @@ def delete_google_calendar_event(google_event_id):
         if '404' in err or 'not found' in err:
             logger.info('Google Calendar etkinlik zaten yok: %s', google_event_id)
             return True
-        logger.error('Google Calendar silme hatası (%s): %s', google_event_id, e)
+        log_error(logger, E_GCAL_001, "Google Takvim etkinligi silinemedi", exc=e, google_event_id=google_event_id)
         return False
 
 

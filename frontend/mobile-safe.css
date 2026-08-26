@@ -6,7 +6,6 @@
 html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
-    overflow-x: hidden;
     width: 100%;
 }
 
@@ -71,7 +70,6 @@ a,
 .primary-btn,
 .secondary-btn,
 .apt-status-btn,
-.style-btn,
 .size-btn,
 .region-btn,
 .slot-btn,
@@ -93,6 +91,50 @@ a,
 }
 
 @media (max-width: 768px) {
+    html:has(.booking-page),
+    body:has(.booking-page) {
+        height: auto !important;
+        min-height: 100dvh;
+        overflow-x: hidden;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-y: auto;
+    }
+
+    .booking-page {
+        overflow: visible;
+        height: auto;
+        min-height: 100dvh;
+        flex: 1 0 auto;
+    }
+
+    .booking-left {
+        justify-content: flex-start !important;
+        overflow: visible !important;
+        height: auto;
+        min-height: 0 !important;
+        touch-action: pan-y;
+    }
+
+    .booking-page.is-phone-step .booking-left {
+        min-height: calc(100dvh - 56px);
+    }
+
+    .booking-page.is-phone-step .booking-left > .booking-center {
+        margin-top: auto;
+        margin-bottom: auto;
+    }
+
+    .booking-left.is-tattoo-config-active,
+    .booking-page:not(.is-phone-step) .booking-left {
+        min-height: 0 !important;
+    }
+
+    .booking-left.is-tattoo-config-active > .booking-center {
+        margin-top: 0;
+        margin-bottom: 0;
+    }
+
     /* Taşma önleme — yalnızca mobil (masaüstüne dokunmaz) */
     .booking-center .step-content,
     #artist-section,
@@ -159,7 +201,6 @@ a,
         max-width: 100% !important;
     }
 
-    .style-btn,
     .size-btn,
     .region-btn,
     .config-alt-btn {

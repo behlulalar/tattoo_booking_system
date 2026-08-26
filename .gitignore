@@ -18,12 +18,16 @@ backend/credentials.json
 backend/credentials/google-calendar.json
 backend/wapio_settings.json
 backend/evolution_settings.json
+backend/google_calendar_settings.json
 
 ### Logs / runtime artifacts
 *.log
 *.log.*
 *.pid
 backend/.scheduler.lock
+backend/logs/*.log
+backend/logs/*.gz
+!backend/logs/.gitkeep
 
 ### Database dumps / backups (keep them elsewhere)
 backend/backups/

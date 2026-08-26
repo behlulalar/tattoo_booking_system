@@ -18,6 +18,18 @@ function getApiBaseUrl() {
 
 const API_BASE_URL = getApiBaseUrl();
 
+function formatPersonName(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLocaleLowerCase('tr-TR');
+      return lower.charAt(0).toLocaleUpperCase('tr-TR') + lower.slice(1);
+    })
+    .join(' ');
+}
+
 // =============================================
 // SPLASH / LOADING SCREEN
 // =============================================
@@ -26,8 +38,17 @@ document.addEventListener('DOMContentLoaded', () => {
   const bgVideo = document.querySelector('.bg-video');
   if (bgVideo) {
     bgVideo.muted = true;
+    bgVideo.defaultMuted = true;
     bgVideo.volume = 0;
     bgVideo.setAttribute('muted', '');
+    const tryPlay = () => {
+      const playPromise = bgVideo.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {});
+      }
+    };
+    if (bgVideo.readyState >= 2) tryPlay();
+    else bgVideo.addEventListener('canplay', tryPlay, { once: true });
   }
 
   // Reveal app after a short premium splash
@@ -48,7 +69,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Match sefa_web LoadingScreen timings (reveal ends ~2.8s) + short hold + fade out
   requestAnimationFrame(() => splash.classList.add('show'));
-  setTimeout(reveal, 3400);
+  setTimeout(reveal, 2300);
 });
 
 // =============================================
@@ -104,16 +125,17 @@ const customerNameInput = document.getElementById('customer-name');
 const customerSurnameInput = document.getElementById('customer-surname');
 const customerInfoError = document.getElementById('customer-info-error');
 
-// Tattoo config (style + region)
+[customerNameInput, customerSurnameInput].forEach((el) => {
+  el?.addEventListener('blur', () => {
+    el.value = formatPersonName(el.value);
+  });
+});
+
+// Tattoo config (region + size)
 const tattooConfigSection = document.getElementById('tattoo-config-section');
-const styleButtonsEl = document.getElementById('style-buttons');
 const regionButtonsEl = document.getElementById('region-buttons');
-const painMapWrapEl = document.getElementById('pain-map-wrap');
-const painMapLegendEl = document.getElementById('pain-map-legend');
-const selectedRegionLabelEl = document.getElementById('selected-region-label');
 const configSizePanel = document.getElementById('config-size-panel');
 const configSizeButtonsEl = document.getElementById('config-size-buttons');
-const configFormPanel = document.getElementById('tattoo-config-form-panel');
 const tattooConfigError = document.getElementById('tattoo-config-error');
 const tattooConfigBackBtn = document.getElementById('tattoo-config-back-btn');
 const tattooConfigContinueBtn = document.getElementById('tattoo-config-continue-btn');
@@ -132,89 +154,53 @@ let savedArtistId = null;
 let savedArtistPhone = '';
 let savedArtistName = '';
 let tattooConfigMeta = null;
-let savedTattooStyle = '';
 let savedBodyRegion = '';
 let savedConfigSize = '';
+let savedConfigSizeId = '';
 let savedConfigUndecided = false;
 
 const TATTOO_SIZES = [
-  { value: 'Minimal (2–5 cm)', label: 'Minimal (2–5 cm)' },
-  { value: 'Küçük - Orta (5–10 cm)', label: 'Küçük - Orta (5–10 cm)' },
-  { value: 'Orta (10–20 cm)', label: 'Orta (10–20 cm)' },
-  { value: 'Büyük (20 cm ve üzeri)', label: 'Büyük (20 cm ve üzeri)' },
-  { value: 'Tam Bölge (Sleeve/Back)', label: 'Tam Bölge (Sleeve/Back)' },
+  { id: 'minimal', value: 'Minimal (2–5 cm)', label: 'Minimal (2–5 cm)' },
+  { id: 'small_medium', value: 'Küçük - Orta (5–10 cm)', label: 'Küçük - Orta (5–10 cm)' },
+  { id: 'medium', value: 'Orta (10–20 cm)', label: 'Orta (10–20 cm)' },
+  { id: 'large', value: 'Büyük (20 cm ve üzeri)', label: 'Büyük (20 cm ve üzeri)' },
+  { id: 'full', value: 'Tam Bölge (Sleeve/Back)', label: 'Tam Bölge (Sleeve/Back)' },
 ];
 
-const TATTOO_STYLES_STATIC = [
-  { id: 'old_school', label: 'Old School / Traditional' },
-  { id: 'neo_traditional', label: 'Neo-Traditional' },
-  { id: 'realism', label: 'Realism' },
-  { id: 'fine_line', label: 'Fine Line / Minimalist' },
-  { id: 'geometric', label: 'Geometric' },
-  { id: 'watercolor', label: 'Watercolor' },
-  { id: 'irezumi', label: 'Irezumi' },
-  { id: 'blackwork', label: 'Blackwork' },
-  { id: 'tribal', label: 'Tribal' },
-  { id: 'trash_polka', label: 'Trash Polka' },
+const TATTOO_REGIONS_FALLBACK = [
+  { id: 'head', label: 'Baş / ense' },
+  { id: 'neck', label: 'Boyun' },
+  { id: 'chest', label: 'Göğüs', private: true },
+  { id: 'ribs', label: 'Kaburga', private: true },
+  { id: 'stomach', label: 'Karın', private: true },
+  { id: 'back_upper', label: 'Üst sırt' },
+  { id: 'back_lower', label: 'Alt sırt / bel', private: true },
+  { id: 'shoulder', label: 'Omuz' },
+  { id: 'upper_arm', label: 'Üst kol' },
+  { id: 'forearm', label: 'Ön kol' },
+  { id: 'wrist', label: 'Bilek' },
+  { id: 'hand', label: 'El / parmak' },
+  { id: 'thigh', label: 'Uyluk', private: true },
+  { id: 'knee', label: 'Diz' },
+  { id: 'calf', label: 'Baldır' },
+  { id: 'ankle', label: 'Ayak bileği' },
+  { id: 'foot', label: 'Ayak üstü' },
 ];
 
-function painTierClass(pain) {
-  const p = Number(pain) || 5;
-  if (p <= 3) return 'pain-tier-low';
-  if (p <= 6) return 'pain-tier-mid';
-  return 'pain-tier-high';
-}
+async function loadTattooConfigMeta() {
+  if (tattooConfigMeta) return tattooConfigMeta;
 
-function painLevelLabel(pain) {
-  const p = Number(pain) || 5;
-  if (p <= 3) return 'Az acı';
-  if (p <= 6) return 'Orta acı';
-  return 'Yüksek acı';
-}
-
-function painTagShortClass(pain) {
-  const p = Number(pain) || 5;
-  if (p <= 3) return 'low';
-  if (p <= 6) return 'mid';
-  return 'high';
-}
-
-async function loadTattooConfigMeta(staffId = null) {
-  const cacheKey = staffId ? String(staffId) : 'default';
-  if (tattooConfigMeta && tattooConfigMeta._staffId === cacheKey) return tattooConfigMeta;
-
-  const qs = staffId ? `?staff_id=${encodeURIComponent(staffId)}` : '';
-  const { ok, data } = await api(`/api/tattoo-config${qs}`, { method: 'GET' });
+  const { ok, data } = await api('/api/tattoo-config', { method: 'GET' });
   if (ok && data.success) {
-    tattooConfigMeta = { ...data, _staffId: cacheKey };
+    tattooConfigMeta = data;
     return tattooConfigMeta;
   }
   tattooConfigMeta = {
-    _staffId: cacheKey,
-    styles: TATTOO_STYLES_STATIC.map((s) => ({ ...s })),
     private_zone: {
       enabled: true,
       schedule_summary: 'Salı 14:00-18:00, Perşembe 14:00-18:00',
     },
-    regions: [
-      { id: 'head', label: 'Baş / ense', pain: 8 },
-      { id: 'neck', label: 'Boyun', pain: 7 },
-      { id: 'chest', label: 'Göğüs', pain: 6, private: true },
-      { id: 'ribs', label: 'Kaburga', pain: 9, private: true },
-      { id: 'stomach', label: 'Karın', pain: 7, private: true },
-      { id: 'back_upper', label: 'Üst sırt', pain: 5 },
-      { id: 'back_lower', label: 'Alt sırt / bel', pain: 6, private: true },
-      { id: 'shoulder', label: 'Omuz', pain: 5 },
-      { id: 'upper_arm', label: 'Üst kol', pain: 4 },
-      { id: 'forearm', label: 'Ön kol', pain: 3 },
-      { id: 'wrist', label: 'Bilek', pain: 4 },
-      { id: 'hand', label: 'El / parmak', pain: 7 },
-      { id: 'thigh', label: 'Uyluk', pain: 5, private: true },
-      { id: 'knee', label: 'Diz', pain: 8 },
-      { id: 'calf', label: 'Baldır', pain: 4 },
-      { id: 'ankle', label: 'Ayak bileği', pain: 5 },
-      { id: 'foot', label: 'Ayak üstü', pain: 6 },
-    ],
+    regions: TATTOO_REGIONS_FALLBACK.map((r) => ({ ...r })),
   };
   return tattooConfigMeta;
 }
@@ -224,39 +210,16 @@ function getRegionMeta(regionId) {
   return regions.find((r) => r.id === regionId) || null;
 }
 
-function getStyleMeta(styleId) {
-  const styles = tattooConfigMeta?.styles || TATTOO_STYLES_STATIC;
-  return styles.find((s) => s.id === styleId) || null;
-}
-
-function buildStyleButtons() {
-  if (!styleButtonsEl) return;
-  const styles = tattooConfigMeta?.styles || TATTOO_STYLES_STATIC;
-  styleButtonsEl.innerHTML = '';
-  styles.forEach((style) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'style-btn';
-    btn.dataset.styleId = style.id;
-    btn.textContent = style.label;
-    btn.addEventListener('click', () => selectTattooStyle(style.id));
-    styleButtonsEl.appendChild(btn);
-  });
-}
-
 function buildRegionButtons() {
   if (!regionButtonsEl) return;
-  const regions = tattooConfigMeta?.regions || [];
+  const regions = tattooConfigMeta?.regions || TATTOO_REGIONS_FALLBACK;
   regionButtonsEl.innerHTML = '';
   regions.forEach((region) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = `region-btn ${painTierClass(region.pain)}${region.private ? ' region-btn--private' : ''}`;
+    btn.className = 'region-btn';
     btn.dataset.regionId = region.id;
-    const privateTag = region.private
-      ? '<span class="region-private-tag" title="Mahremiyet odaklı randevu"><i class="fas fa-shield-alt"></i></span>'
-      : '';
-    btn.innerHTML = `<span class="region-btn-dot" aria-hidden="true"></span><span class="region-btn-label">${escapeHtml(region.label)}</span>${privateTag}`;
+    btn.innerHTML = `<span class="region-btn-label">${escapeHtml(region.label)}</span>`;
     btn.addEventListener('click', () => selectBodyRegion(region.id));
     regionButtonsEl.appendChild(btn);
   });
@@ -269,40 +232,11 @@ function buildSizeButtons() {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'size-btn';
-    btn.dataset.sizeValue = sz.value;
+    btn.dataset.sizeId = sz.id;
     btn.textContent = sz.label;
-    btn.addEventListener('click', () => selectConfigSize(sz.value));
+    btn.addEventListener('click', () => selectConfigSize(sz.value, sz.id));
     configSizeButtonsEl.appendChild(btn);
   });
-}
-
-function initPainMap() {
-  if (!window.PainMap || !painMapWrapEl) return;
-  window.PainMap.init(painMapWrapEl, painMapLegendEl, {
-    selectedRegion: savedBodyRegion,
-    onSelect: (regionId) => selectBodyRegion(regionId),
-    onHover: (regionId, isHovering) => {
-      updateSelectedRegionLabel(regionId, isHovering && regionId !== savedBodyRegion);
-    },
-  });
-}
-
-function updateSelectedRegionLabel(regionId, isHoverOnly = false) {
-  if (!selectedRegionLabelEl) return;
-  const id = regionId || savedBodyRegion;
-  if (!id) {
-    selectedRegionLabelEl.textContent = 'Bölge seçilmedi';
-    selectedRegionLabelEl.classList.add('is-empty');
-    return;
-  }
-  const meta = getRegionMeta(id);
-  if (!meta) return;
-  selectedRegionLabelEl.classList.remove('is-empty');
-  const pain = meta.pain ?? 5;
-  const prefix = isHoverOnly && id !== savedBodyRegion ? 'Önizleme: ' : 'Seçili: ';
-  selectedRegionLabelEl.innerHTML =
-    `${prefix}<strong>${escapeHtml(meta.label)}</strong> ` +
-    `<span class="pain-tag pain-tag-inline pain-tag-${painTagShortClass(pain)}">${escapeHtml(painLevelLabel(pain))} (${pain}/10)</span>`;
 }
 
 function updatePrivateZoneNotice() {
@@ -323,29 +257,16 @@ function updatePrivateZoneNotice() {
 }
 
 function syncConfigSelectionUI() {
-  document.querySelectorAll('.style-btn').forEach((b) => {
-    b.classList.toggle('selected', b.dataset.styleId === savedTattooStyle);
-  });
   document.querySelectorAll('.region-btn').forEach((b) => {
     b.classList.toggle('selected', b.dataset.regionId === savedBodyRegion);
   });
-  window.PainMap?.syncSelection(savedBodyRegion);
   document.querySelectorAll('.size-btn').forEach((b) => {
-    b.classList.toggle('selected', b.dataset.sizeValue === savedConfigSize);
+    b.classList.toggle('selected', b.dataset.sizeId === savedConfigSizeId);
   });
-  updateSelectedRegionLabel(savedBodyRegion);
   updatePrivateZoneNotice();
-  if (configSizePanel) {
-    configSizePanel.style.display = savedBodyRegion && !savedConfigUndecided ? 'block' : 'none';
-  }
+  if (configSizePanel) configSizePanel.style.display = 'block';
   updateConfigContinueState();
   refreshTattooScrollHints();
-}
-
-function selectTattooStyle(styleId) {
-  savedConfigUndecided = false;
-  savedTattooStyle = styleId;
-  syncConfigSelectionUI();
 }
 
 function selectBodyRegion(regionId) {
@@ -354,13 +275,14 @@ function selectBodyRegion(regionId) {
   syncConfigSelectionUI();
 }
 
-function selectConfigSize(sizeValue) {
+function selectConfigSize(sizeValue, sizeId = '') {
   savedConfigSize = sizeValue;
+  savedConfigSizeId = sizeId || TATTOO_SIZES.find((sz) => sz.value === sizeValue)?.id || '';
   syncConfigSelectionUI();
 }
 
 function updateConfigContinueState() {
-  const ready = !!(savedTattooStyle && savedBodyRegion && savedConfigSize);
+  const ready = !!(savedBodyRegion && savedConfigSize);
   if (tattooConfigContinueBtn) tattooConfigContinueBtn.disabled = !ready;
 }
 
@@ -399,13 +321,29 @@ function updateTattooPageScrollHints() {
     return;
   }
 
-  tattooPageScrollHints.hidden = false;
   const atTop = bookingLeftEl.scrollTop <= 16;
-  const atBottom = bookingLeftEl.scrollTop + bookingLeftEl.clientHeight >= bookingLeftEl.scrollHeight - 16;
+  const continueVisible = isContinueButtonInView();
+  const atBottom =
+    continueVisible ||
+    bookingLeftEl.scrollTop + bookingLeftEl.clientHeight >= bookingLeftEl.scrollHeight - 120;
+  if (atBottom) {
+    tattooPageScrollHints.hidden = true;
+    tattooConfigSection?.classList.remove('tattoo-show-scroll-fade');
+    return;
+  }
+
+  tattooPageScrollHints.hidden = false;
   tattooPageScrollHints.classList.toggle('is-at-top', atTop);
-  tattooPageScrollHints.classList.toggle('is-at-bottom', atBottom);
+  tattooPageScrollHints.classList.remove('is-at-bottom');
   tattooPageScrollHints.classList.toggle('is-scrolled', !atTop);
-  tattooConfigSection?.classList.toggle('tattoo-show-scroll-fade', !atBottom);
+  tattooConfigSection?.classList.add('tattoo-show-scroll-fade');
+}
+
+function isContinueButtonInView() {
+  if (!tattooConfigContinueBtn || !bookingLeftEl) return false;
+  const btnRect = tattooConfigContinueBtn.getBoundingClientRect();
+  const wrapRect = bookingLeftEl.getBoundingClientRect();
+  return btnRect.top < wrapRect.bottom - 8 && btnRect.bottom > wrapRect.top + 8;
 }
 
 function setupInlineScrollHints(wrapEl, scrollerEl) {
@@ -453,12 +391,9 @@ function setupTattooScrollHints() {
 async function initTattooConfigStep() {
   showInlineError(tattooConfigError, '');
   savedConfigUndecided = false;
-  savedTattooStyle = '';
-  await loadTattooConfigMeta(savedArtistId);
-  buildStyleButtons();
+  await loadTattooConfigMeta();
   buildRegionButtons();
   buildSizeButtons();
-  initPainMap();
   syncConfigSelectionUI();
   refreshTattooScrollHints();
 }
@@ -485,7 +420,9 @@ const successRefCopyBtn = document.getElementById('success-ref-copy-btn');
 const successWhatsappBlock = document.getElementById('success-whatsapp-block');
 const successWhatsappBtn = document.getElementById('success-whatsapp-btn');
 const successWhatsappHint = document.getElementById('success-whatsapp-hint');
+const successModalEl = document.getElementById('success-modal');
 let successRefCopyHandler = null;
+let successWhatsappClickHandler = null;
 
 function hideSuccessRefBlock() {
   if (successRefBlock) successRefBlock.style.display = 'none';
@@ -497,7 +434,15 @@ function hideSuccessRefBlock() {
 
 function hideSuccessWhatsappBlock() {
   if (successWhatsappBlock) successWhatsappBlock.style.display = 'none';
-  if (successWhatsappBtn) successWhatsappBtn.removeAttribute('href');
+  if (successWhatsappBtn) {
+    successWhatsappBtn.removeAttribute('href');
+    if (successWhatsappClickHandler) {
+      successWhatsappBtn.removeEventListener('click', successWhatsappClickHandler);
+      successWhatsappClickHandler = null;
+    }
+  }
+  successModalEl?.classList.remove('is-whatsapp-required');
+  if (successOkBtn) successOkBtn.style.display = '';
 }
 
 function phoneToWhatsAppIntl(phone) {
@@ -583,6 +528,14 @@ function setSuccessModalOpen(isOpen) {
   document.body.classList.toggle('success-modal-open', isOpen);
 }
 
+function closeSuccessModal(callback = null) {
+  if (successOverlay) successOverlay.style.display = 'none';
+  setSuccessModalOpen(false);
+  hideSuccessRefBlock();
+  hideSuccessWhatsappBlock();
+  if (callback) callback();
+}
+
 function showSuccess(title, message, callback = null) {
   hideSuccessRefBlock();
   hideSuccessWhatsappBlock();
@@ -590,13 +543,7 @@ function showSuccess(title, message, callback = null) {
   successMessage.textContent = message;
   successOverlay.style.display = 'flex';
   setSuccessModalOpen(true);
-  successOkBtn.onclick = () => {
-    successOverlay.style.display = 'none';
-    setSuccessModalOpen(false);
-    hideSuccessRefBlock();
-    hideSuccessWhatsappBlock();
-    if (callback) callback();
-  };
+  successOkBtn.onclick = () => closeSuccessModal(callback);
 }
 
 function showTattooRequestSuccess(data, defaultMessage, onClose = null, whatsappContext = null) {
@@ -605,14 +552,15 @@ function showTattooRequestSuccess(data, defaultMessage, onClose = null, whatsapp
   hideSuccessWhatsappBlock();
 
   const summary = whatsappContext?.summary || {};
+  const requiresWhatsapp = !!(summary.preConsultation || summary.undecided);
 
   if (ref && successRefBlock && successRefCode) {
     successRefCode.textContent = ref;
     successRefBlock.style.display = 'flex';
     if (summary.preConsultation) {
-      successMessage.textContent = 'Ön görüşme talebiniz alındı. Sanatçı sizinle iletişime geçecek.';
+      successMessage.textContent = 'Ön görüşme talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
     } else if (summary.undecided) {
-      successMessage.textContent = 'Talebiniz alındı. Sanatçı sizinle iletişime geçip birlikte planlama yapacak.';
+      successMessage.textContent = 'Talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
     } else {
       successMessage.textContent = 'Sanatçı inceleyince size randevu linki gönderilecek.';
     }
@@ -648,17 +596,25 @@ function showTattooRequestSuccess(data, defaultMessage, onClose = null, whatsapp
       successWhatsappHint.textContent = buildTattooRequestWhatsAppHint(waSummary);
     }
     successWhatsappBlock.style.display = 'block';
+
+    if (requiresWhatsapp) {
+      successModalEl?.classList.add('is-whatsapp-required');
+      if (successOkBtn) successOkBtn.style.display = 'none';
+      successWhatsappClickHandler = () => {
+        setTimeout(() => closeSuccessModal(onClose), 400);
+      };
+      successWhatsappBtn.addEventListener('click', successWhatsappClickHandler);
+    }
   }
 
   successOverlay.style.display = 'flex';
   setSuccessModalOpen(true);
-  successOkBtn.onclick = () => {
-    successOverlay.style.display = 'none';
-    setSuccessModalOpen(false);
-    hideSuccessRefBlock();
-    hideSuccessWhatsappBlock();
-    if (onClose) onClose();
-  };
+  if (!requiresWhatsapp || !waUrl) {
+    if (successOkBtn) successOkBtn.style.display = '';
+    successOkBtn.onclick = () => closeSuccessModal(onClose);
+  } else {
+    successOkBtn.onclick = null;
+  }
 }
 
 function updateTimerDisplay(seconds) {
@@ -724,7 +680,7 @@ phoneForm?.addEventListener('submit', async (e) => {
   savedPhone = value;
   verifyOverlay.style.display = 'flex';
   startCountdown(120);
-  verifyOtpApi.clearOtp();
+  verifyOtpApi.applyCode('123456');
   verifyOtpApi.focusFirst();
 });
 
@@ -779,13 +735,16 @@ customerInfoForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   showInlineError(customerInfoError, '');
 
-  const name = (customerNameInput?.value || '').trim();
-  const surname = (customerSurnameInput?.value || '').trim();
+  const name = formatPersonName(customerNameInput?.value || '');
+  const surname = formatPersonName(customerSurnameInput?.value || '');
 
   if (!name || !surname) {
     showInlineError(customerInfoError, 'Lütfen ad ve soyad girin.');
     return;
   }
+
+  if (customerNameInput) customerNameInput.value = name;
+  if (customerSurnameInput) customerSurnameInput.value = surname;
 
   const { ok, data } = await api('/api/register-customer', {
     method: 'POST',
@@ -797,8 +756,10 @@ customerInfoForm?.addEventListener('submit', async (e) => {
     return;
   }
 
+  const savedName = formatPersonName(data.customer?.name || name);
+  const savedSurname = formatPersonName(data.customer?.surname || surname);
   updateStepper(3);
-  if (welcomeName) welcomeName.textContent = `Hoş geldiniz, ${name} ${surname}`;
+  if (welcomeName) welcomeName.textContent = `Hoş geldiniz, ${savedName} ${savedSurname}`;
   if (welcomeOverlay) welcomeOverlay.style.display = 'flex';
 });
 
@@ -819,7 +780,7 @@ resendBtn?.addEventListener('click', async () => {
     showVerifyError(data.message || 'Kod gönderilemedi');
     return;
   }
-  verifyOtpApi.clearOtp();
+  verifyOtpApi.applyCode('123456');
   verifyOtpApi.focusFirst();
   startCountdown(120);
   showSuccess('Kod Gönderildi', 'Yeni doğrulama kodu WhatsApp üzerinden gönderildi.');
@@ -878,7 +839,6 @@ async function loadArtists() {
       savedArtistId = artist.id;
       savedArtistPhone = artist.phone || '';
       savedArtistName = artist.name || '';
-      tattooConfigMeta = null;
       artistContinueBtn.disabled = false;
     });
     artistCards.appendChild(card);
@@ -903,16 +863,128 @@ tattooConfigBackBtn?.addEventListener('click', () => {
 });
 
 tattooConfigContinueBtn?.addEventListener('click', () => {
+  if (!savedBodyRegion || !savedConfigSize) {
+    showInlineError(
+      tattooConfigError,
+      !savedBodyRegion ? 'Lütfen bir vücut bölgesi seçin.' : 'Lütfen dövme büyüklüğünü seçin.'
+    );
+    updateConfigContinueState();
+    return;
+  }
   submitTattooRequest();
 });
 
+const loyaltyPointsInfoBtn = document.getElementById('loyalty-points-info-btn');
+const loyaltyPointsInfo = document.getElementById('loyalty-points-info');
+
+function setLoyaltyPointsInfoOpen(isOpen) {
+  if (!loyaltyPointsInfo || !loyaltyPointsInfoBtn) return;
+  loyaltyPointsInfo.hidden = !isOpen;
+  loyaltyPointsInfoBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+}
+
+loyaltyPointsInfoBtn?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  setLoyaltyPointsInfoOpen(!!loyaltyPointsInfo?.hidden);
+});
+
+document.addEventListener('click', (e) => {
+  if (!loyaltyPointsInfo || loyaltyPointsInfo.hidden) return;
+  if (loyaltyPointsInfo.contains(e.target) || loyaltyPointsInfoBtn?.contains(e.target)) return;
+  setLoyaltyPointsInfoOpen(false);
+});
+
+const configConfirmOverlay = document.getElementById('config-confirm-overlay');
+const configConfirmTitle = document.getElementById('config-confirm-title');
+const configConfirmMessage = document.getElementById('config-confirm-message');
+const configConfirmIcon = document.getElementById('config-confirm-icon');
+const configConfirmBackBtn = document.getElementById('config-confirm-back-btn');
+const configConfirmOkBtn = document.getElementById('config-confirm-ok-btn');
+
+const CONFIG_CONFIRM = {
+  consultation: {
+    title: 'Ön görüşme talebi',
+    message: 'Bölge ve büyüklük seçmeden ön görüşme talebi oluşturulacak. Sanatçı sizinle iletişime geçecek. Onaylıyor musunuz?',
+    icon: 'fas fa-comments',
+    submit: { preConsultation: true },
+  },
+  undecided: {
+    title: 'Karar verilmedi',
+    message: 'Bölge ve büyüklük seçmeden talep oluşturulacak. Sanatçı sizinle iletişime geçecek. Onaylıyor musunuz?',
+    icon: 'fas fa-forward',
+    submit: { undecided: true },
+  },
+};
+
+let pendingConfigConfirm = null;
+
+function closeConfigConfirm() {
+  pendingConfigConfirm = null;
+  if (!configConfirmOverlay) return;
+  configConfirmOverlay.classList.remove('is-open');
+  configConfirmOverlay.style.display = 'none';
+}
+
+function openConfigConfirm(kind) {
+  const meta = CONFIG_CONFIRM[kind];
+  if (!meta) return;
+  pendingConfigConfirm = kind;
+  if (configConfirmTitle) configConfirmTitle.textContent = meta.title;
+  if (configConfirmMessage) configConfirmMessage.textContent = meta.message;
+  const iconEl = configConfirmIcon?.querySelector('i');
+  if (iconEl) iconEl.className = meta.icon;
+  if (configConfirmOverlay) {
+    configConfirmOverlay.style.display = 'flex';
+    configConfirmOverlay.classList.add('is-open');
+  }
+  configConfirmOkBtn?.focus();
+}
+
+tattooConfigConsultationBtn?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  openConfigConfirm('consultation');
+});
+
+tattooConfigUndecidedBtn?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  openConfigConfirm('undecided');
+});
+
+configConfirmBackBtn?.addEventListener('click', () => {
+  closeConfigConfirm();
+});
+
+configConfirmOverlay?.addEventListener('click', (e) => {
+  if (e.target === configConfirmOverlay) closeConfigConfirm();
+});
+
+configConfirmOkBtn?.addEventListener('click', () => {
+  const meta = CONFIG_CONFIRM[pendingConfigConfirm];
+  if (!meta) {
+    closeConfigConfirm();
+    return;
+  }
+  const kind = pendingConfigConfirm;
+  closeConfigConfirm();
+  const triggerBtn = kind === 'consultation' ? tattooConfigConsultationBtn : tattooConfigUndecidedBtn;
+  submitTattooRequest({ ...meta.submit, triggerBtn });
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && configConfirmOverlay?.classList.contains('is-open')) {
+    closeConfigConfirm();
+  }
+});
+
 function getTattooWhatsAppContext(extra = {}) {
-  const style = getStyleMeta(savedTattooStyle);
   const region = getRegionMeta(savedBodyRegion);
   return {
     artistPhone: savedArtistPhone,
     summary: {
-      styleLabel: style?.label || extra.styleLabel || '',
+      styleLabel: extra.styleLabel || '',
       regionLabel: region?.label || extra.regionLabel || '',
       size: savedConfigSize || extra.size || '',
       undecided: !!extra.undecided,
@@ -931,8 +1003,8 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
   showInlineError(tattooConfigError, '');
 
   if (!undecided && !preConsultation) {
-    if (!savedTattooStyle || !savedBodyRegion) {
-      showInlineError(tattooConfigError, 'Lütfen silüetten bir bölge ve bir tarz seçin.');
+    if (!savedBodyRegion) {
+      showInlineError(tattooConfigError, 'Lütfen bir vücut bölgesi seçin.');
       return;
     }
     if (!savedConfigSize) {
@@ -992,7 +1064,6 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
       size: savedConfigSize,
       body_region: savedBodyRegion,
       body_area: regionMeta?.label || '',
-      tattoo_style: savedTattooStyle,
     });
   }
 
@@ -1000,7 +1071,7 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
     undecided,
     preConsultation,
     regionLabel: payload.body_area,
-    styleLabel: preConsultation ? 'Ön görüşme' : undecided ? 'Henüz belirlenmedi' : undefined,
+    styleLabel: preConsultation ? 'Ön görüşme' : undecided ? 'Henüz belirlenmedi' : '',
   });
 
   try {
@@ -1023,9 +1094,9 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
       defaultMessage += ` İndirim kodunuz (${data.loyalty_discount.code}) talebe eklendi.`;
     }
     if (preConsultation) {
-      defaultMessage = 'Ön görüşme talebiniz alındı. Sanatçı sizinle iletişime geçecek.';
+      defaultMessage = 'Ön görüşme talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
     } else if (undecided) {
-      defaultMessage = 'Talebiniz alındı. Sanatçı sizinle iletişime geçecek.';
+      defaultMessage = 'Talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
     }
 
     showTattooRequestSuccess(data, defaultMessage, () => location.reload(), waCtx);
@@ -1033,165 +1104,6 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
     buttons.forEach((b) => { b.disabled = false; });
   }
 }
-
-tattooConfigUndecidedBtn?.addEventListener('click', () => {
-  submitTattooRequest({ undecided: true, triggerBtn: tattooConfigUndecidedBtn });
-});
-
-tattooConfigConsultationBtn?.addEventListener('click', () => {
-  submitTattooRequest({ preConsultation: true, triggerBtn: tattooConfigConsultationBtn });
-});
-
-// =============================================
-// TARZLARI KEŞFET — genel tarz vitrini
-// =============================================
-const discoverStylesOverlay = document.getElementById('discover-styles-overlay');
-const discoverStylesGrid = document.getElementById('discover-styles-grid');
-const discoverStylesBtn = document.getElementById('discover-styles-btn');
-const discoverStylesCloseBtn = document.getElementById('discover-styles-close');
-
-function styleShowcaseImagePaths(id) {
-  const base = `/img/style-showcase/${id}`;
-  return { jpg: `${base}.jpg`, svg: `${base}.svg` };
-}
-
-function renderDiscoverStylesCards() {
-  if (!discoverStylesGrid) return;
-  const items = window.STYLE_SHOWCASE || [];
-  discoverStylesGrid.innerHTML = '';
-
-  items.forEach((item) => {
-    const paths = styleShowcaseImagePaths(item.id);
-    const article = document.createElement('article');
-    article.className = 'discover-style-card';
-
-    const imageWrap = document.createElement('div');
-    imageWrap.className = 'discover-style-card-image-wrap';
-
-    const img = document.createElement('img');
-    img.className = 'discover-style-card-image';
-    img.alt = `${item.title} örnek dövme`;
-    img.loading = 'eager';
-    img.decoding = 'async';
-    img.dataset.jpg = paths.jpg;
-    img.dataset.svg = paths.svg;
-    img.src = paths.jpg;
-    img.addEventListener('error', function onImgError() {
-      if (img.dataset.fallbackUsed === '1') return;
-      img.dataset.fallbackUsed = '1';
-      img.src = paths.svg;
-    });
-    imageWrap.appendChild(img);
-
-    const body = document.createElement('div');
-    body.className = 'discover-style-card-body';
-
-    const title = document.createElement('h4');
-    title.className = 'discover-style-card-title';
-    title.textContent = item.title;
-
-    body.appendChild(title);
-
-    if (item.subtitle) {
-      const subtitle = document.createElement('p');
-      subtitle.className = 'discover-style-card-subtitle';
-      subtitle.textContent = item.subtitle;
-      body.appendChild(subtitle);
-    }
-
-    const desc = document.createElement('p');
-    desc.className = 'discover-style-card-desc';
-    desc.textContent = item.description;
-    body.appendChild(desc);
-
-    const hint = document.createElement('span');
-    hint.className = 'discover-style-card-hint';
-    hint.innerHTML =
-      '<span class="hint-collapsed"><i class="fas fa-expand" aria-hidden="true"></i> Detay için tıklayın</span>' +
-      '<span class="hint-expanded"><i class="fas fa-compress" aria-hidden="true"></i> Kapatmak için tekrar tıklayın</span>';
-    body.appendChild(hint);
-
-    article.dataset.styleId = item.id;
-    article.setAttribute('tabindex', '0');
-    article.setAttribute('role', 'button');
-    article.setAttribute('aria-expanded', 'false');
-    article.setAttribute('aria-label', `${item.title} — detayları göster`);
-
-    article.appendChild(imageWrap);
-    article.appendChild(body);
-    discoverStylesGrid.appendChild(article);
-  });
-
-  setupDiscoverStyleCardInteractions();
-}
-
-function setupDiscoverStyleCardInteractions() {
-  if (!discoverStylesGrid) return;
-
-  discoverStylesGrid.querySelectorAll('.discover-style-card').forEach((card) => {
-    if (card.dataset.bound === '1') return;
-    card.dataset.bound = '1';
-
-    const toggleExpand = () => {
-      const wasExpanded = card.classList.contains('is-expanded');
-      discoverStylesGrid.querySelectorAll('.discover-style-card').forEach((c) => {
-        c.classList.remove('is-expanded');
-        c.setAttribute('aria-expanded', 'false');
-      });
-      if (!wasExpanded) {
-        card.classList.add('is-expanded');
-        card.setAttribute('aria-expanded', 'true');
-        requestAnimationFrame(() => {
-          card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      }
-    };
-
-    card.addEventListener('click', toggleExpand);
-    card.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleExpand();
-      }
-    });
-  });
-}
-
-function openDiscoverStylesModal() {
-  if (!discoverStylesOverlay) return;
-  discoverStylesOverlay.style.display = 'flex';
-  discoverStylesOverlay.setAttribute('aria-hidden', 'false');
-  document.body.classList.add('discover-styles-open');
-  renderDiscoverStylesCards();
-  discoverStylesCloseBtn?.focus();
-}
-
-function closeDiscoverStylesModal() {
-  if (!discoverStylesOverlay) return;
-  discoverStylesOverlay.style.display = 'none';
-  discoverStylesOverlay.setAttribute('aria-hidden', 'true');
-  document.body.classList.remove('discover-styles-open');
-  discoverStylesBtn?.focus();
-}
-
-discoverStylesBtn?.addEventListener('click', (e) => {
-  e.preventDefault();
-  openDiscoverStylesModal();
-});
-
-discoverStylesCloseBtn?.addEventListener('click', () => {
-  closeDiscoverStylesModal();
-});
-
-discoverStylesOverlay?.addEventListener('click', (e) => {
-  if (e.target === discoverStylesOverlay) closeDiscoverStylesModal();
-});
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && discoverStylesOverlay?.style.display !== 'none') {
-    closeDiscoverStylesModal();
-  }
-});
 
 function escapeHtml(text) {
   if (text === null || text === undefined) return '';

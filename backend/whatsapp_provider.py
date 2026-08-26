@@ -10,6 +10,8 @@ import logging
 import os
 
 from config import get_evolution_config
+from error_codes import E_WA_001, E_WA_003
+from logging_setup import log_error, log_warning
 
 # Legacy Wapio — tekrar açmak için True yapın ve aşağıdaki blokları geri yükleyin
 # from config import get_wapio_config
@@ -19,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_WAPIO = "wapio"
 PROVIDER_EVOLUTION = "evolution"
+
+# Şimdilik tüm giden WhatsApp mesajları kapalı. Tekrar açmak için True yapın.
+WHATSAPP_SENDING_ENABLED = False
 
 
 def get_whatsapp_provider() -> str:
@@ -54,6 +59,10 @@ def send_whatsapp_message(
     remote_jid_alt: str | None = None,
 ) -> bool:
     """Tüm giden WhatsApp mesajları — Evolution sendText."""
+    if not WHATSAPP_SENDING_ENABLED:
+        logger.info("WhatsApp gönderimi şimdilik kapalı — mesaj atlandı: %s", phone)
+        return True
+
     from evolution_client import normalize_phone_for_send, send_text as evolution_send_text
 
     evolution_config = get_evolution_config()
@@ -63,12 +72,17 @@ def send_whatsapp_message(
     if not instance or not api_key:
         separator = "=" * 60
         print(f"\n{separator}")
-        print("📲  WHATSAPP MESAJI (TEST MODU — Evolution yapılandırması eksik)")
-        print(f"📱  Alıcı : {recipient}")
+        print("WHATSAPP MESAJI (TEST MODU — Evolution yapilandirmasi eksik)")
+        print(f"Alici : {recipient}")
         print(f"{'─' * 60}")
         print(message)
         print(f"{separator}\n")
-        logger.warning(f"⚠️  Evolution api_key/instance_name eksik — mesaj terminale yazdırıldı. Alıcı: {recipient}")
+        log_warning(
+            logger,
+            E_WA_003,
+            "Evolution api_key/instance_name eksik, mesaj terminale yazildi",
+            recipient=recipient,
+        )
         return False
 
     ok = evolution_send_text(
@@ -80,7 +94,13 @@ def send_whatsapp_message(
         remote_jid_alt=remote_jid_alt,
     )
     if not ok:
-        logger.error(f"WhatsApp mesajı gönderilemedi: {recipient} (jid={remote_jid or remote_jid_alt or '—'})")
+        log_error(
+            logger,
+            E_WA_001,
+            "WhatsApp mesaji gonderilemedi",
+            recipient=recipient,
+            jid=remote_jid or remote_jid_alt or "-",
+        )
     return ok
 
 

@@ -4,7 +4,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import requests
 from dotenv import load_dotenv
-from config import DATABASE_CONFIG, WAPIO_CONFIG, CODE_EXPIRATION_SECONDS, SITE_CONFIG, get_site_settings, save_site_settings, get_evolution_config, save_evolution_config
+from config import DATABASE_CONFIG, WAPIO_CONFIG, CODE_EXPIRATION_SECONDS, SITE_CONFIG, get_site_settings, save_site_settings, get_evolution_config, save_evolution_config, get_google_calendar_config, save_google_calendar_config
 # Wapio (legacy — dosyalar repoda; runtime devre dışı)
 # from config import get_wapio_config, save_wapio_config
 # from wapio_compat import run_wapio_compat_check
@@ -41,6 +41,10 @@ from google_calendar_sync import (
     on_appointment_status_changed,
     on_appointment_cancelled,
     is_google_calendar_enabled,
+    credentials_file_ok,
+    get_service_account_email,
+    probe_google_calendar,
+    list_accessible_calendars,
 )
 from whatsapp_provider import (
     WAPIO_INTEGRATION_ENABLED,
@@ -86,7 +90,6 @@ import random
 import time
 import psycopg2
 from psycopg2 import pool
-from psycopg2.errors import UniqueViolation
 import hashlib
 import secrets
 import bcrypt
@@ -95,13 +98,29 @@ import logging
 import re
 import atexit
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from urllib.parse import urlparse
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from threading import Lock
 from marshmallow import Schema, fields, validate, ValidationError, validates
 import psutil
+
+from logging_setup import setup_logging, log_error, log_warning
+from error_codes import (
+    E_AUTH_001,
+    E_BKP_001,
+    E_BOOK_001,
+    E_DB_001,
+    E_DB_002,
+    E_DB_003,
+    E_REQ_001,
+    E_SCH_001,
+    E_WA_002,
+    E_WA_003,
+    E_WA_004,
+    W_CFG_001,
+)
 
 load_dotenv()
 
@@ -115,31 +134,7 @@ if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 
-# Log dosyası için mutlak yol kullan
-import os
-from logging.handlers import RotatingFileHandler
-
-LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'app.log')
-LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
-LOG_BACKUP_COUNT = 5  # 5 yedek dosya
-
-# Rotating log handler (5MB limit, 5 backup file)
-file_handler = RotatingFileHandler(
-    LOG_FILE_PATH,
-    maxBytes=LOG_MAX_BYTES,
-    backupCount=LOG_BACKUP_COUNT,
-    encoding='utf-8'
-)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        file_handler,
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
@@ -275,13 +270,23 @@ def init_db_pool():
                 maxconn=DB_POOL_MAX_CONN,
                 **DATABASE_CONFIG
             )
-            logger.info(f"Veritabanı bağlantı havuzu oluşturuldu (min: {DB_POOL_MIN_CONN}, max: {DB_POOL_MAX_CONN})")
+            logger.info(
+                "Veritabani baglanti havuzu olusturuldu | min=%s max=%s",
+                DB_POOL_MIN_CONN,
+                DB_POOL_MAX_CONN,
+            )
         except Exception as e:
-            logger.error(f"Veritabanı bağlantı havuzu oluşturulamadı: {e}")
+            log_error(
+                logger,
+                E_DB_001,
+                "Veritabani baglanti havuzu olusturulamadi",
+                exc=e,
+            )
             if 'SSL' in str(e) and os.getenv('DATABASE_SSLMODE'):
-                logger.error(
-                    "İpucu: Sunucuda yerel PostgreSQL kullanıyorsanız .env içinden "
-                    "DATABASE_SSLMODE satırını kaldırın."
+                log_warning(
+                    logger,
+                    W_CFG_001,
+                    "Yerel PostgreSQL kullaniliyorsa .env icinden DATABASE_SSLMODE satirini kaldirin",
                 )
             db_pool = None
 
@@ -344,12 +349,19 @@ def get_db_connection(timeout=None):
                 # Pool exhausted - kısa bir süre bekle ve tekrar dene
                 elapsed = time.time() - start_time
                 if elapsed >= timeout:
-                    logger.error(f"DB connection pool exhausted - timeout after {timeout}s")
+                    log_error(
+                        logger,
+                        E_DB_002,
+                        "Veritabani baglanti havuzu doldu",
+                        timeout_s=timeout,
+                    )
                     raise Exception("Sistem yoğun, lütfen tekrar deneyin")
                 time.sleep(0.1)  # 100ms bekle
                 
     except Exception as e:
-        logger.error(f"Bağlantı alınamadı: {e}")
+        if str(e) == "Sistem yoğun, lütfen tekrar deneyin":
+            raise
+        log_error(logger, E_DB_002, "Veritabani baglantisi alinamadi", exc=e)
         raise
 
 
@@ -362,7 +374,7 @@ def release_db_connection(conn, close=False):
             else:
                 db_pool.putconn(conn)
         except Exception as e:
-            logger.error(f"Bağlantı geri verilemedi: {e}")
+            log_error(logger, E_DB_003, "Veritabani baglantisi havuza geri verilemedi", exc=e)
 
 
 # =============================================
@@ -569,7 +581,7 @@ def cleanup_expired_verification_codes():
         cursor.close()
         
         if deleted_count > 0:
-            logger.info(f"✅ Expired verification codes cleaned: {deleted_count}")
+            logger.info(f"Expired verification codes cleaned: {deleted_count}")
         
         return deleted_count
     except Exception as e:
@@ -605,7 +617,7 @@ def cleanup_expired_webhook_messages():
         cursor.close()
         
         if deleted_count > 0:
-            logger.info(f"✅ Expired webhook cooldown records cleaned: {deleted_count}")
+            logger.info(f"Expired webhook cooldown records cleaned: {deleted_count}")
         
         return deleted_count
     except Exception as e:
@@ -670,7 +682,7 @@ def cleanup_old_cancelled_appointments():
         cursor.close()
         
         if deleted:
-            logger.info(f"✅ {len(deleted)} eski cancelled randevu temizlendi (30+ gün)")
+            logger.info(f"{len(deleted)} eski cancelled randevu temizlendi (30+ gün)")
         
         return len(deleted)
     except Exception as e:
@@ -710,10 +722,10 @@ def cleanup_expired_admin_tokens():
             for token, _ in items_to_remove:
                 admin_tokens.pop(token, None)
                 expired_count += 1
-            logger.warning(f"⚠️ Admin tokens dict çok büyüdü, en eski {len(items_to_remove)} token temizlendi")
+            logger.warning(f"Admin tokens dict çok büyüdü, en eski {len(items_to_remove)} token temizlendi")
     
     if expired_count > 0:
-        logger.info(f"✅ Expired admin tokens cleaned: {expired_count} (remaining: {len(admin_tokens)})")
+        logger.info(f"Expired admin tokens cleaned: {expired_count} (remaining: {len(admin_tokens)})")
     
     return expired_count
 
@@ -805,6 +817,40 @@ def token_required(f):
         
         return f(*args, **kwargs)
     return decorated
+
+
+STUDIO_ADMIN_ROLES = ('super_admin', 'tech_support')
+ALLOWED_STAFF_ROLES = ('super_admin', 'staff', 'tech_support')
+
+
+def is_studio_admin(role=None):
+    """Super Admin ve Teknik Destek: stüdyo genelinde işlem yapabilir."""
+    r = request.staff_role if role is None else role
+    return r in STUDIO_ADMIN_ROLES
+
+
+def can_access_income(role=None):
+    """Gelir raporu / kazanç detayı yalnızca Super Admin."""
+    r = request.staff_role if role is None else role
+    return r == 'super_admin'
+
+
+def can_access_tattoo_requests(role=None):
+    """Dövme talepleri: personel ve super admin. Teknik destek göremez."""
+    r = request.staff_role if role is None else role
+    return r in ('super_admin', 'staff')
+
+
+def _role_assignment_error(desired_role=None, existing_role=None):
+    if desired_role is not None and desired_role not in ALLOWED_STAFF_ROLES:
+        return jsonify({'success': False, 'message': 'Geçersiz rol'}), 400
+    if can_access_income():
+        return None
+    if desired_role == 'super_admin':
+        return jsonify({'success': False, 'message': 'Super Admin rolü atayamazsınız'}), 403
+    if existing_role == 'super_admin':
+        return jsonify({'success': False, 'message': 'Super Admin hesabı üzerinde işlem yapamazsınız'}), 403
+    return None
 
 
 def customer_token_required(f):
@@ -939,11 +985,11 @@ def _handle_whatsapp_welcome_inbound(
     logger.info(f"WhatsApp mesajı alındı: {phone} - {body}")
 
     if not body or len(str(body).strip()) == 0:
-        logger.info(f"❌ Boş mesaj içeriği, karşılama mesajı gönderilmeyecek: {phone}")
+        logger.info(f"Boş mesaj içeriği, karşılama mesajı gönderilmeyecek: {phone}")
         return jsonify({'success': True, 'message': 'Boş mesaj, işlenmedi'}), 200
 
     if len(str(body).strip()) < 2:
-        logger.info(f"❌ Çok kısa mesaj içeriği, karşılama mesajı gönderilmeyecek: {phone}")
+        logger.info(f"Çok kısa mesaj içeriği, karşılama mesajı gönderilmeyecek: {phone}")
         return jsonify({'success': True, 'message': 'Geçersiz mesaj, işlenmedi'}), 200
 
     conn = None
@@ -960,13 +1006,13 @@ def _handle_whatsapp_welcome_inbound(
             time_diff = (datetime.now() - last_sent_at).total_seconds()
             if time_diff < WEBHOOK_COOLDOWN_SECONDS:
                 logger.info(
-                    f"⏳ Cooldown aktif ({time_diff:.1f}s < {WEBHOOK_COOLDOWN_SECONDS}s), mesaj gönderilmedi: {cooldown_key}"
+                    f"Cooldown aktif ({time_diff:.1f}s < {WEBHOOK_COOLDOWN_SECONDS}s), mesaj gonderilmedi: {cooldown_key}"
                 )
                 cursor.close()
                 return jsonify({'success': True, 'message': 'Cooldown aktif'}), 200
         cursor.close()
     except Exception as e:
-        logger.error(f"❌ Cooldown kontrolü hatası: {e}")
+        logger.error(f"Cooldown kontrolü hatası: {e}")
         if conn:
             try:
                 conn.rollback()
@@ -981,7 +1027,7 @@ def _handle_whatsapp_welcome_inbound(
         return jsonify({'success': True, 'message': 'Already processed'}), 200
 
     if not welcome_message_enabled():
-        logger.info(f"ℹ️ Otomatik karşılama mesajı kapalı, gönderilmedi: {phone}")
+        logger.info("Otomatik karsilama mesaji kapali, gonderilmedi | phone=%s", phone)
         return jsonify({'success': True, 'message': 'Karşılama mesajı devre dışı'}), 200
 
     # Paralel webhook tekrarında aynı message_id ile çift gönderimi azalt
@@ -1000,7 +1046,7 @@ def _handle_whatsapp_welcome_inbound(
     )
 
     if mesaj_gonderildi:
-        logger.info(f"✅ Karşılama mesajı gönderildi: {cooldown_key}")
+        logger.info(f"Karşılama mesajı gönderildi: {cooldown_key}")
         if len(webhook_processed_message_ids) > 1000:
             webhook_processed_message_ids.clear()
         conn = None
@@ -1019,7 +1065,7 @@ def _handle_whatsapp_welcome_inbound(
             conn.commit()
             cursor.close()
         except Exception as e:
-            logger.error(f"❌ Cooldown kaydetme hatası: {e}")
+            logger.error(f"Cooldown kaydetme hatası: {e}")
             if conn:
                 try:
                     conn.rollback()
@@ -1029,7 +1075,7 @@ def _handle_whatsapp_welcome_inbound(
             if conn:
                 release_db_connection(conn)
     else:
-        logger.warning(f"⚠️ Mesaj gönderilemedi: {cooldown_key} (cooldown kaydedilmedi)")
+        logger.warning(f"Mesaj gönderilemedi: {cooldown_key} (cooldown kaydedilmedi)")
         if message_id:
             webhook_processed_message_ids.discard(message_id)
 
@@ -1044,7 +1090,8 @@ def whatsapp_webhook():
         if not request.is_json:
             return jsonify({'success': True, 'message': 'Evolution JSON webhook bekleniyor'}), 200
         data = request.get_json()
-        logger.info(f"📥 Webhook input (JSON): {json.dumps(data, ensure_ascii=False)}")
+        event_name = data.get("event") if isinstance(data, dict) else type(data).__name__
+        logger.info("WhatsApp webhook alindi | event=%s", event_name)
         if not isinstance(data, dict):
             return jsonify({'success': True, 'message': 'Geçersiz payload'}), 200
 
@@ -1062,7 +1109,7 @@ def whatsapp_webhook():
         )
 
     except Exception as e:
-        logger.error(f"WhatsApp webhook hatası: {e}")
+        log_error(logger, E_WA_002, "WhatsApp webhook islenemedi", exc=e)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1103,6 +1150,26 @@ def customer_phone_for_db(phone):
     if len(digits) > 10:
         digits = digits[-10:]
     return digits
+
+
+_TR_NAME_TO_LOWER = str.maketrans('Iİ', 'ıi')
+_TR_NAME_FIRST_UPPER = {'i': 'İ', 'ı': 'I'}
+
+
+def format_person_name(value):
+    """Ad/soyad: her kelimenin ilk harfi büyük, kalanı küçük (Türkçe İ/ı)."""
+    if value is None:
+        return None
+    text = ' '.join(str(value).split())
+    if not text:
+        return None
+    words = []
+    for word in text.split(' '):
+        lowered = word.translate(_TR_NAME_TO_LOWER).lower()
+        first, rest = lowered[:1], lowered[1:]
+        first = _TR_NAME_FIRST_UPPER.get(first, first.upper())
+        words.append(first + rest)
+    return ' '.join(words)
 
 
 def _customer_phone_lookup_values(phone):
@@ -1278,14 +1345,23 @@ def get_private_zone_bookable_dates(days_ahead=14, private_zone_settings=None):
     return dates
 
 
-def _generate_half_hour_slots(start_minutes, end_minutes):
-    """start_minutes dahil, end_minutes hariç 30 dk slot listesi."""
+# Müşteri randevu seçimi ve uygun saat üretimi bu adımla gider.
+SLOT_STEP_MINUTES = 60
+
+
+def _ranges_overlap(start_a, end_a, start_b, end_b):
+    return start_a < end_b and start_b < end_a
+
+
+def _generate_half_hour_slots(start_minutes, end_minutes, step=None):
+    """start_minutes dahil, end_minutes hariç slot listesi (varsayılan 60 dk)."""
+    step = int(step or SLOT_STEP_MINUTES)
     slots = []
     current = int(start_minutes)
     end_m = int(end_minutes)
     while current < end_m:
         slots.append(_time_str_from_minutes(current))
-        current += 30
+        current += step
     return slots
 
 
@@ -1340,24 +1416,15 @@ def compute_available_start_slots(
         # Hiç çalışma saati tanımlanmamış → admin panel varsayılanı (10:00–20:00)
         available_slots = _generate_half_hour_slots(10 * 60, 20 * 60)
 
-    booked = []
+    busy_intervals = []
     cursor.execute("""
         SELECT appointment_time, duration_minutes
         FROM appointments
         WHERE staff_id = %s AND appointment_date = %s AND status != 'cancelled'
     """, (staff_id, formatted_date))
     for appt_time, dur in cursor.fetchall():
-        appt_time_str = str(appt_time)[:5]
-        booked.append(appt_time_str)
-        dur = int(dur or 30)
-        slots_to_block = dur // 30
-        if dur % 30 != 0:
-            slots_to_block += 1
-        if appt_time_str in available_slots:
-            start_idx = available_slots.index(appt_time_str)
-            for i in range(1, slots_to_block):
-                if start_idx + i < len(available_slots):
-                    booked.append(available_slots[start_idx + i])
+        appt_start = _time_str_to_minutes(str(appt_time)[:5])
+        busy_intervals.append((appt_start, appt_start + int(dur or SLOT_STEP_MINUTES)))
 
     cursor.execute("""
         SELECT start_time, end_time FROM time_off
@@ -1365,44 +1432,44 @@ def compute_available_start_slots(
     """, (staff_id, formatted_date))
     for start_time, end_time in cursor.fetchall():
         if start_time is None:
-            booked.extend(available_slots)
+            busy_intervals.append((0, 24 * 60))
         else:
-            start_str = str(start_time)[:5]
+            start_m = _time_str_to_minutes(str(start_time)[:5])
             end_str = str(end_time)[:5] if end_time else "00:00"
-            end_of_day = end_str == "00:00"
-            for t in available_slots:
-                if end_of_day:
-                    if start_str <= t:
-                        booked.append(t)
-                else:
-                    if start_str <= t < end_str:
-                        booked.append(t)
+            end_m = 24 * 60 if end_str in ("00:00", "24:00") else _time_str_to_minutes(end_str)
+            if end_m <= start_m:
+                end_m = 24 * 60
+            busy_intervals.append((start_m, end_m))
 
     if is_day_closed:
-        booked = list(set(booked + available_slots))
-    else:
-        booked = list(set(booked))
+        busy_intervals.append((0, 24 * 60))
 
-    req = int(duration_minutes or 30)
-    if req < 30:
-        req = 30
+    booked = []
+    for t in available_slots:
+        slot_start = _time_str_to_minutes(t)
+        slot_end = slot_start + SLOT_STEP_MINUTES
+        if any(_ranges_overlap(slot_start, slot_end, b0, b1) for b0, b1 in busy_intervals):
+            booked.append(t)
+
+    req = int(duration_minutes or SLOT_STEP_MINUTES)
+    if req < SLOT_STEP_MINUTES:
+        req = SLOT_STEP_MINUTES
     if req % 30 != 0:
         req = ((req // 30) + 1) * 30
-    slots_needed = req // 30
     booked_set = set(booked)
+    work_end_m = (
+        _time_str_to_minutes(available_slots[-1]) + SLOT_STEP_MINUTES
+        if available_slots else 0
+    )
     starts = []
-    for idx, start in enumerate(available_slots):
-        ok = True
-        for j in range(slots_needed):
-            k = idx + j
-            if k >= len(available_slots):
-                ok = False
-                break
-            if available_slots[k] in booked_set:
-                ok = False
-                break
-        if ok:
-            starts.append(start)
+    for start in available_slots:
+        start_m = _time_str_to_minutes(start)
+        end_m = start_m + req
+        if end_m > work_end_m:
+            continue
+        if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
+            continue
+        starts.append(start)
 
     # Bugünse geçmiş başlangıç saatlerini çıkar
     from datetime import date as dt_date
@@ -1412,7 +1479,7 @@ def compute_available_start_slots(
         if past_filter_mode == 'strict':
             cutoff = now_mins
         else:
-            cutoff = now_mins + 30
+            cutoff = now_mins + SLOT_STEP_MINUTES
         starts = [s for s in starts if _time_str_to_minutes(s) > cutoff]
 
     # Özel bölge: yalnızca yapılandırılmış gün/saat pencerelerinde randevu
@@ -1431,29 +1498,21 @@ def compute_available_start_slots(
                     t for t in available_slots
                     if win_start_m <= _time_str_to_minutes(t) < win_end_m
                 ]
-                booked_set = {t for t in booked_set if t in available_slots}
-                req = int(duration_minutes or 30)
-                if req < 30:
-                    req = 30
-                if req % 30 != 0:
-                    req = ((req // 30) + 1) * 30
-                slots_needed = req // 30
-                filtered_starts = []
-                for idx, start in enumerate(available_slots):
-                    if _time_str_to_minutes(start) + req > win_end_m:
+                booked_set = set()
+                for t in available_slots:
+                    slot_start = _time_str_to_minutes(t)
+                    slot_end = slot_start + SLOT_STEP_MINUTES
+                    if any(_ranges_overlap(slot_start, slot_end, b0, b1) for b0, b1 in busy_intervals):
+                        booked_set.add(t)
+                starts = []
+                for start in available_slots:
+                    start_m = _time_str_to_minutes(start)
+                    end_m = start_m + req
+                    if end_m > win_end_m:
                         continue
-                    ok = True
-                    for j in range(slots_needed):
-                        k = idx + j
-                        if k >= len(available_slots):
-                            ok = False
-                            break
-                        if available_slots[k] in booked_set:
-                            ok = False
-                            break
-                    if ok:
-                        filtered_starts.append(start)
-                starts = filtered_starts
+                    if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
+                        continue
+                    starts.append(start)
 
     if return_details:
         work_start = available_slots[0] if available_slots else None
@@ -1524,11 +1583,11 @@ def admin_schedule_grid_times():
 
         staff_ids = []
         if staff_id:
-            if request.staff_role != 'super_admin' and int(staff_id) != int(request.staff_id):
+            if not is_studio_admin() and int(staff_id) != int(request.staff_id):
                 cursor.close()
                 return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
             staff_ids = [int(staff_id)]
-        elif request.staff_role == 'super_admin':
+        elif is_studio_admin():
             cursor.execute("SELECT id FROM artists ORDER BY id")
             staff_ids = [r[0] for r in cursor.fetchall()]
         else:
@@ -1555,8 +1614,8 @@ def admin_schedule_grid_times():
 
 
 def is_wapio_demo_mode():
-    """Aktif sağlayıcı yapılandırılmamışsa veya demo env açıksa sabit OTP."""
-    return is_whatsapp_demo_mode()
+    """Şimdilik sabit OTP 123456 — WhatsApp doğrulaması atlanır."""
+    return True
 
 
 def verify_phone_code_from_db(phone, code):
@@ -1625,15 +1684,15 @@ def send_whatsapp_code(phone):
 
     message_sent = False
     if not configured:
-        logger.warning(f"⚠️ Evolution yapılandırması eksik! Kod: {code}")
-        print(f"\n{'='*50}\n🔐 DOĞRULAMA KODU (TEST MODU)\n📱 Telefon: {original_phone}\n✅ Kod: {code}\n{'='*50}\n")
+        log_warning(logger, E_WA_003, "Evolution yapilandirmasi eksik, kod terminale yazildi", phone=original_phone)
+        print(f"\n{'='*50}\nDOGRULAMA KODU (TEST MODU)\nTelefon: {original_phone}\nKod: {code}\n{'='*50}\n")
     else:
         message_sent = send_wapio_message(original_phone, message)
 
     if message_sent:
-        logger.info(f"✅ Doğrulama kodu WhatsApp mesajı gönderildi: {original_phone}")
+        logger.info("Dogrulama kodu WhatsApp ile gonderildi | phone=%s", original_phone)
     elif configured:
-        logger.warning(f"⚠️ Doğrulama kodu WhatsApp mesajı gönderilemedi: {original_phone}")
+        log_error(logger, E_WA_004, "Dogrulama kodu WhatsApp ile gonderilemedi", phone=original_phone)
     
     # Database tabanlı kod kaydetme (mesaj gönderilse de gönderilmese de)
     # Worker'lar arasında paylaşımlı olması için database'e kaydet
@@ -1748,7 +1807,7 @@ def send_code():
             }), 503
         return jsonify({'success': True, 'message': 'Doğrulama kodu WhatsApp ile gönderildi'})
     except Exception as e:
-        logger.error(f"Doğrulama kodu gönderilirken hata: {e}")
+        log_error(logger, E_WA_004, "Dogrulama kodu gonderilirken hata", exc=e)
         return jsonify({
             'success': False,
             'message': 'Kod gönderilirken bir hata oluştu'
@@ -1826,8 +1885,8 @@ def register_customer():
     phone = customer_phone_for_db(str(phone).strip())
     if len(phone) != 10:
         return jsonify({'success': False, 'message': 'Geçerli 10 haneli telefon girin'}), 400
-    name = (str(name).strip() if name is not None else None) or None
-    surname = (str(surname).strip() if surname is not None else None) or None
+    name = format_person_name(name)
+    surname = format_person_name(surname)
 
     conn = None
     conn_bad = False
@@ -1950,7 +2009,12 @@ def get_artists():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            "SELECT id, name, profile_photo, phone, instagram_url FROM artists ORDER BY display_order ASC, id ASC"
+            """
+            SELECT id, name, profile_photo, phone, instagram_url
+            FROM artists
+            WHERE role IS DISTINCT FROM 'tech_support'
+            ORDER BY display_order ASC, id ASC
+            """
         )
         barbers = cursor.fetchall()
         cursor.close()
@@ -1995,8 +2059,12 @@ def get_booked_times():
     date_str = request.args.get('date')  # Format: "16.12.2025"
     duration_minutes = request.args.get('duration_minutes', type=int)  # Dakika cinsinden (opsiyonel)
     
-    logger.info(f"get_booked_times çağrıldı: staff_id={staff_id}, date={date_str}, duration_minutes={duration_minutes}")
-    print(f"DEBUG: get_booked_times - staff_id={staff_id}, date={date_str}, duration_minutes={duration_minutes}")
+    logger.info(
+        "get_booked_times | staff_id=%s date=%s duration=%s",
+        staff_id,
+        date_str,
+        duration_minutes,
+    )
     
     if not staff_id or not date_str:
         return jsonify({"success": False, "message": "staff_id ve date gerekli"}), 400
@@ -2017,9 +2085,12 @@ def get_booked_times():
         booked_times = slot_details['booked_slots']
         available_start_slots = slot_details['available_start_slots']
 
-        logger.info(f"Available slots: {available_slots}")
-        logger.info(f"Booked times: {booked_times}")
-        logger.info(f"Available start slots (duration={duration_minutes}): {available_start_slots}")
+        logger.info(
+            "get_booked_times slots | available=%s booked=%s start_slots=%s",
+            len(available_slots or []),
+            len(booked_times or []),
+            len(available_start_slots or []),
+        )
 
         cursor.close()
 
@@ -2039,345 +2110,41 @@ def get_booked_times():
 
 
 # =============================================
-# TATTOO CONFIG (style + body region — no auto pricing)
+# TATTOO CONFIG (body region — no auto pricing)
 # =============================================
 
-TATTOO_STYLES = {
-    # Genel (diğer sanatçılar)
-    'old_school': {'label': 'Old School / Traditional'},
-    'neo_traditional': {'label': 'Neo-Traditional'},
-    'realism': {'label': 'Realism'},
-    'fine_line': {'label': 'Fine Line / Minimalist'},
-    'geometric': {'label': 'Geometric'},
-    'watercolor': {'label': 'Watercolor'},
-    'irezumi': {'label': 'Irezumi'},
-    'blackwork': {'label': 'Blackwork'},
-    'tribal': {'label': 'Tribal'},
-    'trash_polka': {'label': 'Trash Polka'},
-    # Tuncer — özel tarzlar
-    'black_grey_realism': {'label': 'Black and Grey Realism (Siyah-Gri Gerçekçilik)'},
-    'cyber_sigilism_modern_tribal': {'label': 'Cyber Sigilism / Modern Tribal'},
-    'trash_polka_sketch': {'label': 'Trash Polka & Sketch Style (Eskiz / Grafik)'},
-    'japanese_irezumi_blackwork': {'label': 'Japanese / Irezumi Blackwork'},
-    'fine_line_ornamental': {'label': 'Fine Line & Ornamental (Zarif Çizgi ve Süsleme)'},
-    'pet_portraits_micro_realism': {'label': 'Pet Portraits / Micro-Realism'},
-    'illustrative_blackwork': {'label': 'Illustrative Blackwork'},
-    # Nihal Karagöz — özel tarzlar
-    'fine_line_botanical': {'label': 'Fine Line & Botanical (İnce Çizgi ve Botanik)'},
-    'ornamental_dotwork': {'label': 'Ornamental & Dotwork (Süsleme ve Noktalama)'},
-    'lettering_typography': {'label': 'Lettering & Typography (Yazı ve Kaligrafi)'},
-    'red_ink_minimal_color': {'label': 'Red Ink & Minimal Color (Kırmızı Mürekkep ve Renkli Minimalist)'},
-    'illustrative_pop_culture': {'label': 'Illustrative & Pop Culture (İllüstratif ve Popüler Kültür)'},
-    'surrealism_sketch': {'label': 'Surrealism & Sketch (Gerçeküstü ve Eskiz)'},
-    'micro_realism_black_grey': {'label': 'Micro-Realism / Black and Grey (Mikro Gerçekçilik / Siyah Gri)'},
-    'cyber_sigilism': {'label': 'Cyber Sigilism'},
-    # Mert İrioglu — özel tarzlar
-    'micro_realism_micro_black_grey': {'label': 'Micro-Realism / Micro Black & Grey'},
-    'dark_surrealism_dark_art': {'label': 'Dark Surrealism / Dark Art'},
-    'custom_lettering_calligraphy': {'label': 'Custom Lettering / Calligraphy'},
-    'pop_culture_cartoon_art': {'label': 'Pop Culture / Cartoon Art'},
-    'geometric_line_art': {'label': 'Geometric & Line Art'},
-    # İbrahim Çakmak — özel tarzlar
-    'black_grey_micro_realism': {'label': 'Black and Grey Realism & Micro-Realism (Siyah Gri Gerçekçilik)'},
-    'geometric_line_art_geo': {'label': 'Geometric & Line Art (Geometrik ve Çizgi Sanatı)'},
-    'trash_polka_sketch_graphic': {'label': 'Trash Polka & Sketch (Grafik ve Eskiz Tarzı)'},
-    'red_ink_color_highlights': {'label': 'Red Ink & Color Highlights (Kırmızı Mürekkep ve Renk Vurgusu)'},
-    'fine_line_minimalist': {'label': 'Fine Line & Minimalist (İnce Çizgi ve Minimal)'},
-    'japanese_oriental': {'label': 'Japanese / Oriental (Japon ve Uzak Doğu Estetiği)'},
-    'neo_traditional_pop_culture': {'label': 'Neo-Traditional & Pop Culture (Yeni Geleneksel ve Pop Kültür)'},
-    'surrealism_abstract': {'label': 'Surrealism & Abstract (Gerçeküstü ve Soyut)'},
-    'custom_lettering_typography': {'label': 'Custom Lettering & Typography (Özel Yazı ve Kaligrafi)'},
-    'tribal_polynesian_nordic': {'label': 'Tribal / Polynesian & Nordic (Kabile ve İskandinav)'},
-}
-
-DEFAULT_TATTOO_STYLE_IDS = [
-    'old_school', 'neo_traditional', 'realism', 'fine_line', 'geometric',
-    'watercolor', 'irezumi', 'blackwork', 'tribal', 'trash_polka',
-]
-
-# Sanatçı tam adı (küçük harf, normalize) → tarz id listesi
-ARTIST_TATTOO_STYLE_IDS = {
-    'tuncer urer': [
-        'black_grey_realism',
-        'cyber_sigilism_modern_tribal',
-        'trash_polka_sketch',
-        'japanese_irezumi_blackwork',
-        'fine_line_ornamental',
-        'pet_portraits_micro_realism',
-        'illustrative_blackwork',
-    ],
-    'nihal karagoz': [
-        'fine_line_botanical',
-        'ornamental_dotwork',
-        'lettering_typography',
-        'red_ink_minimal_color',
-        'illustrative_pop_culture',
-        'surrealism_sketch',
-        'micro_realism_black_grey',
-        'cyber_sigilism',
-    ],
-    'mert irioglu': [
-        'micro_realism_micro_black_grey',
-        'dark_surrealism_dark_art',
-        'fine_line',
-        'custom_lettering_calligraphy',
-        'illustrative_blackwork',
-        'pop_culture_cartoon_art',
-        'geometric_line_art',
-    ],
-    'ibrahim cakmak': [
-        'black_grey_micro_realism',
-        'geometric_line_art_geo',
-        'trash_polka_sketch_graphic',
-        'red_ink_color_highlights',
-        'fine_line_minimalist',
-        'japanese_oriental',
-        'neo_traditional_pop_culture',
-        'surrealism_abstract',
-        'custom_lettering_typography',
-        'tribal_polynesian_nordic',
-    ],
-}
-
-
-_TR_NAME_ASCII = str.maketrans({
-    'ö': 'o', 'ü': 'u', 'ğ': 'g', 'ş': 's', 'ç': 'c', 'ı': 'i',
-})
-
-
-def _normalize_artist_name(name):
-    s = (name or '').strip().replace('İ', 'i').replace('I', 'i')
-    s = ' '.join(s.lower().split())
-    return s.translate(_TR_NAME_ASCII)
-
-
-def _artist_style_profile_key(artist_name):
-    """Sanatçı adından profil anahtarı (örn. 'Tuncer Urer' → 'tuncer urer')."""
-    name = _normalize_artist_name(artist_name)
-    if not name:
-        return None
-    if name in ARTIST_TATTOO_STYLE_IDS:
-        return name
-    for key in sorted(ARTIST_TATTOO_STYLE_IDS, key=len, reverse=True):
-        if key in name or name in key:
-            return key
-    return None
-
-
-def get_tattoo_style_ids_for_artist(artist_name):
-    key = _artist_style_profile_key(artist_name)
-    if key:
-        return list(ARTIST_TATTOO_STYLE_IDS[key])
-    return list(DEFAULT_TATTOO_STYLE_IDS)
-
-
-def tattoo_styles_payload(style_ids):
-    return [
-        {'id': sid, 'label': TATTOO_STYLES[sid]['label']}
-        for sid in style_ids
-        if sid in TATTOO_STYLES
-    ]
-
-
-def is_tattoo_style_allowed_for_artist(style_id, artist_name):
-    if style_id not in TATTOO_STYLES:
-        return False
-    return style_id in get_tattoo_style_ids_for_artist(artist_name)
-
-
-def _slugify_style_key(label):
-    s = (label or '').strip().lower().replace('İ', 'i').replace('I', 'i')
-    s = s.translate(_TR_NAME_ASCII)
-    s = re.sub(r'[^a-z0-9]+', '_', s).strip('_')
-    return (s[:60] if s else 'style')
-
-
-def _unique_style_key_for_staff(cursor, staff_id, label, exclude_id=None):
-    base = _slugify_style_key(label)
-    key = base
-    n = 2
-    while True:
-        if exclude_id:
-            cursor.execute(
-                """
-                SELECT 1 FROM artist_tattoo_styles
-                WHERE staff_id = %s AND style_key = %s AND id != %s
-                LIMIT 1
-                """,
-                (staff_id, key, exclude_id),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT 1 FROM artist_tattoo_styles
-                WHERE staff_id = %s AND style_key = %s
-                LIMIT 1
-                """,
-                (staff_id, key),
-            )
-        if not cursor.fetchone():
-            return key
-        key = f'{base}_{n}'
-        n += 1
-
-
-def fetch_artist_tattoo_styles_from_db(cursor, staff_id, active_only=True):
-    query = """
-        SELECT id, style_key, label, display_order, is_active
-        FROM artist_tattoo_styles
-        WHERE staff_id = %s
-    """
-    params = [staff_id]
-    if active_only:
-        query += ' AND is_active = TRUE'
-    query += ' ORDER BY display_order ASC, id ASC'
-    cursor.execute(query, params)
-    return cursor.fetchall()
-
-
-def tattoo_styles_payload_from_db(rows):
-    return [
-        {'id': row[1], 'label': row[2], 'db_id': row[0]}
-        for row in rows
-    ]
-
-
-def get_tattoo_styles_for_staff(cursor, staff_id, artist_name=None):
-    """DB kayıtları varsa onları kullan; yoksa kod içi / varsayılan listeye düş."""
-    rows = fetch_artist_tattoo_styles_from_db(cursor, staff_id, active_only=True)
-    if rows:
-        return tattoo_styles_payload_from_db(rows)
-    style_ids = get_tattoo_style_ids_for_artist(artist_name) if artist_name else list(DEFAULT_TATTOO_STYLE_IDS)
-    return tattoo_styles_payload(style_ids)
-
-
-def is_tattoo_style_allowed_for_staff(cursor, staff_id, style_id, artist_name=None):
-    if not style_id:
-        return False
-    rows = fetch_artist_tattoo_styles_from_db(cursor, staff_id, active_only=True)
-    if rows:
-        allowed = {row[1] for row in rows}
-        return style_id in allowed
-    return is_tattoo_style_allowed_for_artist(style_id, artist_name)
-
-
-def _can_manage_staff_styles(target_staff_id):
-    if request.staff_role == 'super_admin':
-        return True
-    return int(target_staff_id) == int(request.staff_id)
-
-
-def seed_artist_tattoo_styles_from_config():
-    """Kod içi özel tarz listesi olan sanatçıları DB'ye bir kez aktarır."""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT EXISTS (
-                SELECT 1 FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = 'artist_tattoo_styles'
-            )
-            """
-        )
-        if not cursor.fetchone()[0]:
-            cursor.close()
-            return
-
-        cursor.execute('SELECT id, name FROM artists')
-        artists = cursor.fetchall()
-        seeded = 0
-        for artist_id, artist_name in artists:
-            cursor.execute(
-                'SELECT COUNT(*) FROM artist_tattoo_styles WHERE staff_id = %s',
-                (artist_id,),
-            )
-            if cursor.fetchone()[0] > 0:
-                continue
-            if not _artist_style_profile_key(artist_name):
-                continue
-            style_ids = get_tattoo_style_ids_for_artist(artist_name)
-            for order, sid in enumerate(style_ids):
-                if sid not in TATTOO_STYLES:
-                    continue
-                cursor.execute(
-                    """
-                    INSERT INTO artist_tattoo_styles (staff_id, style_key, label, display_order)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (staff_id, style_key) DO NOTHING
-                    """,
-                    (artist_id, sid, TATTOO_STYLES[sid]['label'], order),
-                )
-            seeded += 1
-        conn.commit()
-        cursor.close()
-        if seeded:
-            logger.info('Sanatçı tarzları DB\'ye aktarıldı: %s sanatçı', seeded)
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.warning('seed_artist_tattoo_styles_from_config: %s', e)
-    finally:
-        release_db_connection(conn)
-
 BODY_REGIONS = {
-    'head': {'label': 'Baş / ense', 'pain': 8},
-    'neck': {'label': 'Boyun', 'pain': 7},
-    'chest': {'label': 'Göğüs', 'pain': 6, 'private': True},
-    'ribs': {'label': 'Kaburga', 'pain': 9, 'private': True},
-    'stomach': {'label': 'Karın', 'pain': 7, 'private': True},
-    'back_upper': {'label': 'Üst sırt', 'pain': 5},
-    'back_lower': {'label': 'Alt sırt / bel', 'pain': 6, 'private': True},
-    'shoulder': {'label': 'Omuz', 'pain': 5},
-    'upper_arm': {'label': 'Üst kol', 'pain': 4},
-    'forearm': {'label': 'Ön kol', 'pain': 3},
-    'wrist': {'label': 'Bilek', 'pain': 4},
-    'hand': {'label': 'El / parmak', 'pain': 7},
-    'thigh': {'label': 'Uyluk', 'pain': 5, 'private': True},
-    'knee': {'label': 'Diz', 'pain': 8},
-    'calf': {'label': 'Baldır', 'pain': 4},
-    'ankle': {'label': 'Ayak bileği', 'pain': 5},
-    'foot': {'label': 'Ayak üstü', 'pain': 6},
+    'head': {'label': 'Baş / ense'},
+    'neck': {'label': 'Boyun'},
+    'chest': {'label': 'Göğüs', 'private': True},
+    'ribs': {'label': 'Kaburga', 'private': True},
+    'stomach': {'label': 'Karın', 'private': True},
+    'back_upper': {'label': 'Üst sırt'},
+    'back_lower': {'label': 'Alt sırt / bel', 'private': True},
+    'shoulder': {'label': 'Omuz'},
+    'upper_arm': {'label': 'Üst kol'},
+    'forearm': {'label': 'Ön kol'},
+    'wrist': {'label': 'Bilek'},
+    'hand': {'label': 'El / parmak'},
+    'thigh': {'label': 'Uyluk', 'private': True},
+    'knee': {'label': 'Diz'},
+    'calf': {'label': 'Baldır'},
+    'ankle': {'label': 'Ayak bileği'},
+    'foot': {'label': 'Ayak üstü'},
 }
 
 
 @app.route('/api/tattoo-config', methods=['GET'])
 def get_tattoo_config():
-    """Tarz, bölge ve acı eşiği meta verisi (frontend). staff_id ile sanatçıya özel tarzlar."""
-    staff_id = request.args.get('staff_id', type=int)
-    styles = tattoo_styles_payload(DEFAULT_TATTOO_STYLE_IDS)
-
-    if staff_id:
-        conn = None
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute('SELECT name FROM artists WHERE id = %s', (staff_id,))
-            row = cursor.fetchone()
-            styles = get_tattoo_styles_for_staff(cursor, staff_id, row[0] if row else None)
-            cursor.close()
-        except Exception as e:
-            logger.warning('tattoo-config staff lookup hatası (staff_id=%s): %s', staff_id, e)
-            styles = tattoo_styles_payload(DEFAULT_TATTOO_STYLE_IDS)
-        finally:
-            release_db_connection(conn)
-    else:
-        styles = tattoo_styles_payload(DEFAULT_TATTOO_STYLE_IDS)
-
+    """Vücut bölgesi ve özel bölge randevu penceresi meta verisi."""
     pz = get_private_zone_settings()
     schedule_summary = format_private_zone_schedule_summary(pz)
     return jsonify({
         'success': True,
-        'styles': [
-            {'id': s['id'], 'label': s['label']}
-            for s in styles
-        ],
         'regions': [
             {
                 'id': k,
                 'label': v['label'],
-                'pain': v['pain'],
                 'private': bool(v.get('private')),
             }
             for k, v in BODY_REGIONS.items()
@@ -2453,7 +2220,6 @@ def create_tattoo_request():
     size = (data.get('size') or '').strip()
     body_area = (data.get('body_area') or '').strip()
     body_region = (data.get('body_region') or '').strip()
-    tattoo_style = (data.get('tattoo_style') or '').strip()
     description = (data.get('description') or '').strip()
     reference_image = (data.get('reference_image') or '').strip()
 
@@ -2473,9 +2239,6 @@ def create_tattoo_request():
             body_area = body_area or 'Henüz belirlenmedi'
         size = size or None
     else:
-        if not tattoo_style:
-            return jsonify({'success': False, 'message': 'Geçerli bir dövme tarzı seçin'}), 400
-
         if body_region and body_region in BODY_REGIONS:
             body_area = BODY_REGIONS[body_region]['label']
         elif not body_area:
@@ -2500,26 +2263,6 @@ def create_tattoo_request():
             return jsonify({'success': False, 'message': 'Sanatçı bulunamadı'}), 404
 
         staff_name, staff_phone = staff_row[0], staff_row[1]
-
-        if not (config_undecided or pre_consultation):
-            if not is_tattoo_style_allowed_for_staff(cursor, staff_id, tattoo_style, staff_name):
-                cursor.close()
-                return jsonify({
-                    'success': False,
-                    'message': 'Seçilen tarz bu sanatçı için uygun değil',
-                }), 400
-            style_label = None
-            db_rows = fetch_artist_tattoo_styles_from_db(cursor, staff_id, active_only=True)
-            if db_rows:
-                for row in db_rows:
-                    if row[1] == tattoo_style:
-                        style_label = row[2]
-                        break
-            if not style_label:
-                style_label = TATTOO_STYLES.get(tattoo_style, {}).get('label')
-            if not style_label:
-                cursor.close()
-                return jsonify({'success': False, 'message': 'Geçerli bir dövme tarzı seçin'}), 400
 
         # Ensure customer exists (phone verified earlier in UI)
         phone_stored = customer_phone_for_db(phone)
@@ -2589,9 +2332,9 @@ def create_tattoo_request():
                 loyalty_attached=loyalty_attached,
             )
             if send_wapio_message(phone_stored, wa_msg):
-                logger.info(f"✅ Talep alındı WhatsApp mesajı gönderildi: {phone_stored} — {reference_number}")
+                logger.info(f"Talep alındı WhatsApp mesajı gönderildi: {phone_stored} — {reference_number}")
             else:
-                logger.warning(f"⚠️ Talep alındı WhatsApp mesajı gönderilemedi: {phone_stored}")
+                logger.warning(f"Talep alındı WhatsApp mesajı gönderilemedi: {phone_stored}")
         except Exception as wa_err:
             logger.warning(f"Talep alındı WhatsApp bildirimi atlandı: {wa_err}")
 
@@ -2612,9 +2355,9 @@ def create_tattoo_request():
                     has_reference_image=bool(reference_image),
                 )
                 if send_wapio_message(staff_phone, staff_msg):
-                    logger.info(f"✅ Sanatçı talep bildirimi gönderildi: {staff_phone} — {reference_number}")
+                    logger.info(f"Sanatçı talep bildirimi gönderildi: {staff_phone} — {reference_number}")
                 else:
-                    logger.warning(f"⚠️ Sanatçı talep bildirimi gönderilemedi: {staff_phone}")
+                    logger.warning(f"Sanatçı talep bildirimi gönderilemedi: {staff_phone}")
             except Exception as staff_wa_err:
                 logger.warning(f"Sanatçı talep WhatsApp bildirimi atlandı: {staff_wa_err}")
 
@@ -2638,7 +2381,7 @@ def create_tattoo_request():
     except Exception as e:
         if conn:
             conn.rollback()
-        logger.error(f"create_tattoo_request hatası: {e}")
+        log_error(logger, E_REQ_001, "Dovme talebi olusturulamadi", exc=e)
         return jsonify({'success': False, 'message': ERROR_MESSAGES.get('database', 'Bir problem oluştu')}), 500
     finally:
         release_db_connection(conn)
@@ -2925,7 +2668,7 @@ def choose_offer_slot(token):
     except Exception as e:
         if conn:
             conn.rollback()
-        logger.error(f"choose_offer_slot hatası: {e}")
+        log_error(logger, E_BOOK_001, "Randevu olusturulamadi (teklif slot)", exc=e)
         return jsonify({'success': False, 'message': 'Bir problem oluştu'}), 500
     finally:
         release_db_connection(conn)
@@ -2990,7 +2733,7 @@ def admin_login():
             }
         })
     except Exception as e:
-        logger.error(f"admin_login hatası: {e}")
+        log_error(logger, E_AUTH_001, "Admin girisi sirasinda beklenmeyen hata", exc=e)
         return jsonify({'success': False, 'message': 'Giriş sırasında hata oluştu'}), 500
     finally:
         release_db_connection(conn)
@@ -3001,6 +2744,9 @@ def admin_login():
 @token_required
 def admin_list_tattoo_requests():
     """List tattoo requests for admin panel."""
+    if not can_access_tattoo_requests():
+        return jsonify({'success': False, 'message': 'Bu sayfaya erişim yetkiniz yok'}), 403
+
     status_filter = request.args.get('status')  # optional
     staff_id_filter = request.args.get('staff_id')  # super_admin optional
     reference_filter = (request.args.get('reference') or '').strip().upper()
@@ -3041,7 +2787,7 @@ def admin_list_tattoo_requests():
         """
         params = []
 
-        if request.staff_role == 'super_admin':
+        if is_studio_admin():
             scope = (request.args.get('scope') or '').strip().lower()
             if scope == 'mine':
                 query += " AND tr.staff_id = %s"
@@ -3056,6 +2802,22 @@ def admin_list_tattoo_requests():
         if status_filter:
             query += " AND tr.status = %s"
             params.append(status_filter)
+
+        kind_filter = (request.args.get('kind') or '').strip().lower()
+        undecided_clause = """(
+            tr.tattoo_style IN ('undecided', 'Karar verilmedi')
+            OR tr.body_area IN ('Henüz belirlenmedi')
+        )"""
+        preconsult_clause = """(
+            tr.tattoo_style IN ('pre_consultation', 'Ön görüşme')
+            OR tr.body_area IN ('Ön görüşme')
+        )"""
+        if kind_filter in ('undecided', 'karar'):
+            query += f" AND {undecided_clause} AND NOT {preconsult_clause}"
+        elif kind_filter in ('pre_consultation', 'pre-consultation', 'consultation'):
+            query += f" AND {preconsult_clause}"
+        elif kind_filter in ('standard', 'normal', 'tattoo'):
+            query += f" AND NOT {undecided_clause} AND NOT {preconsult_clause}"
 
         if reference_filter:
             query += " AND UPPER(tr.reference_number) LIKE %s"
@@ -3110,13 +2872,16 @@ def admin_list_tattoo_requests():
 @token_required
 def admin_offer_slots(tattoo_request_id):
     """Admin sets duration, system sends token link to customer."""
+    if not can_access_tattoo_requests():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+
     data = request.get_json() or {}
     duration_minutes = int(data.get('duration_minutes') or 0)
     expires_hours    = int(data.get('expires_hours') or 48)
     price            = float(data.get('price') or 0)
 
-    if duration_minutes < 30 or duration_minutes % 30 != 0:
-        return jsonify({'success': False, 'message': 'duration_minutes 30 dakikanın katı olmalı (örn 120)'}), 400
+    if duration_minutes < 60 or duration_minutes % 60 != 0:
+        return jsonify({'success': False, 'message': 'duration_minutes 60 dakikanın katı olmalı (örn 60, 120, 180)'}), 400
     if expires_hours <= 0 or expires_hours > 168:
         expires_hours = 48
     if price < 0:
@@ -3143,7 +2908,7 @@ def admin_offer_slots(tattoo_request_id):
             return jsonify({'success': False, 'message': 'Talep bulunamadı'}), 404
 
         customer_id, staff_id, request_ref, customer_phone, staff_name = row
-        if request.staff_role != 'super_admin' and int(staff_id) != int(request.staff_id):
+        if not is_studio_admin() and int(staff_id) != int(request.staff_id):
             cursor.close()
             return jsonify({'success': False, 'message': 'Bu talep için yetkiniz yok'}), 403
 
@@ -3226,7 +2991,7 @@ def admin_offer_slots(tattoo_request_id):
             f"{ref_line}"
             f"Dövmeniz için süre: *{duration_minutes} dakika*.\n\n"
             f"{price_line}"
-            f"Aşağıdaki linkten sadece bu süreye uygun saatleri göreceksiniz (30 dk slotlar).\n\n"
+            f"Aşağıdaki linkten sadece bu süreye uygun saatleri göreceksiniz (60 dk slotlar).\n\n"
             f"Link: {offer_url}\n\n"
             f"Not: Link {expires_hours} saat boyunca geçerlidir."
         )
@@ -3335,7 +3100,7 @@ def get_admin_appointments():
         #   (Sadece "Tüm Randevular" ve "Geçmiş Randevular" sekmeleri scope=all gönderir.)
         # - Normal "Randevular" sekmesinde (scope yok) super admin dahil herkes
         #   yalnızca KENDİ randevularını görür.
-        is_all_scope = (request.staff_role == 'super_admin' and scope == 'all')
+        is_all_scope = (is_studio_admin() and scope == 'all')
         if is_all_scope and staff_id_filter:
             # Super admin belirli bir personeli filtreledi
             query += " AND a.staff_id = %s"
@@ -3393,6 +3158,7 @@ def get_admin_appointments():
                 'status': row[3],
                 'created_at': row[4].strftime('%d.%m.%Y %H:%M') if row[4] else None,
                 'duration_minutes': int(row[5] or 30),
+                'can_complete': _appointment_has_started(row[1], row[2]),
                 'customer': {
                     'id': row[6],
                     'name': row[7] or None,
@@ -3433,7 +3199,7 @@ def admin_manual_appointment_available_slots():
     if not staff_id or not date_str:
         return jsonify({'success': False, 'message': 'staff_id ve date gerekli'}), 400
 
-    if request.staff_role != 'super_admin' and int(staff_id) != int(request.staff_id):
+    if not is_studio_admin() and int(staff_id) != int(request.staff_id):
         return jsonify({'success': False, 'message': 'Bu personel için yetkiniz yok'}), 403
 
     try:
@@ -3477,8 +3243,8 @@ def admin_create_manual_appointment():
     """Dükkan / telefon vb. için admin panelden manuel randevu oluştur."""
     data = request.get_json() or {}
     phone_raw = (data.get('phone') or '').strip()
-    name = (data.get('name') or '').strip()
-    surname = (data.get('surname') or '').strip()
+    name = format_person_name(data.get('name'))
+    surname = format_person_name(data.get('surname'))
     date_str = (data.get('date') or '').strip()  # dd.mm.yyyy
     time_str = (data.get('time') or '').strip()[:5]
     duration_minutes = int(data.get('duration_minutes') or 0)
@@ -3491,8 +3257,8 @@ def admin_create_manual_appointment():
         return jsonify({'success': False, 'message': 'Telefon, ad ve soyad zorunludur'}), 400
     if not date_str or not time_str:
         return jsonify({'success': False, 'message': 'Tarih ve saat zorunludur'}), 400
-    if duration_minutes < 30 or duration_minutes % 30 != 0:
-        return jsonify({'success': False, 'message': 'Süre 30 dakikanın katı olmalı (örn. 60, 120)'}), 400
+    if duration_minutes < 60 or duration_minutes % 60 != 0:
+        return jsonify({'success': False, 'message': 'Süre 60 dakikanın katı olmalı (örn. 60, 120, 180)'}), 400
     if status not in ('pending', 'confirmed'):
         status = 'confirmed'
     if price < 0:
@@ -3508,7 +3274,7 @@ def admin_create_manual_appointment():
     except ValueError:
         return jsonify({'success': False, 'message': 'Tarih formatı: GG.AA.YYYY'}), 400
 
-    if request.staff_role == 'super_admin' and staff_id_raw:
+    if is_studio_admin() and staff_id_raw:
         staff_id = int(staff_id_raw)
     else:
         staff_id = int(request.staff_id)
@@ -3524,7 +3290,7 @@ def admin_create_manual_appointment():
             cursor.close()
             return jsonify({'success': False, 'message': 'Personel bulunamadı'}), 404
 
-        if request.staff_role != 'super_admin' and staff_id != int(request.staff_id):
+        if not is_studio_admin() and staff_id != int(request.staff_id):
             cursor.close()
             return jsonify({'success': False, 'message': 'Bu personel için randevu oluşturamazsınız'}), 403
 
@@ -3730,11 +3496,37 @@ def _try_record_completed_appointment_income(cursor, appointment_id, apt_price, 
     )
 
 
+def _appointment_has_started(apt_date, apt_time):
+    """Randevu başlangıcı (İstanbul) geldiyse True."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo('Europe/Istanbul')
+    except Exception:
+        tz = None
+    if isinstance(apt_date, datetime):
+        apt_date = apt_date.date()
+    t = apt_time
+    if t is None:
+        t = dt_time(0, 0)
+    elif isinstance(t, datetime):
+        t = t.time()
+    elif not isinstance(t, dt_time):
+        parts = str(t).split(':')
+        t = dt_time(int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    start = datetime.combine(apt_date, t.replace(tzinfo=None) if getattr(t, 'tzinfo', None) else t)
+    if tz:
+        start = start.replace(tzinfo=tz)
+        now = datetime.now(tz)
+    else:
+        now = datetime.now()
+    return now >= start
+
+
 @app.route('/api/admin/appointments/<int:appointment_id>/status', methods=['PUT'])
 @token_required
 def update_appointment_status(appointment_id):
     """Update appointment status and send WhatsApp notification"""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     new_status = data.get('status')
     
     valid_statuses = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show']
@@ -3772,6 +3564,14 @@ def update_appointment_status(appointment_id):
         # Mevcut durumu al
         old_status = appointment[2]  # appointment[2] = a.status
         google_event_id = appointment[10]
+
+        if old_status != new_status and new_status == 'completed':
+            if not _appointment_has_started(appointment[0], appointment[1]):
+                cursor.close()
+                return jsonify({
+                    'success': False,
+                    'message': 'Randevu saati gelmeden tamamlandı olarak işaretlenemez',
+                }), 400
 
         # Update status (sadece durum değişiyorsa güncelle)
         if old_status != new_status:
@@ -3871,11 +3671,15 @@ Tekrar görüşmek üzere,
         if message and old_status != new_status:
             try:
                 send_wapio_message(customer_phone, message)
-                logger.info(f"📱 Durum değişikliği mesajı gönderildi: {customer_phone} - {old_status} -> {new_status}")
+                logger.info(f"Durum değişikliği mesajı gönderildi: {customer_phone} - {old_status} -> {new_status}")
             except Exception as wapio_err:
                 logger.warning(f"WhatsApp mesajı gönderilemedi (durum kaydedildi): {wapio_err}")
         elif old_status == new_status:
-            logger.info(f"ℹ️  Durum değişmedi, mesaj gönderilmedi: {customer_phone} - {new_status}")
+            logger.info(
+                "Durum degismedi, mesaj gonderilmedi | phone=%s status=%s",
+                customer_phone,
+                new_status,
+            )
         
         return jsonify({
             'success': True, 
@@ -3900,10 +3704,11 @@ def get_admin_dashboard():
         conn = get_db_connection()
         cursor = conn.cursor()
         today = datetime.now().strftime('%Y-%m-%d')
-        
-        # Build staff filter - Herkes sadece KENDİ istatistiklerini görsün
-        staff_filter = "AND staff_id = %s"
-        params = [today, request.staff_id]
+
+        # Personel kendi istatistiklerini görür; teknik destek stüdyo genelini görür.
+        studio_wide = request.staff_role == 'tech_support'
+        staff_filter = "" if studio_wide else "AND staff_id = %s"
+        params = [today] if studio_wide else [today, request.staff_id]
         
         # Today's active appointments (pending + confirmed; tamamlananlar ayrı kartta)
         cursor.execute(f"""
@@ -3915,7 +3720,7 @@ def get_admin_dashboard():
         today_total = cursor.fetchone()[0]
         
         # Pending appointments count
-        params_pending = [today, request.staff_id]
+        params_pending = [today] if studio_wide else [today, request.staff_id]
         cursor.execute(f"""
             SELECT COUNT(*) FROM appointments 
             WHERE appointment_date = %s AND status = 'pending' {staff_filter}
@@ -3923,7 +3728,7 @@ def get_admin_dashboard():
         today_pending = cursor.fetchone()[0]
         
         # Confirmed appointments count for today
-        params_confirmed = [today, request.staff_id]
+        params_confirmed = [today] if studio_wide else [today, request.staff_id]
         cursor.execute(f"""
             SELECT COUNT(*) FROM appointments 
             WHERE appointment_date = %s AND status = 'confirmed' {staff_filter}
@@ -3931,7 +3736,7 @@ def get_admin_dashboard():
         today_confirmed = cursor.fetchone()[0]
         
         # Completed appointments count for today
-        params_completed = [today, request.staff_id]
+        params_completed = [today] if studio_wide else [today, request.staff_id]
         cursor.execute(f"""
             SELECT COUNT(*) FROM appointments 
             WHERE appointment_date = %s AND status = 'completed' {staff_filter}
@@ -3939,8 +3744,8 @@ def get_admin_dashboard():
         today_completed = cursor.fetchone()[0]
         
         # All pending appointments (tüm zamanlar) - pending ve confirmed ama tamamlanmamış olanlar
-        staff_filter_simple = "AND staff_id = %s"
-        params_all_pending = [request.staff_id]
+        staff_filter_simple = "" if studio_wide else "AND staff_id = %s"
+        params_all_pending = [] if studio_wide else [request.staff_id]
         cursor.execute(f"""
             SELECT COUNT(*) FROM appointments 
             WHERE status NOT IN ('completed', 'cancelled', 'no_show') {staff_filter_simple}
@@ -3977,7 +3782,7 @@ def get_admin_dashboard():
 @token_required
 def get_staff_list():
     """Personel listesi - sadece super_admin"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu sayfaya erişim yetkiniz yok'}), 403
 
     conn = None
@@ -4017,7 +3822,7 @@ def get_staff_list():
 @token_required
 def update_staff_display_order(staff_id):
     """Personelin sıralama değerini güncelle - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     data = request.get_json()
@@ -4047,7 +3852,7 @@ def update_staff_display_order(staff_id):
 @token_required
 def add_staff():
     """Yeni personel ekle - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     data = request.get_json()
@@ -4055,6 +3860,9 @@ def add_staff():
     phone = data.get('phone')
     password = data.get('password')
     role = data.get('role', 'staff')
+    role_err = _role_assignment_error(desired_role=role)
+    if role_err:
+        return role_err
     profile_photo = data.get('profile_photo')  # Base64 encoded image
     instagram_raw = data.get('instagram_url', '')
     
@@ -4123,7 +3931,7 @@ def add_staff():
 @token_required
 def update_staff(staff_id):
     """Personel güncelle - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     data = request.get_json()
@@ -4137,6 +3945,16 @@ def update_staff(staff_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        cursor.execute("SELECT role FROM artists WHERE id = %s", (staff_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            cursor.close()
+            return jsonify({'success': False, 'message': 'Personel bulunamadı'}), 404
+        role_err = _role_assignment_error(desired_role=role, existing_role=existing[0])
+        if role_err:
+            cursor.close()
+            return role_err
         
         # Dinamik güncelleme
         updates = []
@@ -4208,7 +4026,7 @@ def update_staff(staff_id):
 @token_required
 def delete_staff(staff_id):
     """Personel sil - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     # Kendini silemez
@@ -4222,6 +4040,16 @@ def delete_staff(staff_id):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        cursor.execute("SELECT role FROM artists WHERE id = %s", (staff_id,))
+        existing = cursor.fetchone()
+        if not existing:
+            cursor.close()
+            return jsonify({'success': False, 'message': 'Personel bulunamadı'}), 404
+        role_err = _role_assignment_error(existing_role=existing[0])
+        if role_err:
+            cursor.close()
+            return role_err
         
         # Personelin aktif randevusu var mı kontrol et
         cursor.execute("""
@@ -4267,313 +4095,6 @@ def delete_staff(staff_id):
         release_db_connection(conn)
 
 # =============================================
-# SANATÇI DÖVME TARZLARI (ADMIN)
-# =============================================
-
-@app.route('/api/admin/staff/<int:staff_id>/tattoo-styles', methods=['GET'])
-@token_required
-def admin_get_tattoo_styles(staff_id):
-    if not _can_manage_staff_styles(staff_id):
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT name FROM artists WHERE id = %s', (staff_id,))
-        staff_row = cursor.fetchone()
-        if not staff_row:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Sanatçı bulunamadı'}), 404
-
-        rows = fetch_artist_tattoo_styles_from_db(cursor, staff_id, active_only=False)
-        styles = [
-            {
-                'id': row[0],
-                'style_key': row[1],
-                'label': row[2],
-                'display_order': row[3],
-                'is_active': row[4],
-            }
-            for row in rows
-        ]
-        uses_fallback = len(styles) == 0
-        fallback_preview = []
-        if uses_fallback:
-            fallback_preview = [
-                {'id': s['id'], 'label': s['label']}
-                for s in get_tattoo_styles_for_staff(cursor, staff_id, staff_row[0])
-            ]
-        cursor.close()
-        return jsonify({
-            'success': True,
-            'staff_id': staff_id,
-            'staff_name': staff_row[0],
-            'styles': styles,
-            'uses_fallback': uses_fallback,
-            'fallback_preview': fallback_preview,
-        })
-    except Exception as e:
-        logger.error('admin_get_tattoo_styles hatası: %s', e)
-        return jsonify({'success': False, 'message': 'Tarzlar alınamadı'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/staff/<int:staff_id>/tattoo-styles/bootstrap', methods=['POST'])
-@token_required
-def admin_bootstrap_tattoo_styles(staff_id):
-    """Müşterinin gördüğü mevcut listeyi DB'ye kopyalar (ilk özelleştirme)."""
-    if not _can_manage_staff_styles(staff_id):
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT name FROM artists WHERE id = %s', (staff_id,))
-        staff_row = cursor.fetchone()
-        if not staff_row:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Sanatçı bulunamadı'}), 404
-
-        cursor.execute(
-            'SELECT COUNT(*) FROM artist_tattoo_styles WHERE staff_id = %s',
-            (staff_id,),
-        )
-        if cursor.fetchone()[0] > 0:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Tarz listesi zaten özelleştirilmiş'}), 409
-
-        preview = get_tattoo_styles_for_staff(cursor, staff_id, staff_row[0])
-        if not preview:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Aktarılacak tarz bulunamadı'}), 400
-
-        for order, item in enumerate(preview):
-            cursor.execute(
-                """
-                INSERT INTO artist_tattoo_styles (staff_id, style_key, label, display_order)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (staff_id, style_key) DO NOTHING
-                """,
-                (staff_id, item['id'], item['label'], order),
-            )
-        conn.commit()
-        cursor.close()
-        return jsonify({
-            'success': True,
-            'message': f'{len(preview)} tarz düzenlenebilir listeye aktarıldı',
-        })
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error('admin_bootstrap_tattoo_styles hatası: %s', e)
-        return jsonify({'success': False, 'message': 'Tarzlar aktarılamadı'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/staff/<int:staff_id>/tattoo-styles', methods=['POST'])
-@token_required
-def admin_create_tattoo_style(staff_id):
-    if not _can_manage_staff_styles(staff_id):
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-
-    data = request.get_json() or {}
-    label = (data.get('label') or '').strip()
-    style_key_raw = (data.get('style_key') or '').strip()
-
-    if len(label) < 2:
-        return jsonify({'success': False, 'message': 'Tarz adı en az 2 karakter olmalı'}), 400
-    if len(label) > 255:
-        return jsonify({'success': False, 'message': 'Tarz adı çok uzun'}), 400
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT 1 FROM artists WHERE id = %s', (staff_id,))
-        if not cursor.fetchone():
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Sanatçı bulunamadı'}), 404
-
-        if style_key_raw:
-            style_key = _slugify_style_key(style_key_raw)
-        else:
-            style_key = _unique_style_key_for_staff(cursor, staff_id, label)
-
-        cursor.execute(
-            'SELECT COALESCE(MAX(display_order), -1) + 1 FROM artist_tattoo_styles WHERE staff_id = %s',
-            (staff_id,),
-        )
-        display_order = cursor.fetchone()[0]
-
-        cursor.execute(
-            """
-            INSERT INTO artist_tattoo_styles (staff_id, style_key, label, display_order)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, style_key, label, display_order, is_active
-            """,
-            (staff_id, style_key, label, display_order),
-        )
-        row = cursor.fetchone()
-        conn.commit()
-        cursor.close()
-        return jsonify({
-            'success': True,
-            'message': 'Tarz eklendi',
-            'style': {
-                'id': row[0],
-                'style_key': row[1],
-                'label': row[2],
-                'display_order': row[3],
-                'is_active': row[4],
-            },
-        })
-    except UniqueViolation:
-        if conn:
-            conn.rollback()
-        return jsonify({'success': False, 'message': 'Bu tarz anahtarı zaten kullanılıyor'}), 409
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error('admin_create_tattoo_style hatası: %s', e)
-        return jsonify({'success': False, 'message': 'Tarz eklenemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/staff/<int:staff_id>/tattoo-styles/<int:style_row_id>', methods=['PUT'])
-@token_required
-def admin_update_tattoo_style(staff_id, style_row_id):
-    if not _can_manage_staff_styles(staff_id):
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-
-    data = request.get_json() or {}
-    label = data.get('label')
-    is_active = data.get('is_active')
-    display_order = data.get('display_order')
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT id FROM artist_tattoo_styles
-            WHERE id = %s AND staff_id = %s
-            """,
-            (style_row_id, staff_id),
-        )
-        if not cursor.fetchone():
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Tarz bulunamadı'}), 404
-
-        updates = []
-        params = []
-        if label is not None:
-            label = str(label).strip()
-            if len(label) < 2:
-                cursor.close()
-                return jsonify({'success': False, 'message': 'Tarz adı en az 2 karakter olmalı'}), 400
-            updates.append('label = %s')
-            params.append(label)
-        if is_active is not None:
-            updates.append('is_active = %s')
-            params.append(bool(is_active))
-        if display_order is not None:
-            updates.append('display_order = %s')
-            params.append(int(display_order))
-
-        if not updates:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Güncellenecek alan yok'}), 400
-
-        params.extend([style_row_id, staff_id])
-        cursor.execute(
-            f"UPDATE artist_tattoo_styles SET {', '.join(updates)} WHERE id = %s AND staff_id = %s",
-            params,
-        )
-        conn.commit()
-        cursor.close()
-        return jsonify({'success': True, 'message': 'Tarz güncellendi'})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error('admin_update_tattoo_style hatası: %s', e)
-        return jsonify({'success': False, 'message': 'Tarz güncellenemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/staff/<int:staff_id>/tattoo-styles/<int:style_row_id>', methods=['DELETE'])
-@token_required
-def admin_delete_tattoo_style(staff_id, style_row_id):
-    if not _can_manage_staff_styles(staff_id):
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            'DELETE FROM artist_tattoo_styles WHERE id = %s AND staff_id = %s RETURNING id',
-            (style_row_id, staff_id),
-        )
-        deleted = cursor.fetchone()
-        if not deleted:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Tarz bulunamadı'}), 404
-        conn.commit()
-        cursor.close()
-        return jsonify({'success': True, 'message': 'Tarz silindi'})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error('admin_delete_tattoo_style hatası: %s', e)
-        return jsonify({'success': False, 'message': 'Tarz silinemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/staff/<int:staff_id>/tattoo-styles/reorder', methods=['PUT'])
-@token_required
-def admin_reorder_tattoo_styles(staff_id):
-    if not _can_manage_staff_styles(staff_id):
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-
-    data = request.get_json() or {}
-    order_ids = data.get('order') or []
-    if not isinstance(order_ids, list) or not order_ids:
-        return jsonify({'success': False, 'message': 'Sıralama listesi gerekli'}), 400
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        for idx, style_row_id in enumerate(order_ids):
-            cursor.execute(
-                """
-                UPDATE artist_tattoo_styles
-                SET display_order = %s
-                WHERE id = %s AND staff_id = %s
-                """,
-                (idx, int(style_row_id), staff_id),
-            )
-        conn.commit()
-        cursor.close()
-        return jsonify({'success': True, 'message': 'Sıralama kaydedildi'})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error('admin_reorder_tattoo_styles hatası: %s', e)
-        return jsonify({'success': False, 'message': 'Sıralama kaydedilemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-# =============================================
 # ÇALIŞMA SAATLERİ VE İZİN YÖNETİMİ
 # =============================================
 
@@ -4584,7 +4105,7 @@ def get_working_hours():
     staff_id = request.args.get('staff_id', request.staff_id)
     
     # Yetki kontrolü
-    if request.staff_role != 'super_admin' and int(staff_id) != request.staff_id:
+    if not is_studio_admin() and int(staff_id) != request.staff_id:
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     conn = None
@@ -4627,14 +4148,16 @@ def get_working_hours():
 @app.route('/api/admin/working-hours', methods=['PUT'])
 @token_required
 def update_working_hours():
-    """Çalışma saatlerini güncelle"""
-    data = request.get_json()
+    """Çalışma saatlerini güncelle — yalnızca super_admin"""
+    if not is_studio_admin():
+        return jsonify({
+            'success': False,
+            'message': 'Çalışma saatlerini düzenleme yetkiniz yok',
+        }), 403
+
+    data = request.get_json() or {}
     staff_id = data.get('staff_id', request.staff_id)
     working_hours = data.get('working_hours', [])
-    
-    # Yetki kontrolü
-    if request.staff_role != 'super_admin' and int(staff_id) != request.staff_id:
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     conn = None
     try:
@@ -4675,7 +4198,7 @@ def get_time_off():
     end_date = request.args.get('end_date')      # Format: YYYY-MM-DD
     
     # Yetki kontrolü
-    if request.staff_role != 'super_admin' and int(staff_id) != request.staff_id:
+    if not is_studio_admin() and int(staff_id) != request.staff_id:
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     conn = None
@@ -4736,7 +4259,7 @@ def add_time_off():
     reason = data.get('reason', '')
     
     # Yetki kontrolü
-    if request.staff_role != 'super_admin' and int(staff_id) != request.staff_id:
+    if not is_studio_admin() and int(staff_id) != request.staff_id:
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     if not off_date:
@@ -4787,7 +4310,7 @@ def delete_time_off(time_off_id):
             return jsonify({'success': False, 'message': 'İzin bulunamadı'}), 404
         
         # Yetki kontrolü
-        if request.staff_role != 'super_admin' and row[0] != request.staff_id:
+        if not is_studio_admin() and row[0] != request.staff_id:
             cursor.close()
             return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
         
@@ -4807,12 +4330,20 @@ def delete_time_off(time_off_id):
         release_db_connection(conn)
 
 
+STAFF_COMMISSION_RATE = 0.50
+
+
+def _staff_share_amount(full_price):
+    """Personelin net kazancı — yapılan işin %50'si."""
+    return round(float(full_price or 0) * STAFF_COMMISSION_RATE, 2)
+
+
 @app.route('/api/admin/staff/<int:staff_id>/stats', methods=['GET'])
 @token_required
 def get_staff_stats(staff_id):
     """Personel istatistikleri - aylık gelir, müşteri sayısı, tamamlanan randevu gelirleri (super_admin)"""
 
-    if request.staff_role != 'super_admin':
+    if not can_access_income():
         return jsonify({'success': False, 'message': 'Bu bilgilere erişim yetkiniz yok'}), 403
     
     month = request.args.get('month')
@@ -4838,6 +4369,8 @@ def get_staff_stats(staff_id):
         if not staff_info:
             cursor.close()
             return jsonify({'success': False, 'message': 'Personel bulunamadı'}), 404
+
+        apply_commission = (staff_info[1] or '') != 'super_admin'
         
         # 2. Aylık istatistikler (dövme randevuları: appointments.price)
         cursor.execute("""
@@ -4858,6 +4391,7 @@ def get_staff_stats(staff_id):
         appointment_count = int(stats[1] or 0)
         total_income = float(stats[2] or 0)
         total_minutes = int(stats[3] or 0)
+        staff_share_total = _staff_share_amount(total_income) if apply_commission else None
 
         # 3. Tamamlanan randevu gelir kalemleri
         cursor.execute("""
@@ -4880,13 +4414,17 @@ def get_staff_stats(staff_id):
         completed_revenue_items = []
         for row in cursor.fetchall():
             cust = f"{row[4]} {row[5]}".strip() or 'Müşteri'
-            completed_revenue_items.append({
+            full_amount = float(row[3] or 0)
+            item = {
                 'appointment_id': row[0],
                 'date': row[1].strftime('%d.%m.%Y'),
                 'time': str(row[2])[:5],
-                'amount': float(row[3] or 0),
+                'amount': full_amount,
                 'customer_name': cust,
-            })
+            }
+            if apply_commission:
+                item['staff_share'] = _staff_share_amount(full_amount)
+            completed_revenue_items.append(item)
         
         cursor.close()
         
@@ -4906,6 +4444,8 @@ def get_staff_stats(staff_id):
                 'customer_count': customer_count,
                 'appointment_count': appointment_count,
                 'total_income': total_income,
+                'staff_share_total': staff_share_total,
+                'commission_percent': int(STAFF_COMMISSION_RATE * 100) if apply_commission else 0,
                 'total_duration_minutes': total_minutes,
                 'completed_revenue_items': completed_revenue_items,
             }
@@ -4986,7 +4526,7 @@ def get_service_staff(service_id):
 @token_required
 def add_service():
     """Yeni hizmet ekle - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     data = request.get_json()
@@ -5044,7 +4584,7 @@ def add_service():
 @token_required
 def update_service(service_id):
     """Hizmet güncelle (fiyat, isim, süre, aktiflik, personeller) - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     data = request.get_json()
@@ -5120,7 +4660,7 @@ def update_service(service_id):
 @token_required
 def delete_service(service_id):
     """Hizmeti kalıcı olarak sil (hard delete) - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     conn = None
@@ -5155,7 +4695,7 @@ def delete_service(service_id):
 @token_required
 def toggle_service_active(service_id):
     """Hizmetin aktif/pasif durumunu değiştir - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
     
     conn = None
@@ -5208,7 +4748,7 @@ def get_income_reports():
     month = int(month)
     year = int(year)
 
-    if request.staff_role != 'super_admin':
+    if not can_access_income():
         return jsonify({'success': False, 'message': 'Bu rapora erişim yetkiniz yok'}), 403
 
     query_params = [month, year]
@@ -5302,7 +4842,7 @@ def get_income_reports():
         manual_adjustments = []
         manual_adjustments_total = 0
 
-        if request.staff_role == 'super_admin':
+        if is_studio_admin():
             try:
                 cursor.execute("""
                     SELECT 
@@ -5387,7 +4927,7 @@ def add_income_adjustment():
     """Manuel gelir ayarlaması ekle - SADECE SUPER_ADMIN"""
     
     # Sadece super_admin ekleyebilir
-    if request.staff_role != 'super_admin':
+    if not can_access_income():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     
     data = request.get_json()
@@ -5458,7 +4998,7 @@ def get_income_adjustments():
     """Belirli bir ay/yıldaki gelir ayarlamalarını listele - SADECE SUPER_ADMIN"""
     
     # Sadece super_admin görebilir
-    if request.staff_role != 'super_admin':
+    if not can_access_income():
         return jsonify({'success': False, 'message': 'Bu rapora erişim yetkiniz yok'}), 403
     
     month = request.args.get('month')
@@ -5533,7 +5073,7 @@ def delete_income_adjustment(adjustment_id):
     """Gelir ayarlamasını sil - SADECE SUPER_ADMIN"""
     
     # Sadece super_admin silebilir
-    if request.staff_role != 'super_admin':
+    if not can_access_income():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     
     conn = None
@@ -5708,7 +5248,7 @@ def change_password():
 @app.route('/api/admin/wapio-settings', methods=['GET'])
 @token_required
 def get_wapio_settings():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5717,7 +5257,7 @@ def get_wapio_settings():
 @app.route('/api/admin/wapio-settings', methods=['PUT'])
 @token_required
 def update_wapio_settings():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5726,7 +5266,7 @@ def update_wapio_settings():
 @app.route('/api/admin/wapio/create-device', methods=['POST'])
 @token_required
 def admin_wapio_create_device():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5735,7 +5275,7 @@ def admin_wapio_create_device():
 @app.route('/api/admin/wapio/qr', methods=['POST'])
 @token_required
 def admin_wapio_qr():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5744,7 +5284,7 @@ def admin_wapio_qr():
 @app.route('/api/admin/wapio/session-status', methods=['GET'])
 @token_required
 def admin_wapio_session_status():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5753,7 +5293,7 @@ def admin_wapio_session_status():
 @app.route('/api/admin/wapio/update-webhook', methods=['POST'])
 @token_required
 def admin_wapio_update_webhook():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5762,7 +5302,7 @@ def admin_wapio_update_webhook():
 @app.route('/api/admin/wapio-compat-check', methods=['GET'])
 @token_required
 def admin_wapio_compat_check():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5771,7 +5311,7 @@ def admin_wapio_compat_check():
 @app.route('/api/admin/wapio-contract', methods=['GET'])
 @token_required
 def admin_wapio_contract():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     if not WAPIO_INTEGRATION_ENABLED:
         return _wapio_disabled_json()
@@ -5784,7 +5324,7 @@ def admin_wapio_contract():
 @app.route('/api/admin/whatsapp/provider', methods=['GET'])
 @token_required
 def admin_whatsapp_provider():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     provider = get_whatsapp_provider()
     return jsonify({
@@ -5798,7 +5338,7 @@ def admin_whatsapp_provider():
 @app.route('/api/admin/evolution-settings', methods=['GET'])
 @token_required
 def get_evolution_settings():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     cfg = get_evolution_config()
     return jsonify({
@@ -5816,7 +5356,7 @@ def get_evolution_settings():
 @app.route('/api/admin/evolution-settings', methods=['PUT'])
 @token_required
 def update_evolution_settings():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     data = request.get_json() or {}
     cfg = get_evolution_config()
@@ -5861,7 +5401,7 @@ def update_evolution_settings():
 @app.route('/api/admin/evolution/create-instance', methods=['POST'])
 @token_required
 def admin_evolution_create_instance():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     data = request.get_json() or {}
     cfg = get_evolution_config()
@@ -5891,7 +5431,7 @@ def admin_evolution_create_instance():
 @app.route('/api/admin/evolution/connect', methods=['POST'])
 @token_required
 def admin_evolution_connect():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     data = request.get_json() or {}
     cfg = get_evolution_config()
@@ -5911,7 +5451,7 @@ def admin_evolution_connect():
 @app.route('/api/admin/evolution/session-status', methods=['GET'])
 @token_required
 def admin_evolution_session_status():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     cfg = get_evolution_config()
     instance_name = (cfg.get('instance_name') or '').strip()
@@ -5931,7 +5471,7 @@ def admin_evolution_session_status():
 @app.route('/api/admin/evolution/update-webhook', methods=['POST'])
 @token_required
 def admin_evolution_update_webhook():
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     data = request.get_json() or {}
     cfg = get_evolution_config()
@@ -5973,7 +5513,13 @@ def get_admin_private_zone_settings():
 @app.route('/api/admin/private-zone-settings', methods=['PUT'])
 @token_required
 def update_admin_private_zone_settings():
-    """Özel bölge randevu pencerelerini güncelle."""
+    """Özel bölge randevu pencerelerini güncelle — yalnızca super_admin."""
+    if not is_studio_admin():
+        return jsonify({
+            'success': False,
+            'message': 'Özel bölge saatlerini yalnızca Super Admin düzenleyebilir',
+        }), 403
+
     data = request.get_json() or {}
     try:
         enabled = data.get('enabled', True)
@@ -6039,7 +5585,7 @@ def get_site_settings_endpoint():
 @token_required
 def update_site_settings_endpoint():
     """Site ayarlarını güncelle - SADECE SUPER_ADMIN"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     
     data = request.get_json()
@@ -6069,6 +5615,92 @@ def get_public_site_settings():
     except Exception as e:
         logger.error(f"get_public_site_settings hatası: {e}")
         return jsonify({'success': False, 'message': 'Ayarlar alınamadı'}), 500
+
+
+@app.route('/api/admin/google-calendar-settings', methods=['GET'])
+@token_required
+def get_google_calendar_settings():
+    if not is_studio_admin():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+    cfg = get_google_calendar_config()
+    probe = None
+    if cfg.get('calendar_id') and credentials_file_ok():
+        probe = probe_google_calendar(cfg.get('calendar_id'))
+    return jsonify({
+        'success': True,
+        'settings': {
+            'enabled': bool(cfg.get('enabled')),
+            'calendar_id': cfg.get('calendar_id') or '',
+            'timezone': cfg.get('timezone') or 'Europe/Istanbul',
+            'credentials_ok': credentials_file_ok(),
+            'service_account_email': get_service_account_email() or '',
+            'sync_active': is_google_calendar_enabled(),
+            'calendar_summary': (probe or {}).get('summary') or '',
+            'connected': bool(probe and probe.get('ok')),
+            'probe_message': (probe or {}).get('message') or '',
+        },
+        'calendars': list_accessible_calendars(),
+    })
+
+
+@app.route('/api/admin/google-calendar-settings', methods=['PUT'])
+@token_required
+def update_google_calendar_settings():
+    if not is_studio_admin():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+    data = request.get_json() or {}
+    calendar_id = data.get('calendar_id')
+    enabled = data.get('enabled')
+    timezone = data.get('timezone')
+    try:
+        save_google_calendar_config(
+            calendar_id=calendar_id if calendar_id is not None else None,
+            enabled=enabled if enabled is not None else None,
+            timezone=timezone if timezone is not None else None,
+        )
+        cfg = get_google_calendar_config()
+        probe = probe_google_calendar(cfg.get('calendar_id')) if cfg.get('calendar_id') and credentials_file_ok() else None
+        logger.info(
+            'Google Calendar ayarları güncellendi by staff_id=%s calendar_id=%s enabled=%s',
+            request.staff_id,
+            cfg.get('calendar_id'),
+            cfg.get('enabled'),
+        )
+        return jsonify({
+            'success': True,
+            'message': 'Google Takvim ayarları kaydedildi',
+            'settings': {
+                'enabled': bool(cfg.get('enabled')),
+                'calendar_id': cfg.get('calendar_id') or '',
+                'timezone': cfg.get('timezone') or 'Europe/Istanbul',
+                'sync_active': is_google_calendar_enabled(),
+                'connected': bool(probe and probe.get('ok')),
+                'calendar_summary': (probe or {}).get('summary') or '',
+                'probe_message': (probe or {}).get('message') or '',
+            },
+        })
+    except Exception as e:
+        logger.error(f"update_google_calendar_settings hatası: {e}")
+        return jsonify({'success': False, 'message': 'Ayarlar kaydedilemedi'}), 500
+
+
+@app.route('/api/admin/google-calendar-settings/test', methods=['POST'])
+@token_required
+def test_google_calendar_settings():
+    if not is_studio_admin():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+    data = request.get_json() or {}
+    calendar_id = (data.get('calendar_id') or '').strip() or None
+    result = probe_google_calendar(calendar_id)
+    return jsonify({
+        'success': bool(result.get('ok')),
+        'message': result.get('message') or ('Bağlantı başarılı' if result.get('ok') else 'Bağlantı başarısız'),
+        'calendar': {
+            'id': result.get('calendar_id') or '',
+            'summary': result.get('summary') or '',
+            'time_zone': result.get('time_zone') or '',
+        } if result.get('ok') else None,
+    }), (200 if result.get('ok') else 400)
 
 
 # =============================================
@@ -6146,13 +5778,18 @@ def send_appointment_reminders():
                     
                     send_wapio_message(phone, message)
                     sent_count += 1
-                    logger.info(f"✅ Hatırlatma gönderildi: {phone} - {apt_date} {apt_time}")
+                    logger.info(f"Hatırlatma gönderildi: {phone} - {apt_date} {apt_time}")
                 else:
                     # Başka bir worker zaten bu randevuyu işlemiş
-                    logger.info(f"⏭️ Hatırlatma atlandı (zaten gönderilmiş): {phone} - {apt_date} {apt_time}")
+                    logger.info(
+                        "Hatirlatma atlandi (zaten gonderilmis) | phone=%s date=%s time=%s",
+                        phone,
+                        apt_date,
+                        apt_time,
+                    )
                 
             except Exception as e:
-                logger.error(f"❌ Hatırlatma gönderilemedi ({phone}): {e}")
+                log_error(logger, E_WA_004, "Randevu hatirlatmasi gonderilemedi", exc=e, phone=phone)
                 # Hata durumunda reminder_sent'i geri al (rollback için)
                 cursor.execute("UPDATE appointments SET reminder_sent = FALSE WHERE id = %s", (apt_id,))
         
@@ -6161,14 +5798,14 @@ def send_appointment_reminders():
         cursor.close()
         
         if sent_count > 0:
-            logger.info(f"✅ {sent_count} randevu hatırlatması gönderildi")
+            logger.info(f"{sent_count} randevu hatırlatması gönderildi")
         elif appointments:
-            logger.info(f"ℹ️  {len(appointments)} randevu bulundu ama hepsi zaten işlenmiş")
+            logger.info("%s randevu bulundu ama hepsi zaten islenmis", len(appointments))
             
     except Exception as e:
         if conn:
             conn.rollback()
-        logger.error(f"❌ send_appointment_reminders hatası: {e}")
+        log_error(logger, E_WA_004, "Randevu hatirlatmalari calistirilamadi", exc=e)
     finally:
         if conn:
             conn.autocommit = True
@@ -6230,11 +5867,19 @@ def send_aftercare_cream_reminders():
                 send_wapio_message(phone, message)
                 sent_count += 1
                 logger.info(
-                    f"✅ Krem bakım hatırlatması gönderildi: {phone} (randevu #{apt_id}, "
-                    f"tamamlanma: {completed_at})"
+                    "Krem bakim hatirlatmasi gonderildi | phone=%s appointment_id=%s completed_at=%s",
+                    phone,
+                    apt_id,
+                    completed_at,
                 )
             except Exception as send_err:
-                logger.error(f"❌ Krem hatırlatması gönderilemedi (randevu #{apt_id}): {send_err}")
+                log_error(
+                    logger,
+                    E_WA_004,
+                    "Krem bakim hatirlatmasi gonderilemedi",
+                    exc=send_err,
+                    appointment_id=apt_id,
+                )
                 cursor.execute(
                     "UPDATE appointments SET aftercare_reminder_sent = FALSE WHERE id = %s",
                     (apt_id,),
@@ -6243,11 +5888,11 @@ def send_aftercare_cream_reminders():
         conn.commit()
         cursor.close()
         if sent_count > 0:
-            logger.info(f"✅ {sent_count} krem bakım hatırlatması gönderildi")
+            logger.info(f"{sent_count} krem bakım hatırlatması gönderildi")
     except Exception as e:
         if conn:
             conn.rollback()
-        logger.error(f"❌ send_aftercare_cream_reminders hatası: {e}")
+        log_error(logger, E_WA_004, "Krem bakim hatirlatmalari calistirilamadi", exc=e)
     finally:
         if conn:
             conn.autocommit = True
@@ -6266,7 +5911,7 @@ def create_database_backup():
     # Backup klasörünü oluştur
     if not os.path.exists(BACKUP_DIR):
         os.makedirs(BACKUP_DIR)
-        logger.info(f"📁 Backup klasörü oluşturuldu: {BACKUP_DIR}")
+        logger.info(f"Backup klasörü oluşturuldu: {BACKUP_DIR}")
     
     # Dosya adı: backup_2024-12-28_02-00-00.sql
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -6301,14 +5946,11 @@ def create_database_backup():
         for path in common_paths:
             if os.path.exists(path) and os.access(path, os.X_OK):
                 pg_dump_path = path
-                logger.info(f"🔍 pg_dump bulundu: {pg_dump_path}")
+                logger.info(f"pg_dump bulundu: {pg_dump_path}")
                 break
     
     if not pg_dump_path:
-        error_msg = "pg_dump bulunamadı! PostgreSQL client tools yüklü olmalıdır."
-        logger.error(f"❌ {error_msg}")
-        logger.error(f"   Ubuntu/Debian: sudo apt-get install postgresql-client")
-        logger.error(f"   CentOS/RHEL: sudo yum install postgresql")
+        log_error(logger, E_BKP_001, "pg_dump bulunamadi; PostgreSQL client tools yuklu olmali")
         return False
     
     # pg_dump komutu
@@ -6327,7 +5969,7 @@ def create_database_backup():
     env['PGPASSWORD'] = db_password
     
     try:
-        logger.info(f"🔄 Veritabanı yedekleme başlıyor: {db_name}")
+        logger.info(f"Veritabanı yedekleme başlıyor: {db_name}")
         logger.info(f"   pg_dump: {pg_dump_path}")
         result = subprocess.run(
             pg_dump_cmd,
@@ -6338,9 +5980,9 @@ def create_database_backup():
         
         if result.returncode == 0:
             file_size = os.path.getsize(backup_path) / (1024 * 1024)  # MB
-            logger.info(f"✅ Veritabanı yedekleme tamamlandı!")
-            logger.info(f"   📄 Dosya: {backup_filename}")
-            logger.info(f"   📊 Boyut: {file_size:.2f} MB")
+            logger.info(f"Veritabanı yedekleme tamamlandı!")
+            logger.info(f"Dosya: {backup_filename}")
+            logger.info(f"Boyut: {file_size:.2f} MB")
             
             # Google Drive'a yükle (rclone ile)
             upload_to_google_drive(backup_path, backup_filename)
@@ -6350,17 +5992,16 @@ def create_database_backup():
             
             return True
         else:
-            logger.error(f"❌ Veritabanı yedekleme hatası: {result.stderr}")
+            log_error(logger, E_BKP_001, "Veritabani yedekleme basarisiz", stderr=result.stderr)
             if result.stdout:
-                logger.error(f"   Çıktı: {result.stdout}")
+                logger.error("pg_dump ciktisi | stdout=%s", result.stdout[:500])
             return False
             
     except FileNotFoundError:
-        error_msg = f"pg_dump bulunamadı: {pg_dump_path}"
-        logger.error(f"❌ {error_msg}")
+        log_error(logger, E_BKP_001, "pg_dump bulunamadi", path=pg_dump_path)
         return False
     except Exception as e:
-        logger.error(f"❌ Veritabanı yedekleme hatası: {e}")
+        log_error(logger, E_BKP_001, "Veritabani yedekleme hatasi", exc=e)
         return False
 
 
@@ -6390,24 +6031,24 @@ def upload_to_google_drive(backup_path, backup_filename):
             for path in common_paths:
                 if os.path.exists(path) and os.access(path, os.X_OK):
                     rclone_path = path
-                    logger.info(f"🔍 Rclone bulundu (common path): {rclone_path}")
+                    logger.info(f"Rclone bulundu (common path): {rclone_path}")
                     break
         
         if not rclone_path:
-            logger.warning(f"⚠️ Rclone bulunamadı, Google Drive'a yükleme atlandı")
+            logger.warning(f"Rclone bulunamadı, Google Drive'a yükleme atlandı")
             logger.warning(f"   Rclone kurulumu: https://rclone.org/install/")
             logger.warning(f"   Veya: which rclone ile konumunu bulup PATH'e ekleyin")
             return False
         
-        logger.info(f"🔍 Rclone bulundu: {rclone_path}")
+        logger.info(f"Rclone bulundu: {rclone_path}")
         
         # Backup dosyasının var olduğunu kontrol et
         if not os.path.exists(backup_path):
-            logger.error(f"❌ Backup dosyası bulunamadı: {backup_path}")
+            log_error(logger, E_BKP_001, "Yedek dosyasi bulunamadi", path=backup_path)
             return False
         
         file_size_mb = os.path.getsize(backup_path) / (1024 * 1024)
-        logger.info(f"📄 Backup dosyası boyutu: {file_size_mb:.2f} MB")
+        logger.info(f"Backup dosyası boyutu: {file_size_mb:.2f} MB")
         
         # Rclone remote'u kontrol et (tam path ile)
         remote_check = subprocess.run(
@@ -6418,12 +6059,16 @@ def upload_to_google_drive(backup_path, backup_filename):
         )
         
         if remote_check.returncode != 0:
-            logger.error(f"❌ Rclone remote '{RCLONE_REMOTE}' erişilemiyor")
-            logger.error(f"   Hata: {remote_check.stderr}")
-            logger.error(f"   Remote'ları kontrol edin: {rclone_path} listremotes")
+            log_error(
+                logger,
+                E_BKP_001,
+                "Rclone remote erisilemiyor",
+                remote=RCLONE_REMOTE,
+                stderr=remote_check.stderr,
+            )
             return False
         
-        logger.info(f"✅ Rclone remote '{RCLONE_REMOTE}' erişilebilir")
+        logger.info(f"Rclone remote '{RCLONE_REMOTE}' erişilebilir")
         
         # Klasörün var olup olmadığını kontrol et, yoksa oluştur
         folder_check = subprocess.run(
@@ -6434,7 +6079,7 @@ def upload_to_google_drive(backup_path, backup_filename):
         )
         
         if folder_check.returncode != 0:
-            logger.info(f"📁 Klasör '{GDRIVE_FOLDER}' bulunamadı, oluşturuluyor...")
+            logger.info(f"Klasör '{GDRIVE_FOLDER}' bulunamadı, oluşturuluyor...")
             mkdir_result = subprocess.run(
                 [rclone_path, 'mkdir', f'{RCLONE_REMOTE}:{GDRIVE_FOLDER}'],
                 capture_output=True,
@@ -6442,9 +6087,9 @@ def upload_to_google_drive(backup_path, backup_filename):
                 timeout=30
             )
             if mkdir_result.returncode != 0:
-                logger.warning(f"⚠️ Klasör oluşturulamadı (zaten var olabilir): {mkdir_result.stderr}")
+                logger.warning(f"Klasör oluşturulamadı (zaten var olabilir): {mkdir_result.stderr}")
         else:
-            logger.info(f"✅ Klasör '{GDRIVE_FOLDER}' mevcut")
+            logger.info(f"Klasör '{GDRIVE_FOLDER}' mevcut")
         
         # Rclone ile Google Drive'a yükle (tam path ile)
         remote_path = f"{RCLONE_REMOTE}:{GDRIVE_FOLDER}/{backup_filename}"
@@ -6457,7 +6102,7 @@ def upload_to_google_drive(backup_path, backup_filename):
             '--stats=10s'
         ]
         
-        logger.info(f"📤 Google Drive'a yükleniyor...")
+        logger.info(f"Google Drive'a yükleniyor...")
         logger.info(f"   Kaynak: {backup_path}")
         logger.info(f"   Hedef: {remote_path}")
         
@@ -6469,32 +6114,30 @@ def upload_to_google_drive(backup_path, backup_filename):
         )
         
         if result.returncode == 0:
-            logger.info(f"✅ Backup Google Drive'a başarıyla yüklendi!")
-            logger.info(f"   📁 Konum: {remote_path}")
+            logger.info(f"Backup Google Drive'a başarıyla yüklendi!")
+            logger.info(f"Konum: {remote_path}")
             if result.stdout:
-                logger.info(f"   📊 Rclone çıktısı: {result.stdout[-500:]}")  # Son 500 karakter
+                logger.info(f"Rclone çıktısı: {result.stdout[-500:]}") # Son 500 karakter
             return True
         else:
-            logger.error(f"❌ Google Drive'a yükleme başarısız!")
-            logger.error(f"   Exit code: {result.returncode}")
-            if result.stderr:
-                logger.error(f"   Hata mesajı: {result.stderr}")
-            if result.stdout:
-                logger.error(f"   Çıktı: {result.stdout[-500:]}")
+            log_error(
+                logger,
+                E_BKP_001,
+                "Google Drive yedek yukleme basarisiz",
+                exit_code=result.returncode,
+                stderr=result.stderr,
+            )
             return False
             
     except subprocess.TimeoutExpired:
-        logger.error(f"⏱️ Google Drive'a yükleme timeout (10 dakika aşıldı)")
-        logger.error(f"   Backup dosyası çok büyük olabilir veya ağ bağlantısı yavaş olabilir")
+        log_error(logger, E_BKP_001, "Google Drive yedek yukleme timeout (10 dakika)")
         return False
     except FileNotFoundError:
-        logger.warning(f"⚠️ Rclone bulunamadı, Google Drive'a yükleme atlandı")
+        logger.warning(f"Rclone bulunamadı, Google Drive'a yükleme atlandı")
         logger.warning(f"   Rclone kurulumu: https://rclone.org/install/")
         return False
     except Exception as e:
-        logger.error(f"❌ Google Drive'a yükleme hatası: {e}")
-        import traceback
-        logger.error(f"   Traceback: {traceback.format_exc()}")
+        log_error(logger, E_BKP_001, "Google Drive yedek yukleme hatasi", exc=e)
         return False
 
 
@@ -6513,13 +6156,13 @@ def cleanup_old_database_backups(backup_dir, keep_days):
         if file_time < cutoff_date:
             try:
                 os.remove(backup_file)
-                logger.info(f"🗑️ Eski yedek silindi: {os.path.basename(backup_file)}")
+                logger.info(f"Eski yedek silindi: {os.path.basename(backup_file)}")
                 deleted_count += 1
             except Exception as e:
-                logger.warning(f"⚠️ Dosya silinemedi: {backup_file} - {e}")
+                logger.warning(f"Dosya silinemedi: {backup_file} - {e}")
     
     if deleted_count > 0:
-        logger.info(f"📋 Toplam {deleted_count} eski yedek temizlendi")
+        logger.info(f"Toplam {deleted_count} eski yedek temizlendi")
 
 
 # Scheduler'ı başlat (sadece master process'te)
@@ -6551,7 +6194,7 @@ def start_scheduler_if_master():
     except (IOError, OSError):
         # File lock alınamadı - başka bir process scheduler'ı başlatmış olabilir
         # Ama yine de database lock kontrolü yapacağız (daha güvenilir)
-        logger.info("ℹ️  File lock alınamadı, database lock kontrolü yapılıyor...")
+        logger.info("File lock alinamadi, database lock kontrolu yapiliyor")
         if lock_file:
             try:
                 lock_file.close()
@@ -6574,7 +6217,7 @@ def start_scheduler_if_master():
         cursor.close()
         
         if not db_lock_acquired:
-            logger.info("ℹ️  Scheduler başka bir process tarafından başlatılmış (database lock), atlanıyor")
+            logger.info("Scheduler baska bir process tarafindan baslatilmis (database lock), atlaniyor")
             if lock_file and file_lock_acquired:
                 try:
                     fcntl.flock(lock_file, fcntl.LOCK_UN)
@@ -6598,7 +6241,7 @@ def start_scheduler_if_master():
             
             scheduler.start()
             import os
-            logger.info(f"✅ Scheduler başlatıldı (PID: {os.getpid()}, Advisory Lock ID: {advisory_lock_id})")
+            logger.info(f"Scheduler başlatıldı (PID: {os.getpid()}, Advisory Lock ID: {advisory_lock_id})")
             logger.info("   - Randevu hatırlatma: her 5 dakikada bir (max_instances=1)")
             logger.info(f"   - Krem bakım hatırlatması: her 5 dk (tamamlandıktan {AFTERCARE_REMINDER_HOURS} saat sonra)")
             logger.info("   - Verification codes cleanup: her 5 dakikada bir")
@@ -6618,7 +6261,7 @@ def start_scheduler_if_master():
             
             return True
         else:
-            logger.info("ℹ️  Scheduler zaten çalışıyor")
+            logger.info("Scheduler zaten calisiyor")
             # Lock'u bırak (scheduler zaten çalışıyorsa başka bir process başlatmıştır)
             if conn:
                 cursor = conn.cursor()
@@ -6633,7 +6276,7 @@ def start_scheduler_if_master():
             return False
             
     except Exception as e:
-        logger.error(f"❌ Scheduler başlatılamadı: {e}")
+        log_error(logger, E_SCH_001, "Scheduler baslatilamadi", exc=e)
         # Lock'u bırak
         if conn:
             try:
@@ -6656,7 +6299,6 @@ def start_scheduler_if_master():
 # Scheduler'ı başlat (sadece bir process başlatacak)
 start_scheduler_if_master()
 ensure_artist_instagram_column()
-seed_artist_tattoo_styles_from_config()
 
 # Uygulama kapandığında scheduler'ı durdur
 atexit.register(lambda: scheduler.shutdown() if scheduler.running else None)
@@ -6670,7 +6312,7 @@ atexit.register(lambda: scheduler.shutdown() if scheduler.running else None)
 @token_required
 def get_staff_working_hours(staff_id):
     """Super admin gets working hours for a specific staff member"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkisiz erişim'}), 403
     
     conn = None
@@ -6710,7 +6352,7 @@ def get_staff_working_hours(staff_id):
 @token_required
 def update_staff_working_hours(staff_id):
     """Super admin updates working hours for a specific staff member"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkisiz erişim'}), 403
     
     data = request.get_json()
@@ -6754,7 +6396,7 @@ def update_staff_working_hours(staff_id):
 @token_required
 def get_staff_time_off(staff_id):
     """Super admin gets time-off for a specific staff member"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkisiz erişim'}), 403
     
     conn = None
@@ -6795,7 +6437,7 @@ def get_staff_time_off(staff_id):
 @token_required
 def add_staff_time_off(staff_id):
     """Super admin adds time-off for a specific staff member"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkisiz erişim'}), 403
     
     data = request.get_json()
@@ -6838,7 +6480,7 @@ def add_staff_time_off(staff_id):
 @token_required
 def delete_staff_time_off(staff_id, time_off_id):
     """Super admin deletes time-off for a specific staff member"""
-    if request.staff_role != 'super_admin':
+    if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Yetkisiz erişim'}), 403
     
     conn = None
