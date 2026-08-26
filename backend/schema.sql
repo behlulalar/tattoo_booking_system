@@ -4,7 +4,7 @@
 -- =============================================
 
 -- Role tipi için ENUM oluştur
-CREATE TYPE role_type AS ENUM ('super_admin', 'staff');
+CREATE TYPE role_type AS ENUM ('super_admin', 'staff', 'tech_support');
 
 -- Randevu durumu için ENUM oluştur
 CREATE TYPE appointment_status AS ENUM ('pending', 'confirmed', 'completed', 'cancelled', 'no_show');

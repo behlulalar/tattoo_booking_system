@@ -5,12 +5,11 @@
     <meta charset="UTF-8" />
     <title>Admin Panel - Roof Tattoo Gallery</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <link rel="icon" type="image/png" href="img/logo.png" />
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
-    <link rel="stylesheet" href="mobile-safe.css?v=20260603140000" />
-    <link rel="stylesheet" href="admin.css?v=20260718153000" />
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
+    <link rel="stylesheet" href="admin.css?v=20260819180000" />
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -92,17 +91,27 @@
                     <span class="nav-icon"><i class="fas fa-user-plus"></i></span>
                     <span>Manuel Randevu</span>
                 </a>
-                <a href="#" class="nav-item" data-page="my-tattoo-requests">
+                <a href="#" class="nav-item tattoo-request-nav" data-page="my-tattoo-requests">
                     <span class="nav-icon"><i class="fas fa-pen-nib"></i></span>
                     <span>Dövme Taleplerim</span>
                     <span id="my-new-requests-badge" class="badge" style="display:none;">0</span>
                 </a>
-                <a href="#" class="nav-item super-admin-only" data-page="all-tattoo-requests" style="display: none;">
+                <a href="#" class="nav-item tattoo-request-nav" data-page="undecided-requests">
+                    <span class="nav-icon"><i class="fas fa-question-circle"></i></span>
+                    <span>Karar Vermeyenler</span>
+                    <span id="undecided-requests-badge" class="badge" style="display:none;">0</span>
+                </a>
+                <a href="#" class="nav-item tattoo-request-nav" data-page="preconsult-requests">
+                    <span class="nav-icon"><i class="fas fa-comments"></i></span>
+                    <span>Ön Görüşme Talepleri</span>
+                    <span id="preconsult-requests-badge" class="badge" style="display:none;">0</span>
+                </a>
+                <a href="#" class="nav-item super-admin-only tattoo-request-nav" data-page="all-tattoo-requests" style="display: none;">
                     <span class="nav-icon"><i class="fas fa-list"></i></span>
                     <span>Tüm Dövme Talepleri</span>
                     <span id="all-new-requests-badge" class="badge" style="display:none;">0</span>
                 </a>
-                <a href="#" class="nav-item" data-page="offered">
+                <a href="#" class="nav-item tattoo-request-nav" data-page="offered">
                     <span class="nav-icon"><i class="fas fa-paper-plane"></i></span>
                     <span>Gönderilen Teklifler</span>
                     <span id="pending-badge" class="badge">0</span>
@@ -115,15 +124,11 @@
                     <span class="nav-icon"><i class="fas fa-history"></i></span>
                     <span>Geçmiş Randevular</span>
                 </a>
-                <a href="#" class="nav-item" data-page="schedule">
+                <a href="#" class="nav-item super-admin-only" data-page="schedule" style="display: none;">
                     <span class="nav-icon"><i class="fas fa-clock"></i></span>
                     <span>Saatlerim</span>
                 </a>
-                <a href="#" class="nav-item" data-page="tattoo-styles">
-                    <span class="nav-icon"><i class="fas fa-palette"></i></span>
-                    <span>Stillerimi Düzenle</span>
-                </a>
-                <a href="#" class="nav-item super-admin-only" data-page="reports" style="display: none;">
+                <a href="#" class="nav-item super-admin-only income-only" data-page="reports" style="display: none;">
                     <span class="nav-icon"><i class="fas fa-coins"></i></span>
                     <span>Gelir Raporu</span>
                 </a>
@@ -134,6 +139,10 @@
                 <a href="#" class="nav-item super-admin-only" data-page="api-settings" style="display: none;">
                     <span class="nav-icon"><i class="fab fa-whatsapp"></i></span>
                     <span>Whatsapp Bağlantısı</span>
+                </a>
+                <a href="#" class="nav-item super-admin-only" data-page="google-calendar" style="display: none;">
+                    <span class="nav-icon"><i class="fas fa-calendar-alt"></i></span>
+                    <span>Google Takvim</span>
                 </a>
             </nav>
             <div class="sidebar-footer">
@@ -288,6 +297,36 @@
                 </div>
             </section>
 
+            <!-- Karar Vermeyenler -->
+            <section id="section-undecided-requests" class="content-section" style="display: none;">
+                <div class="section-header">
+                    <h1><i class="fas fa-question-circle"></i> Karar Vermeyenler</h1>
+                    <div class="section-header-actions">
+                        <input type="text" id="undecided-ref-search" class="ref-search-input" placeholder="RN2323" maxlength="12" />
+                        <button type="button" id="undecided-ref-search-btn" class="filter-btn"><i class="fas fa-search"></i> Ara</button>
+                        <button id="refresh-undecided-requests-btn" class="filter-btn"><i class="fas fa-rotate"></i> Yenile</button>
+                    </div>
+                </div>
+                <div id="undecided-requests-list" class="appointments-list">
+                    <p class="empty-message">Yükleniyor...</p>
+                </div>
+            </section>
+
+            <!-- Ön Görüşme Talepleri -->
+            <section id="section-preconsult-requests" class="content-section" style="display: none;">
+                <div class="section-header">
+                    <h1><i class="fas fa-comments"></i> Ön Görüşme Talepleri</h1>
+                    <div class="section-header-actions">
+                        <input type="text" id="preconsult-ref-search" class="ref-search-input" placeholder="RN2323" maxlength="12" />
+                        <button type="button" id="preconsult-ref-search-btn" class="filter-btn"><i class="fas fa-search"></i> Ara</button>
+                        <button id="refresh-preconsult-requests-btn" class="filter-btn"><i class="fas fa-rotate"></i> Yenile</button>
+                    </div>
+                </div>
+                <div id="preconsult-requests-list" class="appointments-list">
+                    <p class="empty-message">Yükleniyor...</p>
+                </div>
+            </section>
+
             <!-- Tüm Dövme Talepleri (Super Admin, status=new) -->
             <section id="section-all-tattoo-requests" class="content-section" style="display: none;">
                 <div class="section-header">
@@ -429,8 +468,7 @@
                     <h3><i class="fas fa-calendar-week"></i> Haftalık Çalışma Saatleri</h3>
                     <p id="working-hours-notice" class="working-hours-notice" style="display: none;">
                         <i class="fas fa-info-circle"></i>
-                        Çalışma saatleri henüz kaydedilmemiş. Aşağıdaki saatler önizlemedir — müşteri tarafında da aynı aralık
-                        (10:00–20:00) kullanılır. Kesinleştirmek için <strong>Kaydet</strong>’e basın.
+                        <span id="working-hours-notice-text">Çalışma saatleri Super Admin tarafından belirlenir.</span>
                     </p>
                     <div id="working-hours-table" class="working-hours-container">
                         <p class="empty-message">Yükleniyor...</p>
@@ -447,43 +485,6 @@
                     </div>
                     <div id="time-off-list" class="time-off-container">
                         <p class="empty-message">İzin günü yok</p>
-                    </div>
-                </div>
-
-                <!-- Özel Bölge Randevu Saatleri -->
-                <div class="schedule-block private-zone-block" style="margin-top: 24px;">
-                    <h3><i class="fas fa-shield-alt"></i> Özel Bölge Randevu Saatleri</h3>
-                    <p class="private-zone-desc">
-                        Göğüs, karın, kaburga, uyluk gibi mahrem bölgeler için yalnızca seçtiğiniz iki günde
-                        belirlediğiniz saat aralıklarında randevu alınabilir. Müşteriler bu saatler dışında
-                        randevu oluşturamaz.
-                    </p>
-                    <div id="private-zone-settings" class="private-zone-settings">
-                        <p class="empty-message">Yükleniyor...</p>
-                    </div>
-                    <button id="save-private-zone-btn" class="save-btn" style="margin-top: 16px;">
-                        <i class="fas fa-save"></i> Özel Bölge Saatlerini Kaydet
-                    </button>
-                </div>
-            </section>
-
-            <!-- Dövme Tarzları Section -->
-            <section id="section-tattoo-styles" class="content-section" style="display: none;">
-                <div class="section-header">
-                    <h1><i class="fas fa-palette"></i> Stillerimi Düzenle</h1>
-                    <div class="section-header-actions">
-                        <button id="tattoo-styles-refresh-btn" class="filter-btn secondary" type="button" title="Yenile">
-                            <i class="fas fa-sync-alt"></i> Yenile
-                        </button>
-                    </div>
-                </div>
-                <div class="schedule-block tattoo-styles-page-block">
-                    <p class="tattoo-styles-desc">
-                        Müşteriler randevu talebinde yalnızca burada tanımladığınız tarzları görür ve seçebilir.
-                        Tarz ekleyebilir, adını değiştirebilir, sıralayabilir veya pasif hale getirebilirsiniz.
-                    </p>
-                    <div id="my-tattoo-styles-panel" class="tattoo-styles-panel">
-                        <p class="empty-message">Yükleniyor...</p>
                     </div>
                 </div>
             </section>
@@ -586,6 +587,70 @@
                             <div id="wapio-compat-results" class="wapio-compat-results" hidden></div>
                         </div>
                     </details>
+                </div>
+            </section>
+
+            <!-- Google Calendar (Super Admin Only) -->
+            <section id="section-google-calendar" class="content-section" style="display: none;">
+                <div class="section-header">
+                    <h1><i class="fas fa-calendar-alt"></i> Google Takvim</h1>
+                </div>
+
+                <div class="wapio-page">
+                    <div class="wapio-card wapio-card--status">
+                        <div id="gcal-connection-status" class="wapio-connection-status wapio-connection-status--unknown" role="status">
+                            <span class="wapio-connection-status-dot" aria-hidden="true"></span>
+                            <span class="wapio-connection-status-label" id="gcal-status-label">Kontrol ediliyor…</span>
+                        </div>
+                        <div class="wapio-welcome-setting">
+                            <div class="wapio-welcome-setting-text">
+                                <strong>Randevuları Google Takvime yaz</strong>
+                                <p>Onaylanan ve oluşturulan randevular seçilen takvime aktarılır.</p>
+                            </div>
+                            <label class="service-toggle" title="Google Takvim senkronunu aç/kapat">
+                                <input type="checkbox" id="gcal-enabled" />
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="wapio-card">
+                        <h2 class="wapio-card-title">Hangi takvime yazılsın?</h2>
+                        <p class="gcal-help">
+                            Sistem kişisel Google hesabına doğrudan bağlanmaz; stüdyo servis hesabı kullanılır.
+                            Stüdyo takvimini aşağıdaki e-posta ile paylaşın, sonra takvim kimliğini kaydedin.
+                        </p>
+                        <div class="form-group">
+                            <label>Servis hesabı e-postası</label>
+                            <div class="gcal-copy-row">
+                                <input type="text" id="gcal-sa-email" readonly placeholder="Kimlik dosyası yok">
+                                <button type="button" id="gcal-copy-email-btn" class="filter-btn secondary">Kopyala</button>
+                            </div>
+                        </div>
+                        <div class="form-group" id="gcal-list-group" style="display:none;">
+                            <label for="gcal-calendar-select">Paylaşılan takvimler</label>
+                            <select id="gcal-calendar-select">
+                                <option value="">— Seçin veya aşağıya yazın —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="gcal-calendar-id">Takvim kimliği</label>
+                            <input type="text" id="gcal-calendar-id" placeholder="studio@gmail.com veya xxx@group.calendar.google.com" autocomplete="off">
+                            <p class="gcal-field-hint">Google Takvim → Ayarlar → takvimi seç → Takvim kimliği</p>
+                        </div>
+                        <p id="gcal-current-summary" class="gcal-current-summary" hidden></p>
+                        <div class="wapio-actions">
+                            <button type="button" id="gcal-test-btn" class="filter-btn secondary">
+                                <i class="fas fa-stethoscope"></i> Bağlantıyı dene
+                            </button>
+                            <button type="button" id="gcal-save-btn" class="save-btn" style="width:auto;margin-top:0;">
+                                <i class="fas fa-save"></i> Kaydet
+                            </button>
+                        </div>
+                        <p id="gcal-save-note" class="gcal-field-hint" style="margin-top:14px;">
+                            Yeni randevular bu takvime yazılır. Eski etkinlikler önceki takvimde kalır.
+                        </p>
+                    </div>
                 </div>
             </section>
 
@@ -824,7 +889,14 @@
                         <div class="stat-icon"><i class="fas fa-money-bill-wave"></i></div>
                         <div class="stat-info">
                             <span class="stat-value" id="staff-stat-income">0 ₺</span>
-                            <span class="stat-label">Toplam Gelir</span>
+                            <span class="stat-label">Tam Fiyat (Toplam)</span>
+                        </div>
+                    </div>
+                    <div class="stat-card income-card staff-stats-income staff-stats-share">
+                        <div class="stat-icon"><i class="fas fa-percentage"></i></div>
+                        <div class="stat-info">
+                            <span class="stat-value" id="staff-stat-share">0 ₺</span>
+                            <span class="stat-label">Personel Kazancı (%50)</span>
                         </div>
                     </div>
                     <div class="stat-card staff-stats-metric">
@@ -941,6 +1013,7 @@
                         <label for="staff-role-select">Rol</label>
                         <select id="staff-role-select">
                             <option value="staff">Personel Sanatçı</option>
+                            <option value="tech_support">Teknik Destek</option>
                             <option value="super_admin">Super Admin</option>
                         </select>
                     </div>
@@ -1001,7 +1074,7 @@
                 <h2><i class="fas fa-clock"></i> <span id="staff-schedule-name">Personel</span> - Çalışma Saatleri</h2>
                 <button id="close-staff-schedule-btn" class="close-btn">&times;</button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body staff-stats-body">
                 <!-- Çalışma Saatleri -->
                 <div class="schedule-block">
                     <h3><i class="fas fa-calendar-week"></i> Haftalık Çalışma Saatleri</h3>
@@ -1023,24 +1096,6 @@
                     <div id="staff-time-off-list" class="time-off-container">
                         <p class="empty-message">İzin günü yok</p>
                     </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Tattoo Styles Modal -->
-    <div id="tattoo-styles-modal-overlay" class="modal-overlay" style="display: none;">
-        <div class="tattoo-styles-modal">
-            <div class="modal-header">
-                <h2><i class="fas fa-palette"></i> <span id="tattoo-styles-modal-title">Dövme Tarzları</span></h2>
-                <button id="close-tattoo-styles-modal-btn" class="close-btn" type="button">&times;</button>
-            </div>
-            <div class="modal-body">
-                <p class="tattoo-styles-desc">
-                    Müşteriler randevu talebinde yalnızca bu listedeki tarzları görür.
-                </p>
-                <div id="tattoo-styles-modal-panel" class="tattoo-styles-panel">
-                    <p class="empty-message">Yükleniyor...</p>
                 </div>
             </div>
         </div>
@@ -1134,7 +1189,7 @@
                     <div class="form-row-2">
                         <div class="form-group">
                             <label for="manual-appt-duration">Süre (dk) <span>*</span></label>
-                            <input type="number" id="manual-appt-duration" min="30" step="30" value="120" required />
+                            <input type="number" id="manual-appt-duration" min="60" step="60" value="120" required />
                         </div>
                         <div class="form-group">
                             <label for="manual-appt-price">Ücret (₺)</label>
@@ -1196,9 +1251,9 @@
                 <div id="offer-form-loyalty-banner" class="offer-loyalty-banner" hidden></div>
                 <div class="form-group" style="margin-bottom:16px;">
                     <label style="display:block;margin-bottom:6px;font-size:0.9rem;color:var(--text-secondary);">Süre (dakika) <span style="color:var(--accent);">*</span></label>
-                    <input type="number" id="offer-form-duration" min="30" step="30" value="120"
+                    <input type="number" id="offer-form-duration" min="60" step="60" value="120"
                         style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:1rem;font-family:inherit;" />
-                    <small style="color:var(--text-muted);font-size:0.8rem;">30'un katı olmalı. Örn: 60, 90, 120</small>
+                    <small style="color:var(--text-muted);font-size:0.8rem;">60'ın katı olmalı. Örn: 60, 120, 180</small>
                 </div>
                 <div class="form-group" style="margin-bottom:24px;">
                     <label style="display:block;margin-bottom:6px;font-size:0.9rem;color:var(--text-secondary);">Fiyat (₺)</label>
@@ -1210,7 +1265,7 @@
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end;">
                     <button onclick="closeOfferFormModal()" style="padding:11px 22px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">İptal</button>
-                    <button onclick="resolveOfferForm()" style="padding:11px 22px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-family:inherit;"><i class="fas fa-paper-plane"></i> Gönder</button>
+                    <button onclick="resolveOfferForm()" style="padding:11px 22px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:400;cursor:pointer;font-family:inherit;"><i class="fas fa-paper-plane"></i> Gönder</button>
                 </div>
             </div>
         </div>
@@ -1227,7 +1282,7 @@
                 <input type="text" id="custom-prompt-input" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:1rem;font-family:inherit;" />
                 <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;">
                     <button onclick="customPromptResolve(null)" style="padding:10px 20px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">İptal</button>
-                    <button onclick="customPromptResolve(document.getElementById('custom-prompt-input').value)" style="padding:10px 20px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:600;cursor:pointer;font-family:inherit;">Tamam</button>
+                    <button onclick="customPromptResolve(document.getElementById('custom-prompt-input').value)" style="padding:10px 20px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:400;cursor:pointer;font-family:inherit;">Tamam</button>
                 </div>
             </div>
         </div>
@@ -1244,7 +1299,7 @@
                 <p id="custom-confirm-message" style="margin-bottom:24px;color:var(--text-secondary);"></p>
                 <div style="display:flex;gap:10px;justify-content:flex-end;">
                     <button onclick="customConfirmResolve(false)" style="padding:10px 20px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">Vazgeç</button>
-                    <button onclick="customConfirmResolve(true)" style="padding:10px 20px;background:#ef4444;border:none;border-radius:8px;color:#fff;font-weight:600;cursor:pointer;font-family:inherit;">Onayla</button>
+                    <button onclick="customConfirmResolve(true)" style="padding:10px 20px;background:#ef4444;border:none;border-radius:8px;color:#fff;font-weight:400;cursor:pointer;font-family:inherit;">Onayla</button>
                 </div>
             </div>
         </div>
@@ -1282,7 +1337,7 @@
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end;">
                     <button onclick="closeTimeOffFormModal()" style="padding:10px 20px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">İptal</button>
-                    <button onclick="submitTimeOffForm()" style="padding:10px 20px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:600;cursor:pointer;font-family:inherit;">Kaydet</button>
+                    <button onclick="submitTimeOffForm()" style="padding:10px 20px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:400;cursor:pointer;font-family:inherit;">Kaydet</button>
                 </div>
             </div>
         </div>
@@ -1307,7 +1362,7 @@
                     </button>
                 </div>
                 <div style="display:flex;justify-content:flex-end;">
-                    <button onclick="closeOfferUrlModal()" style="padding:10px 24px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:600;cursor:pointer;font-family:inherit;">Kapat</button>
+                    <button onclick="closeOfferUrlModal()" style="padding:10px 24px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:400;cursor:pointer;font-family:inherit;">Kapat</button>
                 </div>
             </div>
         </div>
@@ -1318,20 +1373,20 @@
         <div class="profile-modal" style="max-width:400px;text-align:center;">
             <div class="modal-body" style="padding:36px 28px;">
                 <i class="fas fa-clock" style="font-size:2.5rem;color:rgba(255,200,0,0.85);margin-bottom:18px;display:block;"></i>
-                <h2 style="font-family:'Bebas Neue',sans-serif;font-size:1.5rem;letter-spacing:1.5px;margin-bottom:10px;">Oturum Sona Eriyor</h2>
+                <h2 style="font-family:inherit;font-weight:400;font-size:1.5rem;letter-spacing:1.5px;margin-bottom:10px;">Oturum Sona Eriyor</h2>
                 <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:6px;">
-                    <span id="session-countdown" style="color:#fff;font-weight:700;font-size:1.1rem;">60</span> saniye içinde otomatik çıkış yapılacak.
+                    <span id="session-countdown" style="color:#fff;font-weight:400;font-size:1.1rem;">60</span> saniye içinde otomatik çıkış yapılacak.
                 </p>
                 <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:28px;">Devam etmek istiyor musunuz?</p>
                 <div style="display:flex;gap:12px;justify-content:center;">
                     <button onclick="sessionLogoutNow()" style="padding:10px 22px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">Çıkış Yap</button>
-                    <button onclick="sessionExtend()" style="padding:10px 22px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:700;cursor:pointer;font-family:inherit;">Devam Et</button>
+                    <button onclick="sessionExtend()" style="padding:10px 22px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:400;cursor:pointer;font-family:inherit;">Devam Et</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <script src="admin.js?v=20260718153000"></script>
+    <script src="admin.js?v=20260819180500"></script>
 </body>
 
 </html>

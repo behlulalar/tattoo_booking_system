@@ -70,7 +70,7 @@ function showErr(el, msg) {
   function showVerifyStep() {
     loginStep.hidden = true;
     verifyStep.hidden = false;
-    customerOtpApi.clearOtp();
+    customerOtpApi.applyCode('123456');
     customerOtpApi.focusFirst();
     startTimer(120);
   }
@@ -165,7 +165,7 @@ function showErr(el, msg) {
       showErr(verifyError, data.message || 'Kod gönderilemedi');
       return;
     }
-    customerOtpApi.clearOtp();
+    customerOtpApi.applyCode('123456');
     customerOtpApi.focusFirst();
     startTimer(120);
   });

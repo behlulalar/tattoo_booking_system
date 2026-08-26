@@ -47,7 +47,7 @@ body {
 .splash-screen {
     position: fixed;
     inset: 0;
-    background: #000;
+    background: #000000;
     color: #fff;
     z-index: 5000;
     display: flex;
@@ -55,7 +55,7 @@ body {
     justify-content: center;
     padding: 24px;
     opacity: 0;
-    transition: opacity 320ms ease;
+    transition: opacity 280ms ease;
 }
 
 .splash-screen.show {
@@ -68,64 +68,43 @@ body {
 }
 
 .splash-inner {
-    width: min(920px, 100%);
+    width: min(285px, 72vw);
     text-align: center;
     display: flex;
     flex-direction: column;
     align-items: center;
 }
 
-/* Ported from sefa_web/components/LoadingScreen.tsx (Framer Motion -> CSS) */
 .splash-logo-stack {
-    margin-bottom: 18px;
-    animation: splashLogoScale 800ms ease-out forwards;
-    opacity: 0;
-    transform: scale(0.5);
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 .splash-title-reveal {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
+    width: 84%;
     clip-path: inset(0 100% 0 0);
-    filter: drop-shadow(0 0 30px rgba(255, 255, 255, 0.3)) drop-shadow(0 0 60px rgba(156, 163, 175, 0.2));
 }
 
 .splash-screen.show .splash-title-reveal {
-    animation: splashTitleClip 2500ms ease-in-out 300ms forwards;
+    animation: splashRevealClip 1600ms linear forwards;
 }
 
-.splash-title-top,
-.splash-title-bottom {
-    font-family: "UnifrakturMaguntia", var(--font-ui), serif;
-    color: #ffffff;
-    line-height: 1.05;
-}
-
-.splash-title-top {
-    font-size: clamp(48px, 9vw, 82px);
-    letter-spacing: 0.02em;
-}
-
-.splash-title-bottom {
-    margin-top: 8px;
-    font-size: clamp(40px, 7vw, 64px);
-    letter-spacing: 0.04em;
+.splash-logo {
+    display: block;
+    width: 100%;
+    height: auto;
+    mix-blend-mode: darken;
 }
 
 .splash-progress {
-    width: min(256px, 72vw);
+    width: 100%;
     height: 2px;
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.14);
     overflow: hidden;
-    margin: 18px auto 0;
-    opacity: 0;
-}
-
-.splash-screen.show .splash-progress {
-    animation: splashFadeIn 300ms ease 200ms forwards;
+    margin: 8px 0 0;
 }
 
 .splash-progress-fill {
@@ -136,37 +115,30 @@ body {
 }
 
 .splash-screen.show .splash-progress-fill {
-    animation: splashProgressFill 2500ms ease-in-out 300ms forwards;
+    animation: splashRevealBar 1600ms linear forwards;
 }
 
-@keyframes splashLogoScale {
-    to {
-        opacity: 1;
-        transform: scale(1);
+@keyframes splashRevealClip {
+    from {
+        clip-path: inset(0 100% 0 0);
     }
-}
-
-@keyframes splashTitleClip {
     to {
         clip-path: inset(0 0% 0 0);
     }
 }
 
-@keyframes splashProgressFill {
+@keyframes splashRevealBar {
+    from {
+        width: 0%;
+    }
     to {
         width: 100%;
     }
 }
 
-@keyframes splashFadeIn {
-    to {
-        opacity: 1;
-    }
-}
-
 @media (max-width: 600px) {
-    .splash-logo-stack {
-        margin-bottom: 14px;
+    .splash-inner {
+        width: min(250px, 80vw);
     }
 }
 
@@ -174,21 +146,12 @@ body {
     .splash-screen {
         transition: none;
     }
-    .splash-logo-stack,
     .splash-screen.show .splash-title-reveal,
-    .splash-screen.show .splash-progress,
     .splash-screen.show .splash-progress-fill {
         animation: none !important;
     }
-    .splash-logo-stack {
-        opacity: 1;
-        transform: none;
-    }
     .splash-title-reveal {
         clip-path: none;
-    }
-    .splash-progress {
-        opacity: 1;
     }
     .splash-progress-fill {
         width: 100%;
@@ -310,7 +273,17 @@ body:not(.app-ready) .page-footer {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+}
+
+.booking-page.is-phone-step .booking-left > .booking-center {
+    margin-top: auto;
+    margin-bottom: auto;
+}
+
+.booking-left.is-tattoo-config-active > .booking-center {
+    margin-top: 0;
+    margin-bottom: 0;
 }
 
 /* Stepper + content block centered */
@@ -431,8 +404,8 @@ body:not(.app-ready) .page-footer {
     .booking-left {
         padding: 20px 20px 24px 20px;
         align-items: center;
-        justify-content: center;
-        min-height: 100dvh;
+        justify-content: flex-start;
+        min-height: 0;
     }
 
     .booking-center {
@@ -1400,6 +1373,94 @@ label {
     background: #333;
 }
 
+#config-confirm-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 1100;
+    padding: 20px;
+    box-sizing: border-box;
+    pointer-events: none;
+}
+
+#config-confirm-overlay.is-open {
+    display: flex;
+    pointer-events: auto;
+}
+
+#config-confirm-modal {
+    background: rgba(0, 0, 0, 0.78);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    padding: 36px 32px 28px;
+    border-radius: 20px;
+    text-align: center;
+    max-width: 420px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    animation: slideIn 0.3s ease-out;
+    color: #ffffff;
+}
+
+#config-confirm-modal h2 {
+    font-size: 22px;
+    margin-bottom: 10px;
+    color: #ffffff;
+}
+
+#config-confirm-modal p {
+    font-size: 15px;
+    line-height: 1.55;
+    color: rgba(255, 255, 255, 0.7);
+    margin-bottom: 24px;
+    font-family: var(--font-ui);
+    letter-spacing: normal;
+    text-transform: none;
+}
+
+#config-confirm-modal .button-group {
+    display: flex;
+    gap: 12px;
+    margin-top: 0;
+}
+
+#config-confirm-modal .secondary-btn,
+#config-confirm-modal .primary-btn {
+    flex: 1;
+    margin-top: 0;
+}
+
+#config-confirm-modal .primary-btn {
+    background: #ffffff;
+    color: #000000;
+}
+
+#config-confirm-modal .secondary-btn {
+    border-color: rgba(255, 255, 255, 0.4);
+    color: rgba(255, 255, 255, 0.88);
+    background: transparent;
+}
+
+.config-undecided-top {
+    position: relative;
+    z-index: 2;
+}
+
+.config-undecided-top .config-alt-btn {
+    pointer-events: auto;
+    position: relative;
+    z-index: 3;
+}
+
 /* Hata Alertbox */
 
 /* verify-modal primary-btn — .auth-modal-form .primary-btn (yukarıda) */
@@ -1494,7 +1555,7 @@ label {
         width: 100%;
         padding: 16px 16px var(--page-footer-clearance) 16px;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
         min-height: 0;
     }
 
@@ -1573,7 +1634,6 @@ label {
         max-width: 100% !important;
     }
 
-    .style-btn,
     .size-btn,
     .region-btn {
         font-size: 15px;
@@ -2292,6 +2352,14 @@ button i,
     transform: scale(1.02);
 }
 
+#success-modal.is-whatsapp-required #success-ok-btn {
+    display: none !important;
+}
+
+#success-modal.is-whatsapp-required .success-whatsapp-block {
+    margin-bottom: 0;
+}
+
 .success-btn {
     background: #ffffff !important;
     color: #000000 !important;
@@ -2365,7 +2433,7 @@ body.success-modal-open .page-footer {
    ============================================= */
 
 /* Label'lar beyaz */
-#tattoo-config-section,
+#tattoo-config-section label,
 #tattoo-details-section label,
 #customer-info-section label,
 #artist-section label {
@@ -2373,34 +2441,34 @@ body.success-modal-open .page-footer {
 }
 
 /* help-text */
-#tattoo-config-section,
+#tattoo-config-section .help-text,
 #tattoo-details-section .help-text {
     color: rgba(255, 255, 255, 0.5) !important;
 }
 
 /* Select, textarea dark */
-#tattoo-config-section,
+#tattoo-config-section select,
 #tattoo-details-section select,
-#tattoo-config-section,
+#tattoo-config-section textarea,
 #tattoo-details-section textarea {
     background-color: rgba(255, 255, 255, 0.06) !important;
     border-color: rgba(255, 255, 255, 0.18) !important;
     color: #ffffff !important;
 }
 
-#tattoo-config-section,
+#tattoo-config-section select option,
 #tattoo-details-section select option {
     background: #1a1a1a;
     color: #ffffff;
 }
 
-#tattoo-config-section,
+#tattoo-config-section textarea::placeholder,
 #tattoo-details-section textarea::placeholder {
     color: rgba(255, 255, 255, 0.4) !important;
 }
 
 /* Select ok işareti beyaz */
-#tattoo-config-section,
+#tattoo-config-section select,
 #tattoo-details-section select {
     background-image:
       linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.7) 50%),
@@ -2409,19 +2477,31 @@ body.success-modal-open .page-footer {
 }
 
 /* Talebi Gönder + Geri butonları */
-#tattoo-config-section,
+#tattoo-config-section .button-group {
+    position: relative;
+    z-index: 6;
+}
+
+#tattoo-config-section .primary-btn,
 #tattoo-details-section .primary-btn {
     background-color: #ffffff !important;
     color: #000000 !important;
 }
 
-#tattoo-config-section,
+#tattoo-config-section .primary-btn:disabled,
+#tattoo-config-continue-btn:disabled {
+    background-color: rgba(255, 255, 255, 0.28) !important;
+    color: rgba(0, 0, 0, 0.42) !important;
+    cursor: not-allowed;
+}
+
+#tattoo-config-section .secondary-btn,
 #tattoo-details-section .secondary-btn {
     border-color: rgba(255, 255, 255, 0.4) !important;
     color: rgba(255, 255, 255, 0.8) !important;
 }
 
-#tattoo-config-section,
+#tattoo-config-section .secondary-btn:hover,
 #tattoo-details-section .secondary-btn:hover {
     background: rgba(255,255,255,0.08) !important;
 }
@@ -2505,7 +2585,7 @@ body.success-modal-open .page-footer {
 /* "Dövmeci Seçimi" başlığı beyaz — section, booking-left içinde ama booking-center dışında */
 #artist-section h2,
 #customer-info-section h2,
-#tattoo-config-section,
+#tattoo-config-section h2,
 #tattoo-details-section h2,
 #service-section h2,
 #datetime-section h2,
@@ -2537,7 +2617,7 @@ body.success-modal-open .page-footer {
 
 /* "Devam Et" butonu: beyaz zemin — siyah yazı */
 #artist-continue-btn,
-#tattoo-config-continue-btn,
+#tattoo-config-continue-btn:not(:disabled),
 #service-continue-btn,
 #datetime-continue-btn {
     background-color: #ffffff !important;
@@ -2545,268 +2625,59 @@ body.success-modal-open .page-footer {
 }
 
 /* =============================================
-   TATTOO CONFIG — Tarz, silüet, bölge, tahmin
+   TATTOO CONFIG — Bölge, büyüklük
    ============================================= */
 
+.booking-left.is-tattoo-config-active {
+    justify-content: flex-start;
+    align-items: center;
+}
+
+.booking-left.is-tattoo-config-active > .booking-center {
+    width: min(640px, 100%);
+    max-width: none;
+    flex-shrink: 0;
+}
+
+.booking-left.is-tattoo-config-active > .booking-center .stepper {
+    margin-bottom: 18px;
+}
+
 .tattoo-config-section {
-    max-width: 920px !important;
-    width: 100%;
+    width: min(640px, 100%) !important;
+    max-width: none !important;
+    margin-left: auto;
+    margin-right: auto;
+    box-sizing: border-box;
 }
 
 .tattoo-config-header {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
+    align-items: center;
+    justify-content: center;
     gap: 16px;
+    text-align: center;
 }
 
 .tattoo-config-header h2 {
     margin-bottom: 0;
     flex: 1;
     min-width: 0;
-}
-
-.discover-styles-btn {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    margin-top: 2px;
-    padding: 10px 16px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.28);
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.9);
-    font-family: var(--font-display);
-    font-size: 11px;
-    font-weight: 400;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    text-decoration: none;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, transform 0.2s ease;
-}
-
-.discover-styles-btn i {
-    font-size: 12px;
-    opacity: 0.9;
-}
-
-.discover-styles-btn:hover,
-.discover-styles-btn:focus-visible {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.45);
-    color: #ffffff;
-    outline: none;
-    transform: translateY(-1px);
+    text-align: center;
 }
 
 .tattoo-config-divider {
     background-color: rgba(255, 255, 255, 0.35);
     margin-top: 10px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
-.tattoo-config-layout {
-    display: grid;
-    grid-template-columns: minmax(160px, 220px) 1fr;
-    gap: 20px 24px;
-    align-items: start;
-}
-
-.tattoo-config-silhouette-panel {
-    position: sticky;
-    top: 12px;
-}
-
-.silhouette-hint {
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.55);
-    margin-bottom: 10px;
-    line-height: 1.45;
-    text-align: center;
-}
-
-.body-silhouette-wrap {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 14px;
-    padding: 10px 8px 6px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.pain-map-wrap {
-    width: 100%;
-    max-width: 330px;
-    margin: 0 auto;
-}
-
-.pain-map-root {
-    position: relative;
-}
-
-.pain-map-svg {
-    width: 100%;
-    height: auto;
-    max-height: 380px;
+.tattoo-config-layout,
+.tattoo-config-layout--single {
     display: block;
-    margin: 0 auto;
-    filter: drop-shadow(0 0 20px rgba(168, 85, 247, 0.15));
-}
-
-.pain-map-outline {
-    pointer-events: none;
-}
-
-.pain-map-zones .pain-map-zone {
-    cursor: pointer;
-    transition: opacity 0.2s ease, stroke 0.2s ease, stroke-width 0.2s ease;
-    outline: none;
-}
-
-.pain-map-zones .pain-map-zone:hover,
-.pain-map-zones .pain-map-zone:focus-visible {
-    filter: brightness(1.15);
-    outline: none;
-}
-
-.pain-map-tooltip {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 2;
-    padding: 12px 16px;
-    border-radius: 10px;
-    background: rgba(18, 18, 22, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-    pointer-events: none;
-}
-
-.pain-map-tooltip-title {
-    margin: 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.95);
-}
-
-.pain-map-tooltip-pain {
-    margin: 4px 0 0;
-    font-size: 11px;
-}
-
-.pain-map-tooltip-dots {
-    display: flex;
-    gap: 4px;
-    margin-top: 6px;
-}
-
-.pain-map-tooltip-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.12);
-}
-
-.pain-map-tooltip-dot.is-active {
-    background: currentColor;
-}
-
-.pain-map-legend-slot {
-    margin-top: 10px;
-}
-
-.pain-map-legend {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 12px 16px;
-}
-
-.pain-map-legend-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.65);
-}
-
-.pain-map-legend-swatch {
-    width: 12px;
-    height: 12px;
-    border-radius: 3px;
-    flex-shrink: 0;
-}
-
-.pain-tag {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 1px 6px;
-    border-radius: 4px;
-}
-
-.pain-tag-low { background: rgba(45, 156, 96, 0.35); color: #9be7b4; }
-.pain-tag-mid { background: rgba(230, 180, 60, 0.35); color: #ffe08a; }
-.pain-tag-high { background: rgba(220, 70, 60, 0.35); color: #ffb4a8; }
-
-.pain-tag-inline {
-    font-size: 11px;
-    vertical-align: middle;
-    margin-left: 4px;
-}
-
-.pain-legend-simple {
-    display: flex;
-    justify-content: center;
-    gap: 12px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-}
-
-.pain-legend-item {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.65);
-}
-
-.pain-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-}
-
-.pain-dot-low { background: #3d9c60; }
-.pain-dot-mid { background: #e6b43c; }
-.pain-dot-high { background: #dc463c; }
-
-.selected-region-label {
-    margin-top: 10px;
-    text-align: center;
-    font-size: 13px;
-    font-weight: 500;
-    color: rgba(255, 255, 255, 0.92);
-    min-height: 1.4em;
-    line-height: 1.5;
-}
-
-.selected-region-label strong {
-    font-weight: 600;
-    color: var(--gold-hover, #e8c872);
-}
-
-.selected-region-label.is-empty {
-    color: rgba(255, 255, 255, 0.35);
-    font-weight: 400;
-}
-
-.selected-region-label.is-empty strong {
-    color: inherit;
-    font-weight: 400;
+    width: 100%;
+    max-width: none;
 }
 
 .private-zone-notice {
@@ -2839,16 +2710,6 @@ body.success-modal-open .page-footer {
 .private-zone-notice p {
     margin: 0;
     color: rgba(255, 255, 255, 0.72);
-}
-
-.region-private-tag {
-    margin-left: 6px;
-    color: rgba(201, 162, 39, 0.85);
-    font-size: 10px;
-}
-
-.region-btn--private .region-btn-label {
-    padding-right: 2px;
 }
 
 .config-size-panel {
@@ -2896,6 +2757,10 @@ body.success-modal-open .page-footer {
 
 .config-undecided-top .config-alt-btn {
     margin-top: 0;
+}
+
+.config-undecided-top .config-alt-btn + .config-alt-hint + .config-alt-btn {
+    margin-top: 16px;
 }
 
 .config-alt-actions .config-alt-btn:first-child {
@@ -2978,8 +2843,11 @@ body.success-modal-open .page-footer {
 
 #tattoo-config-section .loyalty-code-field input.loyalty-code-input,
 .tattoo-config-form-panel .form-group input.loyalty-code-input {
+    display: block;
     width: 100%;
-    padding: 12px 14px;
+    max-width: 100%;
+    margin: 0;
+    padding: 14px 16px;
     border-radius: 10px;
     border: 1px solid rgba(245, 197, 66, 0.45) !important;
     background-color: #ffffff !important;
@@ -2991,6 +2859,8 @@ body.success-modal-open .page-footer {
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
+    text-align: center;
+    box-sizing: border-box;
 }
 
 #tattoo-config-section .loyalty-code-field input.loyalty-code-input:focus,
@@ -3010,13 +2880,55 @@ body.success-modal-open .page-footer {
 }
 
 .loyalty-code-field .config-alt-hint {
-    text-align: left;
+    text-align: center;
     margin-top: 8px;
 }
 
-.tattoo-config-form-panel.is-undecided-muted {
-    opacity: 0.45;
-    pointer-events: none;
+.loyalty-hint-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.loyalty-info-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: rgba(245, 197, 66, 0.9);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.loyalty-info-btn:hover,
+.loyalty-info-btn[aria-expanded="true"] {
+    color: #f5c542;
+}
+
+.loyalty-info-popover {
+    margin-top: 10px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: rgba(245, 197, 66, 0.1);
+    border: 1px solid rgba(245, 197, 66, 0.28);
+    color: rgba(255, 255, 255, 0.82);
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: center;
+    font-family: var(--font-ui);
+}
+
+.loyalty-info-popover strong {
+    color: #f5c542;
+    font-weight: 600;
 }
 
 .config-label {
@@ -3028,45 +2940,13 @@ body.success-modal-open .page-footer {
     letter-spacing: 0.03em;
 }
 
-.style-btn-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-}
-
-.style-btn {
-    padding: 10px 12px;
-    font-size: 12px;
-    font-weight: 500;
-    text-align: left;
-    color: rgba(255, 255, 255, 0.88);
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    line-height: 1.3;
-}
-
-.style-btn:hover {
-    border-color: var(--gold);
-    background: rgba(201, 162, 39, 0.12);
-}
-
-.style-btn.selected {
-    border-color: var(--gold);
-    background: rgba(201, 162, 39, 0.22);
-    color: #fff;
-    box-shadow: 0 0 0 1px rgba(201, 162, 39, 0.35);
-}
-
 .region-btn-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     max-height: 220px;
     overflow-y: auto;
-    padding-right: 4px;
+    padding-right: 0;
     scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
 }
@@ -3154,17 +3034,6 @@ body.success-modal-open .page-footer {
     transition: all 0.2s ease;
 }
 
-.region-btn-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-}
-
-.region-btn.pain-tier-low .region-btn-dot { background: #3d9c60; }
-.region-btn.pain-tier-mid .region-btn-dot { background: #e6b43c; }
-.region-btn.pain-tier-high .region-btn-dot { background: #dc463c; }
-
 .region-btn-label {
     line-height: 1.25;
 }
@@ -3236,32 +3105,15 @@ body.success-modal-open .page-footer {
 @media (max-width: 768px) {
     .tattoo-config-header {
         flex-direction: column;
-        align-items: stretch;
+        align-items: center;
         gap: 12px;
     }
 
-    .discover-styles-btn {
-        align-self: flex-end;
-        margin-top: 0;
-        padding: 9px 14px;
-        font-size: 10px;
+    .tattoo-config-layout,
+    .tattoo-config-layout--single {
+        max-width: none;
     }
 
-    .tattoo-config-layout {
-        grid-template-columns: 1fr;
-    }
-
-    .tattoo-config-silhouette-panel {
-        position: static;
-        max-width: 320px;
-        margin: 0 auto;
-    }
-
-    .pain-map-svg {
-        max-height: 340px;
-    }
-
-    .style-btn-grid,
     .region-btn-grid {
         grid-template-columns: 1fr;
     }
@@ -3272,14 +3124,22 @@ body.success-modal-open .page-footer {
 
     .booking-left.is-tattoo-config-active {
         justify-content: flex-start;
-        align-items: stretch;
+        align-items: center;
+        padding-top: 16px;
+    }
+
+    .booking-left.is-tattoo-config-active > .booking-center.booking-center-phone {
+        width: min(640px, 100%);
+        max-width: none;
+        margin-left: auto;
+        margin-right: auto;
     }
 
     .booking-left.is-tattoo-config-active > #tattoo-config-section {
         margin-top: 0;
     }
 
-    /* Tarz & Bölge — mobil sayfa kaydırma ipuçları */
+    /* Bölge & Büyüklük — mobil sayfa kaydırma ipuçları */
     .tattoo-page-scroll-hints[hidden] {
         display: none !important;
     }
@@ -3363,7 +3223,7 @@ body.success-modal-open .page-footer {
 
     .tattoo-page-scroll-hints:not(.is-at-bottom) .tattoo-page-scroll-banner {
         opacity: 1;
-        pointer-events: auto;
+        pointer-events: none;
     }
 
     #tattoo-config-section.tattoo-show-scroll-fade::after {
@@ -3378,292 +3238,3 @@ body.success-modal-open .page-footer {
         z-index: 997;
     }
 }
-
-/* =============================================
-   TARZLARI KEŞFET — vitrin modalı
-   ============================================= */
-
-body.discover-styles-open {
-    overflow: hidden;
-}
-
-.discover-styles-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 12000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
-    background: rgba(0, 0, 0, 0.72);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-}
-
-.discover-styles-modal {
-    width: min(960px, 100%);
-    max-height: min(90vh, 900px);
-    display: flex;
-    flex-direction: column;
-    background: rgba(12, 12, 12, 0.96);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 18px;
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
-    overflow: hidden;
-}
-
-.discover-styles-modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 18px 22px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    flex-shrink: 0;
-}
-
-.discover-styles-modal-header h3 {
-    margin: 0;
-    font-family: var(--font-display);
-    font-size: 18px;
-    font-weight: 400;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: #ffffff;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.discover-styles-modal-header h3 i {
-    font-size: 16px;
-    opacity: 0.85;
-}
-
-.discover-styles-close {
-    width: 40px;
-    height: 40px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.06);
-    color: #ffffff;
-    font-size: 24px;
-    line-height: 1;
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background 0.2s ease, border-color 0.2s ease;
-}
-
-.discover-styles-close:hover,
-.discover-styles-close:focus-visible {
-    background: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.35);
-    outline: none;
-}
-
-.discover-styles-intro {
-    margin: 0;
-    padding: 0 22px 14px;
-    font-size: 13px;
-    line-height: 1.5;
-    color: rgba(255, 255, 255, 0.58);
-    flex-shrink: 0;
-}
-
-.discover-styles-grid {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding: 4px 22px 22px;
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-}
-
-.discover-style-card {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    flex-shrink: 0;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 14px;
-    overflow: hidden;
-    cursor: pointer;
-    transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-}
-
-.discover-style-card:hover {
-    border-color: rgba(255, 255, 255, 0.28);
-}
-
-.discover-style-card:focus-visible {
-    outline: 2px solid rgba(255, 255, 255, 0.55);
-    outline-offset: 2px;
-}
-
-.discover-style-card.is-expanded {
-    border-color: rgba(255, 255, 255, 0.5);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
-    transform: scale(1.01);
-}
-
-.discover-style-card-image-wrap {
-    width: 100%;
-    flex: 0 0 auto;
-    overflow: hidden;
-    line-height: 0;
-    background: rgba(0, 0, 0, 0.35);
-    transition: background 0.25s ease;
-}
-
-.discover-style-card.is-expanded .discover-style-card-image-wrap {
-    background: #000000;
-}
-
-.discover-style-card-image {
-    width: 100%;
-    height: auto;
-    max-height: 220px;
-    aspect-ratio: 4 / 3;
-    object-fit: cover;
-    object-position: center;
-    display: block;
-    transition: max-height 0.35s ease, object-fit 0.25s ease;
-}
-
-.discover-style-card.is-expanded .discover-style-card-image {
-    max-height: min(560px, 58vh);
-    aspect-ratio: auto;
-    object-fit: contain;
-}
-
-.discover-style-card-body {
-    flex: 0 0 auto;
-    padding: 14px 16px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-}
-
-.discover-style-card.is-expanded .discover-style-card-body {
-    padding: 16px 18px 18px;
-    gap: 8px;
-}
-
-.discover-style-card-title {
-    margin: 0;
-    font-family: var(--font-display);
-    font-size: 14px;
-    font-weight: 400;
-    letter-spacing: 0.06em;
-    line-height: 1.35;
-    text-transform: uppercase;
-    color: #ffffff;
-    transition: font-size 0.25s ease;
-}
-
-.discover-style-card.is-expanded .discover-style-card-title {
-    font-size: 17px;
-    letter-spacing: 0.08em;
-}
-
-.discover-style-card-subtitle {
-    margin: 0;
-    font-family: var(--font-ui);
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    color: rgba(255, 255, 255, 0.45);
-}
-
-.discover-style-card.is-expanded .discover-style-card-subtitle {
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.55);
-}
-
-.discover-style-card-desc {
-    margin: 4px 0 0;
-    font-family: var(--font-ui);
-    font-size: 12px;
-    line-height: 1.55;
-    color: rgba(255, 255, 255, 0.68);
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-    transition: font-size 0.25s ease, line-height 0.25s ease;
-}
-
-.discover-style-card.is-expanded .discover-style-card-desc {
-    display: block;
-    -webkit-line-clamp: unset;
-    font-size: 14px;
-    line-height: 1.65;
-    color: rgba(255, 255, 255, 0.82);
-}
-
-.discover-style-card-hint {
-    margin-top: 6px;
-    font-family: var(--font-ui);
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.38);
-}
-
-.discover-style-card-hint .hint-collapsed,
-.discover-style-card-hint .hint-expanded {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.discover-style-card-hint .hint-expanded {
-    display: none;
-    color: rgba(255, 255, 255, 0.55);
-}
-
-.discover-style-card.is-expanded .discover-style-card-hint .hint-collapsed {
-    display: none;
-}
-
-.discover-style-card.is-expanded .discover-style-card-hint .hint-expanded {
-    display: inline-flex;
-}
-
-.discover-style-card-hint i {
-    font-size: 10px;
-}
-
-@media (max-width: 768px) {
-    .discover-styles-overlay {
-        padding: 0;
-        align-items: stretch;
-    }
-
-    .discover-styles-modal {
-        width: 100%;
-        max-height: 100vh;
-        max-height: 100dvh;
-        border-radius: 0;
-        border-left: none;
-        border-right: none;
-    }
-
-    .discover-styles-grid {
-        padding: 4px 14px 18px;
-        gap: 16px;
-    }
-
-    .discover-styles-modal-header {
-        padding: 16px 14px 10px;
-    }
-
-    .discover-styles-intro {
-        padding: 0 14px 12px;
-        font-size: 12px;
-    }
-}
-
-/* Tarzları Keşfet — tek sütun liste (kartlar üst üste binmesin) */

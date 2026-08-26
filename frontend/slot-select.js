@@ -79,12 +79,14 @@ function minutesToTime(mins) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
+const SLOT_MINUTES = 60;
+
 function renderSlots(dateStr, slotsData) {
   selectedTime = '';
   $('confirm-btn').disabled = true;
   setSlotError('');
 
-  const slotsCount  = durationMinutes / 30;
+  const slotsCount  = Math.max(1, Math.ceil(durationMinutes / SLOT_MINUTES));
   const allSlots    = slotsData.all_slots    || slotsData.available_start_slots || [];
   const bookedSet   = new Set(slotsData.booked_slots || []);
   const availableSet = new Set(slotsData.available_start_slots || []);
@@ -107,7 +109,7 @@ function renderSlots(dateStr, slotsData) {
     const isBooked    = bookedSet.has(t);
     const isAvailable = availableSet.has(t);
     const startMins   = timeToMinutes(t);
-    const endTime     = minutesToTime(startMins + 30); // her slotun kendi 30 dk aralığı
+    const endTime     = minutesToTime(startMins + SLOT_MINUTES);
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -122,14 +124,12 @@ function renderSlots(dateStr, slotsData) {
       btn.innerHTML = `<span class="slot-start">${t}</span><span class="slot-end">${endTime}</span>`;
 
       btn.addEventListener('click', () => {
-        // Tüm seçim sınıflarını temizle
         document.querySelectorAll('.slot-btn').forEach((b) => {
           b.classList.remove('selected', 'selected-block');
         });
 
-        // Bloktaki tüm slotları beyaz/seçili yap
         for (let i = 0; i < slotsCount; i++) {
-          const blockTime = minutesToTime(startMins + i * 30);
+          const blockTime = minutesToTime(startMins + i * SLOT_MINUTES);
           const blockBtn  = grid.querySelector(`[data-time="${blockTime}"]`);
           if (blockBtn) blockBtn.classList.add(i === 0 ? 'selected' : 'selected-block');
         }
@@ -139,7 +139,6 @@ function renderSlots(dateStr, slotsData) {
         setSlotError('');
       });
     } else {
-      // Çalışma saati dışı veya başlangıç olarak uygun değil ama kilitli değil
       btn.className = 'slot-btn unavailable';
       btn.disabled  = true;
       btn.innerHTML = `<span class="slot-start">${t}</span><span class="slot-end">${endTime}</span>`;

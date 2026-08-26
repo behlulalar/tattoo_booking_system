@@ -15,6 +15,22 @@ function getApiBase() {
 
 const API_BASE = getApiBase();
 
+function hasStudioAccess(role = getLoggedInStaff()?.role) {
+  return role === 'super_admin' || role === 'tech_support';
+}
+
+function canAccessIncome(role = getLoggedInStaff()?.role) {
+  return role === 'super_admin';
+}
+
+function canAccessTattooRequests(role = getLoggedInStaff()?.role) {
+  return role === 'super_admin' || role === 'staff';
+}
+
+function isBookableStaffRole(role) {
+  return role !== 'tech_support';
+}
+
 const ADMIN_TOKEN_KEY = 'adminToken';
 const ADMIN_STAFF_KEY = 'adminStaff';
 const ADMIN_REMEMBER_KEY = 'adminRememberMe';
@@ -245,8 +261,8 @@ function closeOfferFormModal() {
 function resolveOfferForm() {
   const durationRaw = parseInt($('offer-form-duration')?.value || '0', 10);
   const priceRaw    = parseFloat($('offer-form-price')?.value  || '0') || 0;
-  if (!durationRaw || durationRaw < 30 || durationRaw % 30 !== 0) {
-    alert('Süre 30\'un katı olmalı (örn: 60, 90, 120)');
+  if (!durationRaw || durationRaw < 60 || durationRaw % 60 !== 0) {
+    alert('Süre 60\'ın katı olmalı (örn: 60, 120, 180)');
     return;
   }
   $('offer-form-overlay').style.display = 'none';
@@ -318,6 +334,7 @@ function submitTimeOffForm() {
   if (!date) return;
   const fullDay = $('tof-fullday').checked;
   const result = {
+    date,
     off_date: date,
     start_time: fullDay ? null : ($('tof-start').value || '10:00'),
     end_time: fullDay ? null : ($('tof-end').value || '12:00'),
@@ -335,15 +352,15 @@ function showOfferUrlModal(offerUrl, whatsappSent) {
   const statusEl = $('offer-url-whatsapp-status');
   if (whatsappSent) {
     statusEl.textContent = '✅ WhatsApp mesajı müşteriye gönderildi (Evolution).';
-    statusEl.style.background = 'rgba(0,200,100,0.15)';
-    statusEl.style.color = '#6fffc0';
-    statusEl.style.border = '1px solid rgba(0,200,100,0.25)';
+    statusEl.style.background = 'rgba(111, 154, 111, 0.16)';
+    statusEl.style.color = '#6F9A6F';
+    statusEl.style.border = '1px solid rgba(111, 154, 111, 0.28)';
   } else {
     statusEl.innerHTML =
       '⚠️ WhatsApp mesajı <strong>ulaşmadı</strong> — teklif kaydı oluştu. Linki kopyalayıp müşterinin numarasına manuel gönderin.';
-    statusEl.style.background = 'rgba(255,180,0,0.12)';
-    statusEl.style.color = '#ffd966';
-    statusEl.style.border = '1px solid rgba(255,180,0,0.25)';
+    statusEl.style.background = 'rgba(201, 154, 74, 0.16)';
+    statusEl.style.color = '#C99A4A';
+    statusEl.style.border = '1px solid rgba(201, 154, 74, 0.32)';
   }
   overlay.style.display = 'flex';
 }
@@ -374,7 +391,9 @@ function showToast(message, type = 'success') {
 }
 
 function roleLabel(role) {
-  return role === 'super_admin' ? 'Super Admin' : 'Personel Sanatçı';
+  if (role === 'super_admin') return 'Super Admin';
+  if (role === 'tech_support') return 'Teknik Destek';
+  return 'Personel Sanatçı';
 }
 
 function normalizePhone10(phone) {
@@ -389,7 +408,7 @@ function updateSidebarStaffInfo(partial) {
 
   if ($('user-name')) $('user-name').textContent = next.name || '-';
   if ($('user-role')) $('user-role').textContent = roleLabel(next.role);
-  setSuperAdminVisibility(next.role === 'super_admin');
+  setRoleVisibility(next.role);
 }
 
 function passwordsTooSimilar(oldPassword, newPassword) {
@@ -701,7 +720,18 @@ function openStaffModal({ mode, staff } = { mode: 'create', staff: null }) {
   if (phoneEl) phoneEl.value = staff?.phone || '';
   if (passEl) passEl.value = '';
   if (roleEl) roleEl.value = staff?.role || 'staff';
-  if (roleSelectEl) roleSelectEl.value = staff?.role || 'staff';
+  if (roleSelectEl) {
+    const superOpt = [...roleSelectEl.options].find((o) => o.value === 'super_admin');
+    if (superOpt) {
+      const allowSuper = canAccessIncome();
+      superOpt.hidden = !allowSuper;
+      superOpt.disabled = !allowSuper;
+    }
+    const wanted = staff?.role || 'staff';
+    const canSelect = [...roleSelectEl.options].some((o) => o.value === wanted && !o.disabled);
+    roleSelectEl.value = canSelect ? wanted : 'staff';
+    roleEl.value = roleSelectEl.value;
+  }
   if ($('staff-instagram-url')) $('staff-instagram-url').value = staff?.instagram_url || '';
 
   staffPhotoData = undefined;
@@ -731,9 +761,24 @@ function showSection(page) {
   if (sec) sec.style.display = 'block';
 }
 
-function setSuperAdminVisibility(isSuperAdmin) {
+function setRoleVisibility(role) {
+  const studio = hasStudioAccess(role);
+  const income = canAccessIncome(role);
+  const tattoo = canAccessTattooRequests(role);
+
   document.querySelectorAll('.super-admin-only').forEach((el) => {
-    el.style.display = isSuperAdmin ? '' : 'none';
+    const page = el.getAttribute('data-page');
+    const incomeOnly = page === 'reports' || el.classList.contains('income-only');
+    const tattooOnly = page === 'all-tattoo-requests' || el.classList.contains('tattoo-request-nav');
+    let show = studio;
+    if (incomeOnly) show = income;
+    if (tattooOnly) show = role === 'super_admin';
+    el.style.display = show ? '' : 'none';
+  });
+
+  document.querySelectorAll('.tattoo-request-nav').forEach((el) => {
+    if (el.classList.contains('super-admin-only')) return;
+    el.style.display = tattoo ? '' : 'none';
   });
 }
 
@@ -757,17 +802,40 @@ function statusText(status) {
 }
 
 const APT_STATUS_OPTIONS = [
-  { value: 'pending', label: 'Bekliyor' },
   { value: 'confirmed', label: 'Onaylandı' },
   { value: 'completed', label: 'Tamamlandı' },
   { value: 'cancelled', label: 'İptal' },
   { value: 'no_show', label: 'Gelmedi' },
 ];
 
-function renderAppointmentStatusControls(appointmentId, currentStatus) {
+function isAppointmentStartInFuture(appointment) {
+  if (!appointment) return false;
+  if (typeof appointment.can_complete === 'boolean') {
+    return !appointment.can_complete;
+  }
+  const dateStr = String(appointment.date || '');
+  const timeStr = String(appointment.time || '00:00').slice(0, 5);
+  const [d, m, y] = dateStr.split('.');
+  const [hh, mm] = timeStr.split(':');
+  if (!d || !m || !y) return false;
+  const pad = (n) => String(n).padStart(2, '0');
+  const iso = `${y}-${pad(m)}-${pad(d)}T${pad(hh || 0)}:${pad(mm || 0)}:00+03:00`;
+  const start = new Date(iso);
+  if (Number.isNaN(start.getTime())) return false;
+  return start.getTime() > Date.now();
+}
+
+function renderAppointmentStatusControls(appointmentId, currentStatus, appointment) {
+  const futureStart = isAppointmentStartInFuture(appointment);
   const buttons = APT_STATUS_OPTIONS.map((opt) => {
     const isCurrent = opt.value === currentStatus;
-    return `<button type="button" class="apt-status-btn${isCurrent ? ' is-current' : ''}" data-status-id="${appointmentId}" data-status-val="${opt.value}" ${isCurrent ? 'disabled' : ''}>${opt.label}</button>`;
+    const blockComplete = opt.value === 'completed' && futureStart && !isCurrent;
+    const disabled = isCurrent || blockComplete;
+    const extraClass = blockComplete ? ' is-blocked' : '';
+    const title = blockComplete
+      ? ' title="Randevu saati gelmeden tamamlandı işaretlenemez"'
+      : '';
+    return `<button type="button" class="apt-status-btn${isCurrent ? ' is-current' : ''}${extraClass}" data-status-id="${appointmentId}" data-status-val="${opt.value}" ${disabled ? 'disabled' : ''}${title}>${opt.label}</button>`;
   }).join('');
   return `<div class="apt-status-grid"><span class="apt-status-grid-label">Durum değiştir</span><div class="apt-status-grid-btns">${buttons}</div></div>`;
 }
@@ -816,7 +884,7 @@ function getManualApptStaffId() {
   const staff = getLoggedInStaff();
   const group = $('manual-appt-staff-group');
   const sel = $('manual-appt-staff');
-  if (staff?.role === 'super_admin' && group?.style.display !== 'none' && sel?.value) {
+  if (hasStudioAccess(staff?.role) && group?.style.display !== 'none' && sel?.value) {
     return parseInt(sel.value, 10);
   }
   return staff?.id != null ? parseInt(staff.id, 10) : null;
@@ -827,18 +895,19 @@ async function populateManualApptStaffSelect() {
   const group = $('manual-appt-staff-group');
   const sel = $('manual-appt-staff');
   if (!group || !sel) return;
-  if (staff?.role !== 'super_admin') {
+  if (!hasStudioAccess(staff?.role)) {
     group.style.display = 'none';
     return;
   }
   group.style.display = 'block';
   const { ok, data } = await apiCall('/admin/staff', { method: 'GET' });
   if (!ok || !data.success) return;
-  const list = data.staff || [];
+  const list = (data.staff || []).filter((s) => isBookableStaffRole(s.role));
   sel.innerHTML = list.map((s) =>
     `<option value="${s.id}">${escapeHtml(s.name || '')}</option>`
   ).join('');
-  if (staff.id != null) sel.value = String(staff.id);
+  const preferred = list.find((s) => String(s.id) === String(staff?.id)) || list[0];
+  if (preferred) sel.value = String(preferred.id);
 }
 
 function localIsoDate(d = new Date()) {
@@ -883,7 +952,7 @@ async function loadManualAppointmentTimeSlots() {
   const duration = parseInt($('manual-appt-duration')?.value || '0', 10);
   const staffId = getManualApptStaffId();
 
-  if (!dateIso || !staffId || !duration || duration < 30) {
+  if (!dateIso || !staffId || !duration || duration < 60) {
     timeSel.innerHTML = '<option value="">Önce tarih ve süre seçin</option>';
     timeSel.disabled = true;
     return;
@@ -964,8 +1033,8 @@ async function submitManualAppointment(e) {
   e.preventDefault();
   const errEl = $('manual-appt-error');
   const phone = normalizePhone10($('manual-appt-phone')?.value);
-  const name = ($('manual-appt-name')?.value || '').trim();
-  const surname = ($('manual-appt-surname')?.value || '').trim();
+  const name = formatPersonName($('manual-appt-name')?.value || '');
+  const surname = formatPersonName($('manual-appt-surname')?.value || '');
   const dateIso = manualApptDatePicker?.selectedDates?.[0]
     ? manualApptDatePicker.formatDate(manualApptDatePicker.selectedDates[0], 'Y-m-d')
     : ($('manual-appt-date')?.value || '');
@@ -987,8 +1056,8 @@ async function submitManualAppointment(e) {
     if (errEl) { errEl.textContent = 'Tarih ve saat seçin'; errEl.style.display = 'block'; }
     return;
   }
-  if (!duration || duration < 30 || duration % 30 !== 0) {
-    if (errEl) { errEl.textContent = 'Süre 30\'un katı olmalı'; errEl.style.display = 'block'; }
+  if (!duration || duration < 60 || duration % 60 !== 0) {
+    if (errEl) { errEl.textContent = 'Süre 60\'ın katı olmalı'; errEl.style.display = 'block'; }
     return;
   }
 
@@ -1065,7 +1134,7 @@ function renderDisabled(sectionId, title, message) {
   const container = sec.querySelector('.services-list, .appointments-list, .working-hours-container, .time-off-container, .all-appointments-container') || sec;
   container.innerHTML = `
     <div style="padding:16px; border:1px dashed rgba(0,0,0,.2); border-radius:12px;">
-      <div style="font-weight:800; margin-bottom:8px;">${escapeHtml(title)}</div>
+      <div style="font-weight:400; margin-bottom:8px;">${escapeHtml(title)}</div>
       <div style="color: var(--text-secondary); line-height:1.5;">${escapeHtml(message)}</div>
     </div>
   `;
@@ -1416,7 +1485,7 @@ async function runWapioCompatCheck() {
 async function enterAdminDashboard(staff) {
   $('user-name').textContent = staff.name || '-';
   $('user-role').textContent = roleLabel(staff.role);
-  setSuperAdminVisibility(staff.role === 'super_admin');
+  setRoleVisibility(staff.role);
   sessionStorage.setItem(ADMIN_SESSION_ACTIVE_KEY, '1');
   setPage(true);
   startInactivityWatcher();
@@ -1427,7 +1496,7 @@ async function validateStoredAdminSession() {
   const token = getAdminToken();
   if (!token) return { ok: false, status: 401, staff: null };
 
-  const res = await fetch(`${API_BASE}/admin/tattoo-requests?limit=1`, {
+  const res = await fetch(`${API_BASE}/admin/me`, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
   });
   if (res.status === 401) {
@@ -1524,6 +1593,18 @@ function formatPhonePretty(phone10) {
   return `${p.slice(0, 3)} ${p.slice(3, 6)} ${p.slice(6, 8)} ${p.slice(8, 10)}`;
 }
 
+function formatPersonName(name) {
+  return String(name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLocaleLowerCase('tr-TR');
+      return lower.charAt(0).toLocaleUpperCase('tr-TR') + lower.slice(1);
+    })
+    .join(' ');
+}
+
 /** wa.me için uluslararası format (örn. 905551234567) */
 function phoneToWhatsAppIntl(phone) {
   const digits = String(phone || '').replace(/\D/g, '');
@@ -1552,69 +1633,29 @@ function renderWhatsAppBtnHtml(phone) {
   </button>`;
 }
 
-function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOffered = false) {
+function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOffered = false, emptyMessage = '') {
   const container = $(containerId);
   if (!container) return;
   if (!items || items.length === 0) {
-    container.innerHTML = isOffered
-      ? '<p class="empty-message">Henüz gönderilmiş teklif yok</p>'
-      : '<p class="empty-message">Bekleyen talep yok</p>';
+    const fallback = isOffered
+      ? 'Henüz gönderilmiş teklif yok'
+      : 'Bekleyen talep yok';
+    container.innerHTML = `<p class="empty-message">${emptyMessage || fallback}</p>`;
     return;
   }
-
-  // Ensure image modal exists
-  if (!document.getElementById('tr-image-modal-overlay')) {
-    const overlay = document.createElement('div');
-    overlay.id = 'tr-image-modal-overlay';
-    overlay.className = 'tr-image-modal-overlay';
-    overlay.innerHTML = `
-      <div class="tr-image-modal">
-        <button class="tr-image-modal-close" type="button" aria-label="Kapat">
-          <i class="fas fa-times"></i>
-        </button>
-        <img id="tr-image-modal-img" alt="Referans görsel" />
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    const close = () => overlay.classList.remove('active');
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) close();
-    });
-    overlay.querySelector('.tr-image-modal-close')?.addEventListener('click', close);
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') close();
-    });
-  }
-
-  const openImageModal = (src) => {
-    const overlay = document.getElementById('tr-image-modal-overlay');
-    const img = document.getElementById('tr-image-modal-img');
-    if (!overlay || !img) return;
-    img.src = src;
-    overlay.classList.add('active');
-  };
 
   container.innerHTML = items
     .map((tr) => {
       const createdAt = tr.created_at || '-';
-      const customerName = tr.customer?.full_name ? tr.customer.full_name : '';
-      const customerPhone = tr.customer?.phone ? `0${tr.customer.phone}` : '-';
-      const customerText = customerName ? `${customerName} · ${customerPhone}` : customerPhone;
+      const customerName = formatPersonName((tr.customer?.full_name || '').trim() || 'Müşteri');
+      const phoneDigits = String(tr.customer?.phone || '').replace(/\D/g, '').slice(-10);
+      const customerPhone = phoneDigits ? `0${formatPhonePretty(phoneDigits)}` : 'Telefon yok';
+      const phoneHtml = phoneDigits
+        ? `<a class="tr-customer-phone" href="tel:0${phoneDigits}"><i class="fas fa-phone"></i> ${escapeHtml(customerPhone)}</a>`
+        : `<span class="tr-customer-phone is-missing"><i class="fas fa-phone"></i> Telefon yok</span>`;
 
       const statusRaw = String(tr.status || 'new');
       const statusLabel = statusRaw === 'new' ? 'Yeni' : statusRaw;
-
-      const img = tr.reference_image
-        ? `
-          <div class="tr-image">
-            <button class="tr-image-btn" type="button" data-image="${escapeHtml(tr.reference_image)}">
-              <img class="tr-image-thumb" src="${escapeHtml(tr.reference_image)}" alt="Referans" />
-              <span class="tr-image-cta"><i class="fas fa-up-right-and-down-left-from-center"></i> Büyüt</span>
-            </button>
-          </div>
-        `
-        : `<div class="tr-image-empty">Görsel yok</div>`;
 
       const refNo = tr.reference_number ? escapeHtml(tr.reference_number) : '';
       const refBadge = refNo
@@ -1623,54 +1664,49 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
 
       const waBtn = renderWhatsAppBtnHtml(tr.customer?.phone);
 
-      const loyaltyBadge = tr.loyalty_discount
-        ? `<span class="tr-badge tr-badge-loyalty${tr.loyalty_discount.used ? ' is-used' : ''}">
-             <i class="fas fa-gift"></i>
-             ${escapeHtml(tr.loyalty_discount.code)}
-             (%${tr.loyalty_discount.discount_percent}${tr.loyalty_discount.used ? ' — kullanıldı' : ''})
-           </span>`
-        : '';
+      const specRows = [
+        ['Sanatçı', tr.staff?.name || '—'],
+        ['Bölge', tr.body_area || 'Belirtilmedi'],
+        ['Boyut', tr.size || 'Belirtilmedi'],
+      ];
+      if (tr.tattoo_style) specRows.push(['Stil', tr.tattoo_style]);
+      if (tr.loyalty_discount) {
+        specRows.push([
+          'Sadakat',
+          `${tr.loyalty_discount.code} · %${tr.loyalty_discount.discount_percent}${tr.loyalty_discount.used ? ' (kullanıldı)' : ''}`,
+        ]);
+      }
+      const specsHtml = specRows
+        .map(([label, value]) => `
+          <div class="tr-spec">
+            <dt>${escapeHtml(label)}</dt>
+            <dd>${escapeHtml(value)}</dd>
+          </div>
+        `)
+        .join('');
 
       return `
         <div class="appointment-card tattoo-request-card status-pending" data-ref="${refNo}">
-          <div class="tr-header">
-            <div class="tr-title">
-              ${refBadge}
-              <div class="tr-created"><i class="fas fa-calendar-alt"></i> ${escapeHtml(createdAt)}</div>
-              <div class="tr-customer"><i class="fas fa-user"></i> ${escapeHtml(customerText)}</div>
-            </div>
-            <span class="status-badge pending">${escapeHtml(statusLabel)}</span>
-          </div>
-
-          <div class="tr-body">
-            <div class="tr-left">
-              <div class="tr-row">
-                <div class="tr-row-label"><i class="fas fa-user-tie"></i> Sanatçı</div>
-                <div class="tr-row-value">${escapeHtml(tr.staff?.name || '-')}</div>
+          <div class="tr-main">
+            <div class="tr-topbar">
+              <div class="tr-topbar-left">
+                ${refBadge}
+                <span class="tr-created"><i class="fas fa-calendar-alt"></i> ${escapeHtml(createdAt)}</span>
               </div>
-
-              <div class="tr-badges">
-                ${loyaltyBadge}
-                ${tr.tattoo_style ? `<span class="tr-badge"><i class="fas fa-palette"></i> ${escapeHtml(tr.tattoo_style)}</span>` : ''}
-                <span class="tr-badge"><i class="fas fa-pen-nib"></i> ${escapeHtml(tr.body_area || 'Bölge belirtilmedi')}</span>
-                <span class="tr-badge"><i class="fas fa-ruler-combined"></i> ${escapeHtml(tr.size || 'Boyut belirtilmedi')}</span>
-              </div>
-
-              <div class="tr-desc">
-                <div class="tr-row-label"><i class="fas fa-align-left"></i> Açıklama</div>
-                <div class="tr-desc-text">${escapeHtml(tr.description || '—')}</div>
-              </div>
+              <span class="status-badge pending">${escapeHtml(statusLabel)}</span>
             </div>
 
-            <div class="tr-right">
-              <div class="tr-row-label"><i class="fas fa-image"></i> Referans</div>
-              ${img}
+            <div class="tr-identity">
+              <div class="tr-customer-name">${escapeHtml(customerName)}</div>
+              ${phoneHtml}
             </div>
+
+            <dl class="tr-specs">${specsHtml}</dl>
           </div>
 
           <div class="appointment-actions tattoo-request-actions">
             ${isOffered
-              ? `<button class="action-btn" data-resend="${tr.id}" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.2);">
+              ? `<button class="action-btn" data-resend="${tr.id}">
                    <i class="fas fa-rotate-right"></i> Yeni Link Gönder
                  </button>`
               : `<button class="action-btn review-btn" data-offer="${tr.id}">
@@ -1683,20 +1719,6 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
       `;
     })
     .join('');
-
-  // Image preview click
-  container.querySelectorAll('button[data-image]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const src = btn.getAttribute('data-image') || '';
-      if (!src) return;
-      // Prefer modal; fallback to new tab if browser blocks data URLs
-      try {
-        openImageModal(src);
-      } catch {
-        window.open(src, '_blank', 'noopener,noreferrer');
-      }
-    });
-  });
 
   // Yeni teklif gönder (Dövme Talepleri)
   container.querySelectorAll('button[data-offer]').forEach((btn) => {
@@ -1777,10 +1799,11 @@ function getTattooRefSearchParam(inputId) {
   return q ? `&reference=${encodeURIComponent(q)}` : '';
 }
 
-function getMyTattooRequestsQuery(refInputId) {
+function getMyTattooRequestsQuery(refInputId, kind = 'standard') {
   const refQ = getTattooRefSearchParam(refInputId);
   const scopeQ = getLoggedInStaff()?.role === 'super_admin' ? '&scope=mine' : '';
-  return `?status=new${scopeQ}${refQ}`;
+  const kindQ = kind ? `&kind=${encodeURIComponent(kind)}` : '';
+  return `?status=new${scopeQ}${refQ}${kindQ}`;
 }
 
 function updateNewRequestsBadge(badgeId, count) {
@@ -1791,17 +1814,26 @@ function updateNewRequestsBadge(badgeId, count) {
 }
 
 async function refreshNewTattooRequestBadges() {
+  if (!canAccessTattooRequests()) return;
   const staff = getLoggedInStaff();
   const mineQs = staff?.role === 'super_admin' ? '?status=new&scope=mine' : '?status=new';
   const requests = [
-    apiCall(`/admin/tattoo-requests${mineQs}`, { method: 'GET' }),
+    apiCall(`/admin/tattoo-requests${mineQs}&kind=standard`, { method: 'GET' }),
+    apiCall(`/admin/tattoo-requests${mineQs}&kind=undecided`, { method: 'GET' }),
+    apiCall(`/admin/tattoo-requests${mineQs}&kind=pre_consultation`, { method: 'GET' }),
   ];
   if (staff?.role === 'super_admin') {
-    requests.push(apiCall('/admin/tattoo-requests?status=new', { method: 'GET' }));
+    requests.push(apiCall('/admin/tattoo-requests?status=new&kind=standard', { method: 'GET' }));
   }
-  const [mineRes, allRes] = await Promise.all(requests);
+  const [mineRes, undecidedRes, preconsultRes, allRes] = await Promise.all(requests);
   if (mineRes.ok && mineRes.data.success) {
     updateNewRequestsBadge('my-new-requests-badge', (mineRes.data.tattoo_requests || []).length);
+  }
+  if (undecidedRes.ok && undecidedRes.data.success) {
+    updateNewRequestsBadge('undecided-requests-badge', (undecidedRes.data.tattoo_requests || []).length);
+  }
+  if (preconsultRes.ok && preconsultRes.data.success) {
+    updateNewRequestsBadge('preconsult-requests-badge', (preconsultRes.data.tattoo_requests || []).length);
   }
   if (allRes?.ok && allRes.data.success) {
     updateNewRequestsBadge('all-new-requests-badge', (allRes.data.tattoo_requests || []).length);
@@ -1809,6 +1841,7 @@ async function refreshNewTattooRequestBadges() {
 }
 
 async function loadMyTattooRequests() {
+  if (!canAccessTattooRequests()) return;
   const container = $('my-tattoo-requests-list');
   if (!container) return;
   container.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
@@ -1823,12 +1856,49 @@ async function loadMyTattooRequests() {
   renderTattooRequests(items, 'my-tattoo-requests-list', false);
 }
 
+async function loadKindTattooRequests(kind, containerId, refInputId, badgeId, emptyMessage) {
+  if (!canAccessTattooRequests()) return;
+  const container = $(containerId);
+  if (!container) return;
+  container.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
+  const qs = getMyTattooRequestsQuery(refInputId, kind);
+  const { ok, data } = await apiCall(`/admin/tattoo-requests${qs}`, { method: 'GET' });
+  if (!ok || !data.success) {
+    container.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(data.message || 'Yüklenemedi')}</p>`;
+    return;
+  }
+  const items = data.tattoo_requests || [];
+  updateNewRequestsBadge(badgeId, items.length);
+  renderTattooRequests(items, containerId, false, emptyMessage);
+}
+
+async function loadUndecidedRequests() {
+  await loadKindTattooRequests(
+    'undecided',
+    'undecided-requests-list',
+    'undecided-ref-search',
+    'undecided-requests-badge',
+    'Kararını henüz vermemiş talep yok'
+  );
+}
+
+async function loadPreconsultRequests() {
+  await loadKindTattooRequests(
+    'pre_consultation',
+    'preconsult-requests-list',
+    'preconsult-ref-search',
+    'preconsult-requests-badge',
+    'Bekleyen ön görüşme talebi yok'
+  );
+}
+
 async function loadAllTattooRequests() {
+  if (getLoggedInStaff()?.role !== 'super_admin') return;
   const container = $('all-tattoo-requests-list');
   if (!container) return;
   container.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
   const refQ = getTattooRefSearchParam('all-tattoo-ref-search');
-  const { ok, data } = await apiCall(`/admin/tattoo-requests?status=new${refQ}`, { method: 'GET' });
+  const { ok, data } = await apiCall(`/admin/tattoo-requests?status=new&kind=standard${refQ}`, { method: 'GET' });
   if (!ok || !data.success) {
     container.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(data.message || 'Yüklenemedi')}</p>`;
     return;
@@ -1839,13 +1909,19 @@ async function loadAllTattooRequests() {
 }
 
 async function reloadNewTattooRequestPages() {
-  await loadMyTattooRequests();
+  if (!canAccessTattooRequests()) return;
+  await Promise.all([
+    loadMyTattooRequests(),
+    loadUndecidedRequests(),
+    loadPreconsultRequests(),
+  ]);
   if (getLoggedInStaff()?.role === 'super_admin') {
     await loadAllTattooRequests();
   }
 }
 
 async function loadOfferedRequests() {
+  if (!canAccessTattooRequests()) return;
   const container = $('offered-requests-list');
   if (!container) return;
   container.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
@@ -1912,7 +1988,7 @@ function renderAppointmentsGrouped(containerId, items) {
         ? `<div class="apt-detail-row">
              <span class="apt-detail-icon"><i class="fas fa-tag"></i></span>
              <span class="apt-detail-label">Fiyat:</span>
-             <span class="apt-detail-value" style="color:#c9a227;font-weight:700;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+             <span class="apt-detail-value" style="color:var(--accent);font-weight:400;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
            </div>`
         : '';
       html += `
@@ -1947,7 +2023,7 @@ function renderAppointmentsGrouped(containerId, items) {
             ${priceRow}
           </div>
           <div class="apt-card-footer">
-            ${renderAppointmentStatusControls(a.id, a.status)}
+            ${renderAppointmentStatusControls(a.id, a.status, a)}
             ${renderWhatsAppBtnHtml(a.customer?.phone)}
           </div>
         </div>`;
@@ -1991,7 +2067,7 @@ function renderAppointments(containerId, items) {
         ? `<div class="apt-detail-row">
              <span class="apt-detail-icon"><i class="fas fa-tag"></i></span>
              <span class="apt-detail-label">Fiyat:</span>
-             <span class="apt-detail-value" style="color:#c9a227;font-weight:700;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+             <span class="apt-detail-value" style="color:var(--accent);font-weight:400;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
            </div>`
         : '';
 
@@ -2028,7 +2104,7 @@ function renderAppointments(containerId, items) {
             ${priceRow}
           </div>
           <div class="apt-card-footer">
-            ${renderAppointmentStatusControls(a.id, a.status)}
+            ${renderAppointmentStatusControls(a.id, a.status, a)}
             ${renderWhatsAppBtnHtml(a.customer?.phone)}
           </div>
         </div>
@@ -2066,13 +2142,15 @@ async function loadDashboard() {
   }
 
   // Sidebar badge'lerini arka planda güncelle (dashboard'da görünür olsun)
-  refreshNewTattooRequestBadges();
-  apiCall('/admin/tattoo-requests?status=offered', { method: 'GET' }).then(({ ok, data }) => {
-    if (!ok || !data.success) return;
-    const cnt = (data.tattoo_requests || []).length;
-    const badge = $('pending-badge');
-    if (badge) badge.textContent = String(cnt);
-  });
+  if (canAccessTattooRequests()) {
+    refreshNewTattooRequestBadges();
+    apiCall('/admin/tattoo-requests?status=offered', { method: 'GET' }).then(({ ok, data }) => {
+      if (!ok || !data.success) return;
+      const cnt = (data.tattoo_requests || []).length;
+      const badge = $('pending-badge');
+      if (badge) badge.textContent = String(cnt);
+    });
+  }
 }
 
 async function loadAppointments() {
@@ -2213,7 +2291,7 @@ async function fetchScheduleWorkingHours(staffId) {
     if (ok && data.success) workingHours = data.working_hours || [];
   } else {
     let staff = getAdminStaff();
-    if (staff?.role === 'super_admin') {
+    if (hasStudioAccess(staff?.role)) {
       const { ok, data } = await apiCall('/admin/staff', { method: 'GET' });
       if (ok && data.success && (data.staff || []).length) {
         const merged = new Map();
@@ -2630,7 +2708,7 @@ async function populateStaffFilter(selectId) {
   if (!sel || sel.options.length > 1) return; // already populated
   const { ok, data } = await apiCall('/admin/staff', { method: 'GET' });
   if (!ok || !data.success) return;
-  (data.staff || []).forEach((s) => {
+  (data.staff || []).filter((s) => isBookableStaffRole(s.role)).forEach((s) => {
     const opt = document.createElement('option');
     opt.value = s.id;
     opt.textContent = s.name;
@@ -2679,7 +2757,7 @@ function renderPastAppointments(containerId, items) {
       ? `<div class="apt-detail-row">
            <span class="apt-detail-icon"><i class="fas fa-tag"></i></span>
            <span class="apt-detail-label">Fiyat:</span>
-           <span class="apt-detail-value" style="color:#c9a227;font-weight:700;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+           <span class="apt-detail-value" style="color:var(--accent);font-weight:400;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
          </div>`
       : '';
     return `
@@ -2737,349 +2815,71 @@ async function loadPending() {
 }
 
 async function loadSchedule() {
+  if (!hasStudioAccess()) return;
+  const canEditHours = true;
+  const saveWh = $('save-working-hours-btn');
+  if (saveWh) saveWh.style.display = canEditHours ? '' : 'none';
+
   const whContainer = $('working-hours-table');
   const toContainer = $('time-off-list');
-  const pzContainer = $('private-zone-settings');
   if (whContainer) whContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
   if (toContainer) toContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
-  if (pzContainer) pzContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
 
   const wh = await apiCall('/admin/working-hours', { method: 'GET' });
   if (!wh.ok || !wh.data.success) {
     if (whContainer) whContainer.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(wh.data.message || 'Yüklenemedi')}</p>`;
   } else {
     const hours = wh.data.working_hours || [];
-    renderWorkingHours(hours);
+    renderWorkingHours(hours, { containerId: 'working-hours-table', readOnly: !canEditHours });
     const notice = $('working-hours-notice');
-    if (notice) notice.style.display = hours.length === 0 ? 'flex' : 'none';
+    const noticeText = $('working-hours-notice-text');
+    if (notice) {
+      if (!canEditHours) {
+        notice.style.display = 'flex';
+        if (noticeText) {
+          noticeText.textContent = hours.length
+            ? 'Çalışma saatleriniz Super Admin tarafından belirlenmiştir. Değişiklik için stüdyo yöneticisine başvurun.'
+            : 'Çalışma saatleri henüz belirlenmemiş. Super Admin kaydettikten sonra burada görünür.';
+        }
+      } else {
+        notice.style.display = hours.length === 0 ? 'flex' : 'none';
+        if (noticeText) {
+          noticeText.innerHTML = 'Çalışma saatleri henüz kaydedilmemiş. Aşağıdaki saatler önizlemedir — müşteri tarafında da aynı aralık (10:00–20:00) kullanılır. Kesinleştirmek için <strong>Kaydet</strong>’e basın.';
+        }
+      }
+    }
   }
 
   const to = await apiCall('/admin/time-off', { method: 'GET' });
   if (!to.ok || !to.data.success) {
     if (toContainer) toContainer.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(to.data.message || 'Yüklenemedi')}</p>`;
   } else {
-    renderTimeOff(to.data.time_off || []);
-  }
-
-  const pz = await apiCall('/admin/private-zone-settings', { method: 'GET' });
-  if (!pz.ok || !pz.data.success) {
-    if (pzContainer) pzContainer.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(pz.data.message || 'Yüklenemedi')}</p>`;
-  } else {
-    renderPrivateZoneSettings(pz.data);
+    renderTimeOff(to.data.time_offs || to.data.time_off || []);
   }
 }
 
-let _tattooStylesTargetId = null;
-let _tattooStylesTargetName = '';
-
-function getMyStaffIdForTattooStyles() {
-  const staff = getLoggedInStaff();
-  return staff?.id != null ? parseInt(staff.id, 10) : null;
-}
-
-function closeTattooStylesModal() {
-  _tattooStylesTargetId = null;
-  _tattooStylesTargetName = '';
-  const overlay = $('tattoo-styles-modal-overlay');
-  if (overlay) overlay.style.display = 'none';
-}
-
-function openTattooStylesModal(staffId, staffName) {
-  _tattooStylesTargetId = parseInt(staffId, 10);
-  _tattooStylesTargetName = staffName || 'Sanatçı';
-  const title = $('tattoo-styles-modal-title');
-  if (title) title.textContent = `${_tattooStylesTargetName} — Dövme Tarzları`;
-  const overlay = $('tattoo-styles-modal-overlay');
-  if (overlay) overlay.style.display = 'flex';
-  loadTattooStylesIntoPanel(_tattooStylesTargetId, $('tattoo-styles-modal-panel'));
-}
-
-async function loadTattooStylesPage() {
-  const staffId = getMyStaffIdForTattooStyles();
-  const panel = $('my-tattoo-styles-panel');
-  if (!panel || !staffId) return;
-  await loadTattooStylesIntoPanel(staffId, panel);
-}
-
-function isStyleActiveWrapChecked(wrap) {
-  return wrap?.classList.contains('is-checked');
-}
-
-function bindStyleActiveToggles(panelEl) {
-  panelEl?.querySelectorAll('[data-style-active-wrap]').forEach((wrap) => {
-    wrap.addEventListener('click', (e) => {
-      e.preventDefault();
-      wrap.classList.toggle('is-checked');
-      wrap.setAttribute('aria-pressed', wrap.classList.contains('is-checked') ? 'true' : 'false');
-      const row = wrap.closest('.tattoo-style-row');
-      row?.classList.toggle('is-inactive', !wrap.classList.contains('is-checked'));
-    });
-  });
-}
-
-function renderTattooStylesPanelHtml(data, staffId, panelEl) {
-  if (!panelEl) return;
-
-  const styles = data.styles || [];
-  const usesFallback = !!data.uses_fallback;
-  const fallback = data.fallback_preview || [];
-
-  let html = '';
-
-  if (usesFallback) {
-    html += `
-      <div class="tattoo-styles-fallback-notice">
-        <i class="fas fa-info-circle"></i>
-        <div>
-          <strong>Varsayılan tarz listesi kullanılıyor</strong>
-          <p>Müşteriler şu an aşağıdaki tarzları görüyor. Düzenlemek için listeyi özelleştirmeye başlayın.</p>
-        </div>
-      </div>
-      <ul class="tattoo-styles-fallback-list">
-        ${fallback.map((s) => `<li>${escapeHtml(s.label)}</li>`).join('') || '<li>Tarz tanımlı değil</li>'}
-      </ul>
-      <button type="button" class="save-btn tattoo-styles-bootstrap-btn" data-staff-id="${staffId}">
-        <i class="fas fa-edit"></i> Listeyi Düzenlemeye Başla
-      </button>
-    `;
-  } else {
-    html += `
-      <div class="tattoo-styles-add-row">
-        <input type="text" class="tattoo-style-new-input" placeholder="Yeni tarz adı (örn. Fine Line Realism)" maxlength="255" />
-        <button type="button" class="add-btn tattoo-style-add-btn" data-staff-id="${staffId}">
-          <i class="fas fa-plus"></i> Ekle
-        </button>
-      </div>
-    `;
-
-    if (!styles.length) {
-      html += '<p class="empty-message">Henüz tarz yok. Yukarıdan ekleyin.</p>';
-    } else {
-      html += `<div class="tattoo-styles-list">${styles.map((s, idx) => {
-        const isActive = s.is_active !== false;
-        return `
-        <div class="tattoo-style-row${isActive ? '' : ' is-inactive'}" data-style-id="${s.id}">
-          <div class="tattoo-style-order">
-            <button type="button" class="tattoo-style-order-btn" title="Yukarı" data-style-up="${s.id}" ${idx === 0 ? 'disabled' : ''}><i class="fas fa-chevron-up"></i></button>
-            <button type="button" class="tattoo-style-order-btn" title="Aşağı" data-style-down="${s.id}" ${idx === styles.length - 1 ? 'disabled' : ''}><i class="fas fa-chevron-down"></i></button>
-          </div>
-          <input type="text" class="tattoo-style-label-input" value="${escapeHtml(s.label)}" data-style-label="${s.id}" maxlength="255" aria-label="Tarz adı" />
-          <div class="tattoo-style-row-actions">
-            <button type="button" class="style-toggle-wrap${isActive ? ' is-checked' : ''}" data-style-active-wrap="${s.id}" aria-pressed="${isActive ? 'true' : 'false'}" title="Müşterilere göster">
-              <span class="style-toggle-box" aria-hidden="true"><i class="fas fa-check"></i></span>
-              <span class="style-toggle-text">Aktif</span>
-            </button>
-            <button type="button" class="filter-btn secondary tattoo-style-save-btn" data-style-save="${s.id}" title="Kaydet">
-              <i class="fas fa-check"></i><span>Kaydet</span>
-            </button>
-            <button type="button" class="filter-btn secondary tattoo-style-del-btn" data-style-del="${s.id}" title="Sil">
-              <i class="fas fa-trash"></i>
-            </button>
-          </div>
-        </div>`;
-      }).join('')}</div>`;
-    }
+function collectWorkingHoursPayload(container) {
+  const payload = [];
+  for (let day = 0; day <= 6; day++) {
+    const start = container?.querySelector(`input[data-wh-start="${day}"]`)?.value || '10:00';
+    const end = container?.querySelector(`input[data-wh-end="${day}"]`)?.value || '20:00';
+    const isAvailable = !!container?.querySelector(`input[data-wh-open="${day}"]`)?.checked;
+    payload.push({ day_of_week: day, start_time: start, end_time: end, is_available: isAvailable });
   }
-
-  panelEl.innerHTML = html;
-  bindStyleActiveToggles(panelEl);
-  bindTattooStylesPanelEvents(panelEl, staffId);
+  return payload;
 }
 
-function bindTattooStylesPanelEvents(panelEl, staffId) {
-  if (!panelEl) return;
-
-  panelEl.querySelector('.tattoo-styles-bootstrap-btn')?.addEventListener('click', async () => {
-    const { ok, data } = await apiCall(`/admin/staff/${staffId}/tattoo-styles/bootstrap`, { method: 'POST' });
-    if (!ok || !data.success) {
-      showToast(data?.message || 'Liste aktarılamadı', 'error');
-      return;
-    }
-    showToast(data.message || 'Liste hazır', 'success');
-    await refreshTattooStylesViews(staffId);
-  });
-
-  panelEl.querySelector('.tattoo-style-add-btn')?.addEventListener('click', async () => {
-    const input = panelEl.querySelector('.tattoo-style-new-input');
-    const label = (input?.value || '').trim();
-    if (label.length < 2) {
-      showToast('Tarz adı en az 2 karakter olmalı', 'error');
-      return;
-    }
-    const { ok, data } = await apiCall(`/admin/staff/${staffId}/tattoo-styles`, {
-      method: 'POST',
-      body: JSON.stringify({ label }),
-    });
-    if (!ok || !data.success) {
-      showToast(data?.message || 'Eklenemedi', 'error');
-      return;
-    }
-    if (input) input.value = '';
-    showToast('Tarz eklendi', 'success');
-    await refreshTattooStylesViews(staffId);
-  });
-
-  panelEl.querySelectorAll('button[data-style-save]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-style-save');
-      const row = panelEl.querySelector(`.tattoo-style-row[data-style-id="${id}"]`);
-      const label = row?.querySelector(`input[data-style-label="${id}"]`)?.value?.trim();
-      const activeWrap = row?.querySelector(`[data-style-active-wrap="${id}"]`);
-      const isActive = isStyleActiveWrapChecked(activeWrap);
-      if (!label || label.length < 2) {
-        showToast('Tarz adı en az 2 karakter olmalı', 'error');
-        return;
-      }
-      const { ok, data } = await apiCall(`/admin/staff/${staffId}/tattoo-styles/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify({ label, is_active: !!isActive }),
-      });
-      if (!ok || !data.success) {
-        showToast(data?.message || 'Kaydedilemedi', 'error');
-        return;
-      }
-      showToast('Kaydedildi', 'success');
-      await refreshTattooStylesViews(staffId);
-    });
-  });
-
-  panelEl.querySelectorAll('button[data-style-del]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-style-del');
-      const confirmed = await customConfirm('Tarzı Sil', 'Bu tarzı silmek istediğinizden emin misiniz?');
-      if (!confirmed) return;
-      const { ok, data } = await apiCall(`/admin/staff/${staffId}/tattoo-styles/${id}`, { method: 'DELETE' });
-      if (!ok || !data.success) {
-        showToast(data?.message || 'Silinemedi', 'error');
-        return;
-      }
-      showToast('Silindi', 'success');
-      await refreshTattooStylesViews(staffId);
-    });
-  });
-
-  panelEl.querySelectorAll('button[data-style-up]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      await moveTattooStyle(staffId, panelEl, btn.getAttribute('data-style-up'), -1);
-    });
-  });
-
-  panelEl.querySelectorAll('button[data-style-down]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      await moveTattooStyle(staffId, panelEl, btn.getAttribute('data-style-down'), 1);
-    });
-  });
-}
-
-async function moveTattooStyle(staffId, panelEl, styleId, direction) {
-  const rows = [...panelEl.querySelectorAll('.tattoo-style-row')];
-  const ids = rows.map((r) => parseInt(r.getAttribute('data-style-id'), 10));
-  const idx = ids.indexOf(parseInt(styleId, 10));
-  if (idx < 0) return;
-  const newIdx = idx + direction;
-  if (newIdx < 0 || newIdx >= ids.length) return;
-  [ids[idx], ids[newIdx]] = [ids[newIdx], ids[idx]];
-  const { ok, data } = await apiCall(`/admin/staff/${staffId}/tattoo-styles/reorder`, {
-    method: 'PUT',
-    body: JSON.stringify({ order: ids }),
-  });
-  if (!ok || !data.success) {
-    showToast(data?.message || 'Sıralama kaydedilemedi', 'error');
-    return;
-  }
-  await refreshTattooStylesViews(staffId);
-}
-
-async function loadTattooStylesIntoPanel(staffId, panelEl) {
-  if (!panelEl) return;
-  panelEl.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
-  const { ok, data } = await apiCall(`/admin/staff/${staffId}/tattoo-styles`, { method: 'GET' });
-  if (!ok || !data.success) {
-    panelEl.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(data?.message || 'Yüklenemedi')}</p>`;
-    return;
-  }
-  renderTattooStylesPanelHtml(data, staffId, panelEl);
-}
-
-async function refreshTattooStylesViews(staffId) {
-  const myId = getMyStaffIdForTattooStyles();
-  const activePage = document.querySelector('.nav-item.active')?.getAttribute('data-page');
-  if (myId === staffId && activePage === 'tattoo-styles') {
-    await loadTattooStylesPage();
-  }
-  if (_tattooStylesTargetId === staffId) {
-    await loadTattooStylesIntoPanel(staffId, $('tattoo-styles-modal-panel'));
-  }
-}
-
-function renderPrivateZoneSettings(data) {
-  const container = $('private-zone-settings');
-  if (!container) return;
-  const dayNames = data.day_names || ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
-  const pz = data.private_zone || {};
-  const days = Array.isArray(pz.days) && pz.days.length === 2
-    ? pz.days
-    : [
-        { day_of_week: 2, start_time: '14:00', end_time: '18:00' },
-        { day_of_week: 4, start_time: '14:00', end_time: '18:00' },
-      ];
-  const enabled = pz.enabled !== false;
-  const privateRegions = (data.private_regions || [])
-    .map((r) => escapeHtml(r.label))
-    .join(', ');
-
-  const dayOptions = dayNames
-    .map((name, idx) => `<option value="${idx}">${escapeHtml(name)}</option>`)
-    .join('');
-
-  container.innerHTML = `
-    <label class="private-zone-toggle">
-      <input type="checkbox" id="private-zone-enabled" ${enabled ? 'checked' : ''} />
-      <span>Özel bölge saat kısıtını etkinleştir</span>
-    </label>
-    <p class="private-zone-regions"><i class="fas fa-user-shield"></i> Kapsanan bölgeler: ${privateRegions || '—'}</p>
-    <div class="private-zone-days">
-      ${days.map((day, index) => `
-        <div class="private-zone-day-row">
-          <span class="private-zone-day-label">Gün ${index + 1}</span>
-          <select data-pz-day="${index}" class="private-zone-day-select">${dayOptions}</select>
-          <input type="time" data-pz-start="${index}" value="${escapeHtml(day.start_time || '14:00')}" />
-          <span class="private-zone-sep">—</span>
-          <input type="time" data-pz-end="${index}" value="${escapeHtml(day.end_time || '18:00')}" />
-        </div>
-      `).join('')}
-    </div>
-  `;
-
-  days.forEach((day, index) => {
-    const sel = container.querySelector(`select[data-pz-day="${index}"]`);
-    if (sel) sel.value = String(day.day_of_week ?? index + 1);
-  });
-}
-
-function collectPrivateZonePayload() {
-  const enabled = !!$('private-zone-enabled')?.checked;
-  const days = [0, 1].map((index) => ({
-    day_of_week: parseInt(containerQuery(`select[data-pz-day="${index}"]`)?.value || '0', 10),
-    start_time: containerQuery(`input[data-pz-start="${index}"]`)?.value || '14:00',
-    end_time: containerQuery(`input[data-pz-end="${index}"]`)?.value || '18:00',
-  }));
-  return { enabled, days };
-
-  function containerQuery(sel) {
-    return $('private-zone-settings')?.querySelector(sel);
-  }
-}
-
-function renderWorkingHours(items) {
-  const container = $('working-hours-table');
+function renderWorkingHours(items, { containerId = 'working-hours-table', readOnly = false } = {}) {
+  const container = $(containerId);
   if (!container) return;
   const dayNames = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+  const disabledAttr = readOnly ? 'disabled' : '';
 
   // Map by day_of_week
   const byDay = new Map();
   (items || []).forEach((w) => byDay.set(Number(w.day_of_week), w));
 
+  container.classList.toggle('is-readonly', readOnly);
   container.innerHTML = dayNames
     .map((name, idx) => {
       const day = idx; // backend uses 0..6
@@ -3090,19 +2890,21 @@ function renderWorkingHours(items) {
           <div class="wh-day">${escapeHtml(name)}</div>
           <div class="wh-toggle">
             <label class="switch" title="Açık/Kapalı">
-              <input type="checkbox" data-wh-open="${day}" ${isOpen ? 'checked' : ''} />
+              <input type="checkbox" data-wh-open="${day}" ${isOpen ? 'checked' : ''} ${disabledAttr} />
               <span class="slider"></span>
             </label>
           </div>
           <div class="wh-times ${isOpen ? '' : 'disabled'}">
-            <input type="time" data-wh-start="${day}" value="${escapeHtml(w.start_time || '10:00')}" ${isOpen ? '' : 'disabled'} />
+            <input type="time" data-wh-start="${day}" value="${escapeHtml(w.start_time || '10:00')}" ${isOpen && !readOnly ? '' : 'disabled'} />
             <span style="color: var(--text-muted);">-</span>
-            <input type="time" data-wh-end="${day}" value="${escapeHtml(w.end_time || '20:00')}" ${isOpen ? '' : 'disabled'} />
+            <input type="time" data-wh-end="${day}" value="${escapeHtml(w.end_time || '20:00')}" ${isOpen && !readOnly ? '' : 'disabled'} />
           </div>
         </div>
       `;
     })
     .join('');
+
+  if (readOnly) return;
 
   // Toggle enable/disable time inputs
   container.querySelectorAll('input[data-wh-open]').forEach((chk) => {
@@ -3120,8 +2922,8 @@ function renderWorkingHours(items) {
   });
 }
 
-function renderTimeOff(items) {
-  const container = $('time-off-list');
+function renderTimeOff(items, { containerId = 'time-off-list', deleteUrlFor } = {}) {
+  const container = $(containerId);
   if (!container) return;
   if (!items || items.length === 0) {
     container.innerHTML = '<p class="empty-message">İzin günü yok</p>';
@@ -3149,13 +2951,15 @@ function renderTimeOff(items) {
   container.querySelectorAll('button[data-timeoff-del]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-timeoff-del');
-      const { ok, data } = await apiCall(`/admin/time-off/${id}`, { method: 'DELETE' });
+      const url = deleteUrlFor ? deleteUrlFor(id) : `/admin/time-off/${id}`;
+      const { ok, data } = await apiCall(url, { method: 'DELETE' });
       if (!ok || !data.success) {
         showToast(data.message || 'Silinemedi', 'error');
         return;
       }
       showToast('Silindi', 'success');
-      await loadSchedule();
+      if (containerId === 'staff-time-off-list') await loadStaffSchedule();
+      else await loadSchedule();
     });
   });
 }
@@ -3168,12 +2972,13 @@ function renderStaff(items) {
     return;
   }
 
-  const viewerIsSuper = getLoggedInStaff()?.role === 'super_admin';
+  const viewerStudio = hasStudioAccess();
+  const viewerIncome = canAccessIncome();
 
   container.innerHTML = items
     .map((s) => {
-      const isSuper = s.role === 'super_admin';
-      const roleText = isSuper ? 'Super Admin' : 'Personel Sanatçı';
+      const roleClass = s.role === 'super_admin' ? 'super_admin' : (s.role === 'tech_support' ? 'tech_support' : '');
+      const canEditTarget = viewerIncome || s.role !== 'super_admin';
       const phonePretty = formatPhonePretty(s.phone);
       return `
         <div class="staff-card">
@@ -3182,7 +2987,7 @@ function renderStaff(items) {
             ${s.profile_photo ? `<img src="${escapeHtml(s.profile_photo)}" alt="${escapeHtml(s.name)}" />` : '<i class="fas fa-user"></i>'}
           </div>
           <div class="staff-name">${escapeHtml(s.name)}</div>
-          <div class="staff-role ${isSuper ? 'super_admin' : ''}">${escapeHtml(roleText)}</div>
+          <div class="staff-role ${roleClass}">${escapeHtml(roleLabel(s.role))}</div>
           <div class="staff-phone"><i class="fas fa-phone"></i> ${escapeHtml(phonePretty)}</div>
 
           <div class="staff-order-input-group">
@@ -3191,19 +2996,19 @@ function renderStaff(items) {
           </div>
 
           <div class="staff-icon-actions">
-            ${viewerIsSuper ? `
-            <button class="icon-btn stats" type="button" title="Kazanç Detayı" data-staff-stats="${s.id}">
+            ${viewerStudio ? `
+            ${viewerIncome ? `<button class="icon-btn stats" type="button" title="Kazanç Detayı" data-staff-stats="${s.id}">
               <i class="fas fa-chart-bar"></i>
-            </button>
-            <button class="icon-btn palette" type="button" title="Dövme Tarzları" data-staff-tattoo-styles="${s.id}">
-              <i class="fas fa-palette"></i>
             </button>` : ''}
-            <button class="icon-btn edit" type="button" title="Düzenle" data-staff-edit="${s.id}">
+            <button class="icon-btn schedule" type="button" title="Çalışma Saatleri" data-staff-schedule="${s.id}">
+              <i class="fas fa-clock"></i>
+            </button>` : ''}
+            ${canEditTarget ? `<button class="icon-btn edit" type="button" title="Düzenle" data-staff-edit="${s.id}">
               <i class="fas fa-pen"></i>
             </button>
             <button class="icon-btn delete" type="button" title="Sil" data-staff-delete="${s.id}">
               <i class="fas fa-trash"></i>
-            </button>
+            </button>` : ''}
           </div>
         </div>
       `;
@@ -3264,12 +3069,12 @@ function renderStaff(items) {
     });
   });
 
-  container.querySelectorAll('button[data-staff-tattoo-styles]').forEach((btn) => {
+  container.querySelectorAll('button[data-staff-schedule]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const id = btn.getAttribute('data-staff-tattoo-styles');
+      const id = btn.getAttribute('data-staff-schedule');
       const staff = items.find((x) => String(x.id) === String(id));
       if (!staff) return;
-      openTattooStylesModal(staff.id, staff.name);
+      openStaffScheduleModal(staff);
     });
   });
 }
@@ -3292,6 +3097,7 @@ function fmtMoney(value) {
 }
 
 let _staffStatsTargetId = null;
+let _staffStatsIsOwner = false;
 
 function populateYearSelect(selectEl, selectedYear) {
   if (!selectEl) return;
@@ -3308,6 +3114,7 @@ function populateYearSelect(selectEl, selectedYear) {
 
 function openStaffStatsModal(staff) {
   _staffStatsTargetId = staff.id;
+  _staffStatsIsOwner = staff.role === 'super_admin';
   const nameEl = $('staff-stats-name');
   if (nameEl) nameEl.textContent = staff.name || 'Personel';
 
@@ -3318,14 +3125,59 @@ function openStaffStatsModal(staff) {
   populateYearSelect(yearSel, now.getFullYear());
 
   const overlay = $('staff-stats-overlay');
+  overlay?.classList.toggle('is-owner-stats', _staffStatsIsOwner);
   if (overlay) overlay.style.display = 'flex';
   loadStaffStats();
 }
 
 function closeStaffStatsModal() {
   _staffStatsTargetId = null;
+  _staffStatsIsOwner = false;
   const overlay = $('staff-stats-overlay');
+  overlay?.classList.remove('is-owner-stats');
   if (overlay) overlay.style.display = 'none';
+}
+
+let _staffScheduleTargetId = null;
+
+function openStaffScheduleModal(staff) {
+  _staffScheduleTargetId = staff.id;
+  const nameEl = $('staff-schedule-name');
+  if (nameEl) nameEl.textContent = staff.name || 'Personel';
+  const overlay = $('staff-schedule-overlay');
+  if (overlay) overlay.style.display = 'flex';
+  loadStaffSchedule();
+}
+
+function closeStaffScheduleModal() {
+  _staffScheduleTargetId = null;
+  const overlay = $('staff-schedule-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function loadStaffSchedule() {
+  if (!_staffScheduleTargetId) return;
+  const whContainer = $('staff-working-hours-table');
+  const toContainer = $('staff-time-off-list');
+  if (whContainer) whContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
+  if (toContainer) toContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
+
+  const wh = await apiCall(`/admin/staff/${_staffScheduleTargetId}/working-hours`, { method: 'GET' });
+  if (!wh.ok || !wh.data.success) {
+    if (whContainer) whContainer.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(wh.data.message || 'Yüklenemedi')}</p>`;
+  } else {
+    renderWorkingHours(wh.data.working_hours || [], { containerId: 'staff-working-hours-table' });
+  }
+
+  const to = await apiCall(`/admin/staff/${_staffScheduleTargetId}/time-off`, { method: 'GET' });
+  if (!to.ok || !to.data.success) {
+    if (toContainer) toContainer.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(to.data.message || 'Yüklenemedi')}</p>`;
+  } else {
+    renderTimeOff(to.data.time_offs || to.data.time_off || [], {
+      containerId: 'staff-time-off-list',
+      deleteUrlFor: (id) => `/admin/staff/${_staffScheduleTargetId}/time-off/${id}`,
+    });
+  }
 }
 
 async function loadStaffStats() {
@@ -3344,10 +3196,18 @@ async function loadStaffStats() {
   }
 
   const stats = data.stats || {};
+  if (data.staff?.role === 'super_admin') _staffStatsIsOwner = true;
+  $('staff-stats-overlay')?.classList.toggle('is-owner-stats', _staffStatsIsOwner);
+
   const incomeEl = $('staff-stat-income');
+  const shareEl = $('staff-stat-share');
   const customersEl = $('staff-stat-customers');
   const appointmentsEl = $('staff-stat-appointments');
+  const commissionPct = Number(stats.commission_percent || 50);
   if (incomeEl) incomeEl.textContent = fmtMoney(stats.total_income);
+  if (shareEl && !_staffStatsIsOwner) {
+    shareEl.textContent = fmtMoney(stats.staff_share_total ?? (Number(stats.total_income || 0) * 0.5));
+  }
   if (customersEl) customersEl.textContent = String(stats.customer_count || 0);
   if (appointmentsEl) appointmentsEl.textContent = String(stats.appointment_count || 0);
 
@@ -3364,23 +3224,31 @@ async function loadStaffStats() {
     if (!items.length) {
       revList.innerHTML = '<p class="empty-message">Bu dönemde tamamlanan randevu geliri yok.</p>';
     } else {
-      revList.innerHTML = items.map((item) => `
+      revList.innerHTML = items.map((item) => {
+        const full = Number(item.amount || 0);
+        const share = Number(item.staff_share ?? full * 0.5);
+        const shareHtml = _staffStatsIsOwner
+          ? ''
+          : `<span class="adj-share">Kazanç %${commissionPct}: ${fmtMoney(share)}</span>`;
+        return `
         <div class="adj-row">
           <div class="adj-info">
             <div class="adj-desc">Randevu #${item.appointment_id} · ${escapeHtml(item.customer_name)}</div>
             <div class="adj-meta">${escapeHtml(item.date)} ${escapeHtml(item.time)}</div>
           </div>
-          <div class="adj-right">
-            <span class="adj-amount" style="color:var(--success, #4caf50);">+${fmtMoney(item.amount)}</span>
+          <div class="adj-right adj-right-stack">
+            <span class="adj-amount" style="color:var(--success, #4caf50);">${_staffStatsIsOwner ? fmtMoney(full) : `Tam ${fmtMoney(full)}`}</span>
+            ${shareHtml}
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
   }
 }
 
 async function loadIncomeReport() {
-  if (getLoggedInStaff()?.role !== 'super_admin') {
+  if (!canAccessIncome()) {
     showToast('Bu rapora erişim yetkiniz yok', 'error');
     return;
   }
@@ -3694,6 +3562,44 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadStaffStats();
   });
 
+  $('close-staff-schedule-btn')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeStaffScheduleModal();
+  });
+  $('staff-schedule-overlay')?.addEventListener('click', (e) => {
+    if (e.target === $('staff-schedule-overlay')) closeStaffScheduleModal();
+  });
+  $('save-staff-working-hours-btn')?.addEventListener('click', async () => {
+    if (!_staffScheduleTargetId) return;
+    const payload = collectWorkingHoursPayload($('staff-working-hours-table'));
+    const { ok, data } = await apiCall(`/admin/staff/${_staffScheduleTargetId}/working-hours`, {
+      method: 'PUT',
+      body: JSON.stringify({ working_hours: payload }),
+    });
+    if (!ok || !data.success) {
+      showToast(data.message || 'Kaydedilemedi', 'error');
+      return;
+    }
+    showToast('Çalışma saatleri kaydedildi', 'success');
+    Object.keys(_scheduleRangeCache).forEach((k) => delete _scheduleRangeCache[k]);
+    await loadStaffSchedule();
+  });
+  $('add-staff-time-off-btn')?.addEventListener('click', async () => {
+    if (!_staffScheduleTargetId) return;
+    const timeOffData = await openTimeOffFormModal();
+    if (!timeOffData) return;
+    const { ok, data } = await apiCall(`/admin/staff/${_staffScheduleTargetId}/time-off`, {
+      method: 'POST',
+      body: JSON.stringify(timeOffData),
+    });
+    if (!ok || !data.success) {
+      showToast(data.message || 'Eklenemedi', 'error');
+      return;
+    }
+    showToast('İzin eklendi', 'success');
+    await loadStaffSchedule();
+  });
+
   // Reports
   $('load-report-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
@@ -3736,13 +3642,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Schedule save
   $('save-working-hours-btn')?.addEventListener('click', async () => {
-    const payload = [];
-    for (let day = 0; day <= 6; day++) {
-      const start = document.querySelector(`input[data-wh-start="${day}"]`)?.value || '10:00';
-      const end = document.querySelector(`input[data-wh-end="${day}"]`)?.value || '20:00';
-      const isAvailable = !!document.querySelector(`input[data-wh-open="${day}"]`)?.checked;
-      payload.push({ day_of_week: day, start_time: start, end_time: end, is_available: isAvailable });
+    if (!hasStudioAccess()) {
+      showToast('Çalışma saatlerini düzenleme yetkiniz yok', 'error');
+      return;
     }
+    const payload = collectWorkingHoursPayload($('working-hours-table'));
     const { ok, data } = await apiCall('/admin/working-hours', {
       method: 'PUT',
       body: JSON.stringify({ working_hours: payload }),
@@ -3772,26 +3676,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadSchedule();
   });
 
-  $('save-private-zone-btn')?.addEventListener('click', async () => {
-    const payload = collectPrivateZonePayload();
-    const { ok, data } = await apiCall('/admin/private-zone-settings', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
-    if (!ok || !data.success) {
-      showToast(data.message || 'Kaydedilemedi', 'error');
-      return;
-    }
-    showToast('Özel bölge saatleri kaydedildi', 'success');
-    await loadSchedule();
-  });
-
-  $('tattoo-styles-refresh-btn')?.addEventListener('click', () => loadTattooStylesPage());
-  $('close-tattoo-styles-modal-btn')?.addEventListener('click', closeTattooStylesModal);
-  $('tattoo-styles-modal-overlay')?.addEventListener('click', (e) => {
-    if (e.target === $('tattoo-styles-modal-overlay')) closeTattooStylesModal();
-  });
-
   // Add staff (super admin)
   $('add-staff-btn')?.addEventListener('click', async () => {
     openStaffModal({ mode: 'create' });
@@ -3812,6 +3696,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target === $('manual-appointment-overlay')) closeManualAppointmentModal();
   });
   $('manual-appointment-form')?.addEventListener('submit', submitManualAppointment);
+  ['manual-appt-name', 'manual-appt-surname'].forEach((id) => {
+    $(id)?.addEventListener('blur', (e) => {
+      e.target.value = formatPersonName(e.target.value);
+    });
+  });
   $('manual-appt-date-btn')?.addEventListener('click', () => manualApptDatePicker?.open());
   ['manual-appt-duration', 'manual-appt-staff'].forEach((id) => {
     $(id)?.addEventListener('change', loadManualAppointmentTimeSlots);
@@ -3826,7 +3715,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (page === 'dashboard') await loadDashboard();
       if (page === 'appointments') await loadAppointments();
       if (page === 'pending') await loadPending();
+      if (page === 'my-tattoo-requests' || page === 'undecided-requests' || page === 'preconsult-requests' || page === 'offered') {
+        if (!canAccessTattooRequests()) {
+          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+          showSection('dashboard');
+          await loadDashboard();
+          return;
+        }
+      }
       if (page === 'my-tattoo-requests') await loadMyTattooRequests();
+      if (page === 'undecided-requests') await loadUndecidedRequests();
+      if (page === 'preconsult-requests') await loadPreconsultRequests();
       if (page === 'all-tattoo-requests') {
         if (getLoggedInStaff()?.role !== 'super_admin') {
           showToast('Bu sayfaya erişim yetkiniz yok', 'error');
@@ -3838,7 +3737,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       if (page === 'offered') await loadOfferedRequests();
       if (page === 'staff') {
-        if (getLoggedInStaff()?.role !== 'super_admin') {
+        if (!hasStudioAccess()) {
           showToast('Bu sayfaya erişim yetkiniz yok', 'error');
           showSection('dashboard');
           await loadDashboard();
@@ -3846,12 +3745,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         await loadStaff();
       }
-      if (page === 'schedule') await loadSchedule();
-      if (page === 'tattoo-styles') await loadTattooStylesPage();
+      if (page === 'schedule') {
+        if (!hasStudioAccess()) {
+          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+          showSection('dashboard');
+          await loadDashboard();
+          return;
+        }
+        await loadSchedule();
+      }
 
       // Degraded/disabled sections in tattoo demo build
       if (page === 'reports') {
-        if (getLoggedInStaff()?.role !== 'super_admin') {
+        if (!canAccessIncome()) {
           showToast('Bu sayfaya erişim yetkiniz yok', 'error');
           showSection('dashboard');
           await loadDashboard();
@@ -3866,12 +3772,28 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadIncomeReport();
       }
       if (page === 'api-settings') await loadWapioSettingsPage();
+      if (page === 'google-calendar') {
+        if (!hasStudioAccess()) {
+          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+          showSection('dashboard');
+          await loadDashboard();
+          return;
+        }
+        await loadGoogleCalendarSettings();
+      }
       if (page === 'all-appointments') await loadAllAppointments();
       if (page === 'past-appointments') await loadPastAppointments();
     });
   });
 
   $('save-wapio-settings-btn')?.addEventListener('click', saveWapioSettings);
+  $('gcal-save-btn')?.addEventListener('click', saveGoogleCalendarSettings);
+  $('gcal-test-btn')?.addEventListener('click', testGoogleCalendarSettings);
+  $('gcal-copy-email-btn')?.addEventListener('click', copyGcalServiceEmail);
+  $('gcal-calendar-select')?.addEventListener('change', (e) => {
+    const val = (e.target.value || '').trim();
+    if (val && $('gcal-calendar-id')) $('gcal-calendar-id').value = val;
+  });
   $('wapio-welcome-enabled')?.addEventListener('change', async () => {
     const enabled = !!$('wapio-welcome-enabled')?.checked;
     const { ok, data } = await apiCall('/admin/evolution-settings', {
@@ -3926,6 +3848,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('tattoo-ref-search-btn')?.addEventListener('click', loadMyTattooRequests);
   $('tattoo-ref-search')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') loadMyTattooRequests();
+  });
+  $('refresh-undecided-requests-btn')?.addEventListener('click', loadUndecidedRequests);
+  $('undecided-ref-search-btn')?.addEventListener('click', loadUndecidedRequests);
+  $('undecided-ref-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadUndecidedRequests();
+  });
+  $('refresh-preconsult-requests-btn')?.addEventListener('click', loadPreconsultRequests);
+  $('preconsult-ref-search-btn')?.addEventListener('click', loadPreconsultRequests);
+  $('preconsult-ref-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') loadPreconsultRequests();
   });
   $('refresh-all-tattoo-requests-btn')?.addEventListener('click', loadAllTattooRequests);
   $('all-tattoo-ref-search-btn')?.addEventListener('click', loadAllTattooRequests);
@@ -4010,6 +3942,140 @@ function toggleSidebar() {
   sidebar.classList.toggle('active');
   overlay.classList.toggle('active');
   hamburger.classList.toggle('active');
+}
+
+function setGcalStatus(kind, label) {
+  const wrap = $('gcal-connection-status');
+  const labelEl = $('gcal-status-label');
+  if (labelEl) labelEl.textContent = label;
+  if (!wrap) return;
+  wrap.classList.remove(
+    'wapio-connection-status--unknown',
+    'wapio-connection-status--connected',
+    'wapio-connection-status--pending',
+    'wapio-connection-status--error',
+    'wapio-connection-status--unconfigured'
+  );
+  const map = { ok: 'connected', err: 'error', warn: 'pending', unknown: 'unknown' };
+  wrap.classList.add(`wapio-connection-status--${map[kind] || 'unknown'}`);
+}
+
+function fillGcalCalendarSelect(calendars, selectedId) {
+  const sel = $('gcal-calendar-select');
+  const group = $('gcal-list-group');
+  if (!sel || !group) return;
+  const list = Array.isArray(calendars) ? calendars : [];
+  if (list.length === 0) {
+    group.style.display = 'none';
+    return;
+  }
+  group.style.display = '';
+  sel.innerHTML = '<option value="">— Seçin veya aşağıya yazın —</option>' +
+    list.map((c) => {
+      const id = escapeHtml(c.id || '');
+      const name = escapeHtml(c.summary || c.id || '');
+      const chosen = (c.id || '') === selectedId ? ' selected' : '';
+      return `<option value="${id}"${chosen}>${name}</option>`;
+    }).join('');
+}
+
+function applyGcalSettings(s, calendars) {
+  if ($('gcal-enabled')) $('gcal-enabled').checked = !!s.enabled;
+  if ($('gcal-sa-email')) $('gcal-sa-email').value = s.service_account_email || '';
+  if ($('gcal-calendar-id')) $('gcal-calendar-id').value = s.calendar_id || '';
+  fillGcalCalendarSelect(calendars, s.calendar_id || '');
+  const sum = $('gcal-current-summary');
+  if (sum) {
+    if (s.connected && s.calendar_summary) {
+      sum.hidden = false;
+      sum.textContent = `Aktif takvim: ${s.calendar_summary}`;
+    } else {
+      sum.hidden = true;
+      sum.textContent = '';
+    }
+  }
+  if (!s.credentials_ok) {
+    setGcalStatus('err', 'Sunucuda Google kimlik dosyası yok');
+  } else if (s.sync_active && s.connected) {
+    setGcalStatus('ok', s.calendar_summary ? `Bağlı: ${s.calendar_summary}` : 'Bağlı');
+  } else if (s.enabled && s.calendar_id) {
+    setGcalStatus('warn', s.probe_message || 'Takvime erişilemiyor — paylaşımı kontrol edin');
+  } else if (s.enabled) {
+    setGcalStatus('warn', 'Takvim kimliği girilmedi');
+  } else {
+    setGcalStatus('unknown', 'Senkron kapalı');
+  }
+}
+
+async function loadGoogleCalendarSettings() {
+  setGcalStatus('unknown', 'Kontrol ediliyor…');
+  const res = await apiCall('/admin/google-calendar-settings');
+  if (!res.ok || !res.data?.success) {
+    setGcalStatus('err', res.data?.message || 'Ayarlar yüklenemedi');
+    return;
+  }
+  applyGcalSettings(res.data.settings || {}, res.data.calendars || []);
+}
+
+async function saveGoogleCalendarSettings() {
+  const payload = {
+    enabled: !!$('gcal-enabled')?.checked,
+    calendar_id: ($('gcal-calendar-id')?.value || '').trim(),
+  };
+  const res = await apiCall('/admin/google-calendar-settings', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok || !res.data?.success) {
+    showToast(res.data?.message || 'Kaydedilemedi', 'error');
+    return;
+  }
+  showToast(res.data.message || 'Kaydedildi', 'success');
+  await loadGoogleCalendarSettings();
+}
+
+async function testGoogleCalendarSettings() {
+  const calendarId = ($('gcal-calendar-id')?.value || '').trim();
+  const btn = $('gcal-test-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deneniyor…';
+  }
+  const res = await apiCall('/admin/google-calendar-settings/test', {
+    method: 'POST',
+    body: JSON.stringify({ calendar_id: calendarId }),
+  });
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-stethoscope"></i> Bağlantıyı dene';
+  }
+  if (res.ok && res.data?.success) {
+    const name = res.data.calendar?.summary || calendarId;
+    showToast(`Bağlantı başarılı: ${name}`, 'success');
+    setGcalStatus('ok', `Bağlı: ${name}`);
+    const sum = $('gcal-current-summary');
+    if (sum) {
+      sum.hidden = false;
+      sum.textContent = `Aktif takvim: ${name}`;
+    }
+  } else {
+    showToast(res.data?.message || 'Takvime erişilemedi', 'error');
+    setGcalStatus('warn', res.data?.message || 'Takvime erişilemedi');
+  }
+}
+
+async function copyGcalServiceEmail() {
+  const email = ($('gcal-sa-email')?.value || '').trim();
+  if (!email) {
+    showToast('Kopyalanacak e-posta yok', 'error');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(email);
+    showToast('E-posta kopyalandı', 'success');
+  } catch {
+    showToast('Kopyalanamadı', 'error');
+  }
 }
 
 $('hamburger-btn')?.addEventListener('click', (e) => {

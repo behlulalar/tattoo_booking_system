@@ -80,7 +80,7 @@ def send_error_notification(error_type, error_message, details=None):
     
     try:
         # E-posta içeriği oluştur
-        subject = f"🚨 Kritik Hata - Sefa Pertev Randevu Sistemi"
+        subject = "Kritik Hata - Roof Tattoo Randevu Sistemi"
         
         html_content = f"""
         <!DOCTYPE html>
@@ -100,7 +100,7 @@ def send_error_notification(error_type, error_message, details=None):
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>🚨 Kritik Sistem Hatası</h1>
+                    <h1>Kritik Sistem Hatasi</h1>
                 </div>
                 
                 <div class="error-box">
@@ -143,7 +143,7 @@ def send_error_notification(error_type, error_message, details=None):
         # Rate limiting kaydı
         _sent_errors[error_key] = time.time()
         
-        logger.info(f"✅ Hata bildirimi gönderildi: {error_type}")
+        logger.info("Hata bildirimi gonderildi | error_type=%s", error_type)
         return True
         
     except Exception as e:
