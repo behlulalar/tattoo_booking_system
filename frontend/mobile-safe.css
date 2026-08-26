@@ -7,6 +7,7 @@ html {
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
     width: 100%;
+    overscroll-behavior-x: none;
 }
 
 body {
@@ -40,6 +41,11 @@ textarea {
     overflow-x: hidden;
 }
 
+body.customer-login-page {
+    overflow-y: auto !important;
+    height: auto !important;
+}
+
 .booking-left,
 .main-content {
     max-width: 100%;
@@ -58,6 +64,20 @@ img,
 svg {
     max-width: 100%;
     height: auto;
+}
+
+.customer-login-brand img {
+    max-width: 72px;
+}
+
+@media (max-width: 600px) {
+    .customer-login-brand img {
+        max-width: 56px;
+    }
+
+    .customer-login-page.is-verify-open .customer-login-brand img {
+        max-width: 40px;
+    }
 }
 
 video:not(.bg-video) {
@@ -118,6 +138,7 @@ a,
 
     .booking-page.is-phone-step .booking-left {
         min-height: calc(100dvh - 56px);
+        padding-bottom: calc(var(--page-footer-phone-clearance) + var(--keyboard-inset, 0px));
     }
 
     .booking-page.is-phone-step .booking-left > .booking-center {
@@ -264,6 +285,36 @@ a,
 
     .appointment-card:hover {
         transform: none;
+    }
+
+    #verify-overlay,
+    #welcome-overlay {
+        align-items: flex-start;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: max(12px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom));
+    }
+
+    #verify-modal.verify-code-modal,
+    #welcome-modal,
+    #success-modal,
+    #config-confirm-modal {
+        animation: none !important;
+        transform: none !important;
+        margin-top: auto;
+        margin-bottom: auto;
+    }
+
+    #verify-modal.verify-code-modal {
+        padding: 22px 16px 16px;
+    }
+
+    .verify-code-modal .verify-modal-icon {
+        font-size: 1.2rem;
+    }
+
+    #verify-modal.verify-code-modal h2 {
+        font-size: 1.2rem;
     }
 
     /* Sanatçı seçimi — mobil kart düzeni (masaüstüne dokunmaz) */

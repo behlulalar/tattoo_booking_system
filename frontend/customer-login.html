@@ -5,12 +5,12 @@
     <meta charset="UTF-8" />
     <meta name="deploy-system" content="roof-tattoo-gallery" />
     <title>Müşteri Girişi - Roof Tattoo Gallery</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <link rel="icon" type="image/png" href="img/logo.png" />
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
-    <link rel="stylesheet" href="style.css?v=20260615120000" />
-    <link rel="stylesheet" href="customer-login.css?v=20260613204000" />
-    <link rel="stylesheet" href="mobile-safe.css?v=20260613204000" />
+    <link rel="stylesheet" href="style.css?v=20260826183000" />
+    <link rel="stylesheet" href="customer-login.css?v=20260826183000" />
+    <link rel="stylesheet" href="mobile-safe.css?v=20260826183000" />
     <link rel="prefetch" href="customer-panel.html" />
     <link rel="prefetch" href="customer-panel.css?v=20260613190000" />
     <link rel="prefetch" href="customer-panel.js?v=20260613193000" />
@@ -23,13 +23,26 @@
 <body class="customer-login-page app-ready">
     <main class="customer-login-shell">
         <header class="customer-login-brand">
-            <img src="img/logo.png" alt="Roof Tattoo Gallery" width="160" height="160" decoding="async" />
+            <img src="img/logo.png" alt="Roof Tattoo Gallery" width="72" height="72" decoding="async" />
         </header>
 
         <a href="index.html" class="customer-login-back">
             <i class="fas fa-arrow-left" aria-hidden="true"></i>
             <span>Randevu sayfasına dön</span>
         </a>
+
+        <section id="customer-session-step" class="customer-login-step" hidden>
+            <div class="customer-login-card customer-session-card">
+                <h2>Oturumunuz açık</h2>
+                <p class="verify-info">Panele gidebilir veya başka bir telefonla giriş yapabilirsiniz.</p>
+                <button type="button" id="customer-session-continue" class="primary-btn customer-login-submit">
+                    Hesabıma git
+                </button>
+                <button type="button" id="customer-session-switch" class="secondary-btn">
+                    Başka numara ile giriş
+                </button>
+            </div>
+        </section>
 
         <section id="customer-login-step" class="customer-login-step">
             <div id="customer-login-modal" class="customer-login-card">
@@ -94,8 +107,8 @@
                 rel="noopener noreferrer">BehTech</a></p>
     </footer>
 
-    <script src="otp-autofill.js?v=20260818132500"></script>
-    <script src="customer-login.js?v=20260818132500"></script>
+    <script src="otp-autofill.js?v=20260826183000"></script>
+    <script src="customer-login.js?v=20260826183000"></script>
 </body>
 
 </html>
