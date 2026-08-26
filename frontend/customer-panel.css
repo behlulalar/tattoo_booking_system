@@ -418,6 +418,39 @@ body {
 .status-badge.slot_pending,
 .status-badge.request_pending { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
 
+.apt-card-badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.source-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.source-badge.source-customer {
+    background: rgba(168, 85, 247, 0.15);
+    color: #c084fc;
+}
+
+.source-badge.source-admin {
+    background: rgba(148, 163, 184, 0.18);
+    color: #94a3b8;
+}
+
+.source-badge.source-google {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+}
+
 .appointment-card.status-slot_pending::before,
 .appointment-card.status-request_pending::before { background: #a855f7; }
 

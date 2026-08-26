@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS appointments (
   completed_at      TIMESTAMP,
   aftercare_reminder_sent BOOLEAN DEFAULT FALSE,
   google_event_id   VARCHAR(255),
+  source            VARCHAR(20) NOT NULL DEFAULT 'admin'
+                    CHECK (source IN ('customer', 'admin', 'google')),
   created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -103,6 +105,7 @@ ON appointments(staff_id, appointment_date, appointment_time);
 CREATE INDEX IF NOT EXISTS idx_appointments_date ON appointments(appointment_date);
 CREATE INDEX IF NOT EXISTS idx_appointments_staff ON appointments(staff_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_customer ON appointments(customer_id);
+CREATE INDEX IF NOT EXISTS idx_appointments_source ON appointments(source);
 
 -- Working hours
 CREATE TABLE IF NOT EXISTS working_hours (

@@ -801,6 +801,25 @@ function statusText(status) {
   return map[status] || status || '-';
 }
 
+function appointmentSourceKey(source) {
+  const key = String(source || 'admin').toLowerCase();
+  return ['customer', 'admin', 'google'].includes(key) ? key : 'admin';
+}
+
+function appointmentSourceText(source) {
+  const map = {
+    customer: 'Müşteri',
+    admin: 'Admin',
+    google: 'Google',
+  };
+  return map[appointmentSourceKey(source)];
+}
+
+function appointmentSourceBadgeHtml(source) {
+  const key = appointmentSourceKey(source);
+  return `<span class="source-badge source-${key}">${escapeHtml(appointmentSourceText(key))}</span>`;
+}
+
 const APT_STATUS_OPTIONS = [
   { value: 'confirmed', label: 'Onaylandı' },
   { value: 'completed', label: 'Tamamlandı' },
@@ -1997,7 +2016,10 @@ function renderAppointmentsGrouped(containerId, items) {
             <div class="apt-datetime">
               <div class="appointment-time"><i class="fas fa-clock"></i> ${escapeHtml(a.time)}</div>
             </div>
-            <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
+            <div class="apt-card-badges">
+              ${appointmentSourceBadgeHtml(a.source)}
+              <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
+            </div>
           </div>
           <div class="apt-card-body">
             <div class="apt-detail-row">
@@ -2078,7 +2100,10 @@ function renderAppointments(containerId, items) {
               <div class="appointment-date"><i class="fas fa-calendar-alt"></i> ${escapeHtml(a.date)}</div>
               <div class="appointment-time"><i class="fas fa-clock"></i> ${escapeHtml(a.time)}</div>
             </div>
-            <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
+            <div class="apt-card-badges">
+              ${appointmentSourceBadgeHtml(a.source)}
+              <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
+            </div>
           </div>
           <div class="apt-card-body">
             <div class="apt-detail-row">
@@ -2517,12 +2542,13 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   const startT = a.time.slice(0, 5);
   const endT = minutesToTime(startMins + duration);
 
-  return `<div class="gcal-event ${statusClass}" style="top:${topPx}px;height:${heightPx}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);" title="${escapeHtml(customer)}">
+  const sourceLabel = appointmentSourceText(a.source);
+  return `<div class="gcal-event ${statusClass}" style="top:${topPx}px;height:${heightPx}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);" title="${escapeHtml(customer)} · ${escapeHtml(sourceLabel)}">
     <div class="gcal-event-title">${escapeHtml(customer)}</div>
     ${phone ? `<div class="gcal-event-line">${escapeHtml(phone)}</div>` : ''}
     ${detailLine ? `<div class="gcal-event-line">${escapeHtml(detailLine)}</div>` : ''}
     ${a.staff?.name ? `<div class="gcal-event-line gcal-event-staff">${escapeHtml(a.staff.name)}</div>` : ''}
-    <div class="gcal-event-time">${startT} – ${endT}</div>
+    <div class="gcal-event-time">${startT} – ${endT} · ${escapeHtml(sourceLabel)}</div>
   </div>`;
 }
 
@@ -2767,7 +2793,10 @@ function renderPastAppointments(containerId, items) {
             <div class="appointment-date"><i class="fas fa-calendar-alt"></i> ${escapeHtml(a.date)}</div>
             <div class="appointment-time"><i class="fas fa-clock"></i> ${escapeHtml(a.time)}</div>
           </div>
-          <span class="status-badge completed">${escapeHtml(statusText('completed'))}</span>
+          <div class="apt-card-badges">
+            ${appointmentSourceBadgeHtml(a.source)}
+            <span class="status-badge completed">${escapeHtml(statusText('completed'))}</span>
+          </div>
         </div>
         <div class="apt-card-body">
           <div class="apt-detail-row">

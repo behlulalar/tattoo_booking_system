@@ -58,6 +58,8 @@ CREATE TABLE appointments (
     payment_method    VARCHAR(50),
     duration_minutes  INTEGER NOT NULL DEFAULT 30,
     reminder_sent     BOOLEAN DEFAULT FALSE,
+    source            VARCHAR(20) NOT NULL DEFAULT 'admin'
+                      CHECK (source IN ('customer', 'admin', 'google')),
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -93,6 +95,7 @@ CREATE INDEX idx_staff_services_service ON staff_services(service_id);
 CREATE INDEX idx_appointments_date ON appointments(appointment_date);
 CREATE INDEX idx_appointments_staff ON appointments(staff_id);
 CREATE INDEX idx_appointments_customer ON appointments(customer_id);
+CREATE INDEX idx_appointments_source ON appointments(source);
 CREATE INDEX idx_working_hours_staff ON working_hours(staff_id);
 
 -- =============================================
