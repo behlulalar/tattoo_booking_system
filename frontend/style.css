@@ -547,6 +547,9 @@ body:not(.app-ready) .page-footer {
     pointer-events: none;
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
     opacity: 0;
+}
+
+body.dock-hint-ready .side-dock-hint {
     animation: dockHintPulse 5.5s ease-in-out infinite;
 }
 
@@ -666,6 +669,9 @@ body:not(.app-ready) .page-footer {
         left: 50%;
         font-size: 10px;
         padding: 5px 8px;
+    }
+
+    body.dock-hint-ready .side-dock-hint {
         animation-name: dockHintPulseMobile;
     }
 
@@ -734,8 +740,12 @@ body:not(.app-ready) .page-footer {
 
     .side-dock-hint {
         animation: none;
-        opacity: 1;
+        opacity: 0;
         transform: none;
+    }
+
+    body.dock-hint-ready .side-dock-hint {
+        opacity: 1;
     }
 
     @media (max-width: 768px) {

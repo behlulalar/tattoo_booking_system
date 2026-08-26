@@ -51,11 +51,13 @@ document.addEventListener('DOMContentLoaded', () => {
     else bgVideo.addEventListener('canplay', tryPlay, { once: true });
   }
 
+  const startDockHint = () => document.body.classList.add('dock-hint-ready');
+
   // Reveal app after a short premium splash
   const reveal = () => {
     document.body.classList.add('app-ready');
     if (splash) splash.classList.add('hide');
-    // Remove from layout after transition ends
+    setTimeout(startDockHint, 360);
     setTimeout(() => {
       if (splash) splash.style.display = 'none';
     }, 650);
@@ -64,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // If splash element missing, just reveal immediately
   if (!splash) {
     document.body.classList.add('app-ready');
+    startDockHint();
     return;
   }
 
