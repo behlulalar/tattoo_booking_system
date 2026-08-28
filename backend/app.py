@@ -37,14 +37,24 @@ from whatsapp_messages import (
     get_webhook_url,
 )
 from google_calendar_sync import (
-    on_appointment_created,
-    on_appointment_status_changed,
-    on_appointment_cancelled,
+    enqueue_appointment_sync,
+    enqueue_event_delete,
+    enqueue_event_deletes,
+    kick_queue_worker as kick_gcal_queue,
+    drain_queue as drain_gcal_queue,
+    ensure_queue_table as ensure_gcal_queue_table,
+    queue_stats as gcal_queue_stats,
+    reset_calendar_service as reset_gcal_service,
+    set_connection_provider as set_gcal_connection_provider,
     is_google_calendar_enabled,
     credentials_file_ok,
     get_service_account_email,
     probe_google_calendar,
     list_accessible_calendars,
+    load_external_busy_minutes,
+    set_slot_validator as set_gcal_slot_validator,
+    run_gcal_inbound_tick,
+    reset_inbound_state as reset_gcal_inbound_state,
 )
 from whatsapp_provider import (
     WAPIO_INTEGRATION_ENABLED,
@@ -116,6 +126,7 @@ from error_codes import (
     E_DB_003,
     E_REQ_001,
     E_SCH_001,
+    E_UNK_001,
     E_WA_002,
     E_WA_003,
     E_WA_004,
@@ -375,6 +386,10 @@ def release_db_connection(conn, close=False):
                 db_pool.putconn(conn)
         except Exception as e:
             log_error(logger, E_DB_003, "Veritabani baglantisi havuza geri verilemedi", exc=e)
+
+
+# Takvim senkronu kendi bağlantısını açmak yerine bu havuzu kullansın
+set_gcal_connection_provider(get_db_connection, release_db_connection)
 
 
 # =============================================
@@ -642,15 +657,18 @@ def cleanup_expired_pending_appointments():
             DELETE FROM appointments 
             WHERE status = 'pending' 
               AND appointment_date < CURRENT_DATE
-            RETURNING id, appointment_date
+            RETURNING id, appointment_date, google_event_id
         """)
         
         deleted = cursor.fetchall()
+        # Takvimdeki etkinlikler de gitmeli; silme işi satırla aynı commit'e girer
+        enqueue_event_deletes(cursor, [row[2] for row in deleted if row[2]])
         conn.commit()
         cursor.close()
         
         if deleted:
             logger.info(f"Geçmiş tarihli {len(deleted)} bekleyen randevu otomatik silindi: {deleted}")
+            kick_gcal_queue()
         
         return len(deleted)
     except Exception as e:
@@ -674,15 +692,17 @@ def cleanup_old_cancelled_appointments():
             DELETE FROM appointments 
             WHERE status = 'cancelled' 
             AND created_at < NOW() - INTERVAL '30 days'
-            RETURNING id, appointment_date, appointment_time
+            RETURNING id, appointment_date, appointment_time, google_event_id
         """)
         
         deleted = cursor.fetchall()
+        enqueue_event_deletes(cursor, [row[3] for row in deleted if row[3]])
         conn.commit()
         cursor.close()
         
         if deleted:
             logger.info(f"{len(deleted)} eski cancelled randevu temizlendi (30+ gün)")
+            kick_gcal_queue()
         
         return len(deleted)
     except Exception as e:
@@ -729,6 +749,23 @@ def cleanup_expired_admin_tokens():
     
     return expired_count
 
+
+# Takvim kuyruğu tablosu, randevu silen temizlik işinden önce hazır olmalı
+try:
+    ensure_gcal_queue_table()
+except Exception as e:
+    logger.warning(f"Takvim senkron kuyruğu hazırlanamadı: {e}")
+
+try:
+    import threading as _threading
+    def _startup_gcal_inbound():
+        try:
+            run_gcal_inbound_tick()
+        except Exception as inbound_err:
+            logger.warning(f"Takvim inbound baslangic atlandi: {inbound_err}")
+    _threading.Thread(target=_startup_gcal_inbound, name='gcal-inbound-start', daemon=True).start()
+except Exception as e:
+    logger.warning(f"Takvim inbound baslangic thread atlandi: {e}")
 
 # Uygulama başlatıldığında temizlik yap
 try:
@@ -1207,15 +1244,20 @@ def _time_str_to_minutes(time_str):
     return int(parts[0]) * 60 + int(parts[1])
 
 
-def appointment_slot_conflicts(cursor, staff_id, formatted_date, time_str, duration_minutes):
+def appointment_slot_conflicts(cursor, staff_id, formatted_date, time_str, duration_minutes, exclude_appointment_id=None):
     """Yeni randevu mevcut takvimle (süre dahil) çakışıyor mu?"""
     new_start = _time_str_to_minutes(time_str)
     new_end = new_start + int(duration_minutes or 30)
-    cursor.execute("""
+    query = """
         SELECT appointment_time, duration_minutes
         FROM appointments
         WHERE staff_id = %s AND appointment_date = %s AND status != 'cancelled'
-    """, (staff_id, formatted_date))
+    """
+    params = [staff_id, formatted_date]
+    if exclude_appointment_id:
+        query += " AND id <> %s"
+        params.append(int(exclude_appointment_id))
+    cursor.execute(query, params)
     for appt_time, dur in cursor.fetchall():
         ex_start = _time_str_to_minutes(appt_time)
         ex_end = ex_start + int(dur or 30)
@@ -1387,6 +1429,7 @@ def compute_available_start_slots(
     body_region=None, body_area=None, return_details=False,
     skip_past_filter=False,
     past_filter_mode='buffer',
+    exclude_appointment_id=None,
 ):
     """Belirli gün/personel için uygun başlangıç saatlerini döndürür."""
     from datetime import datetime as dt
@@ -1417,11 +1460,16 @@ def compute_available_start_slots(
         available_slots = _generate_half_hour_slots(10 * 60, 20 * 60)
 
     busy_intervals = []
-    cursor.execute("""
+    apt_query = """
         SELECT appointment_time, duration_minutes
         FROM appointments
         WHERE staff_id = %s AND appointment_date = %s AND status != 'cancelled'
-    """, (staff_id, formatted_date))
+    """
+    apt_params = [staff_id, formatted_date]
+    if exclude_appointment_id:
+        apt_query += " AND id <> %s"
+        apt_params.append(int(exclude_appointment_id))
+    cursor.execute(apt_query, apt_params)
     for appt_time, dur in cursor.fetchall():
         appt_start = _time_str_to_minutes(str(appt_time)[:5])
         busy_intervals.append((appt_start, appt_start + int(dur or SLOT_STEP_MINUTES)))
@@ -1440,6 +1488,8 @@ def compute_available_start_slots(
             if end_m <= start_m:
                 end_m = 24 * 60
             busy_intervals.append((start_m, end_m))
+
+    busy_intervals.extend(load_external_busy_minutes(cursor, formatted_date))
 
     if is_day_closed:
         busy_intervals.append((0, 24 * 60))
@@ -1527,6 +1577,26 @@ def compute_available_start_slots(
         }
 
     return starts, is_day_closed
+
+
+def _gcal_inbound_slot_allowed(
+    cursor, staff_id, formatted_date, time_str, duration_minutes, exclude_id, body_area=None,
+):
+    starts, is_day_closed = compute_available_start_slots(
+        cursor,
+        staff_id,
+        formatted_date,
+        duration_minutes,
+        body_area=body_area,
+        exclude_appointment_id=exclude_id,
+        skip_past_filter=True,
+    )
+    if is_day_closed:
+        return False
+    return str(time_str or '')[:5] in starts
+
+
+set_gcal_slot_validator(_gcal_inbound_slot_allowed)
 
 
 def _minutes_from_time_value(t):
@@ -2619,13 +2689,11 @@ def choose_offer_slot(token):
 
         cursor.execute("UPDATE slot_offers SET used_at = NOW() WHERE id = %s", (offer_id,))
         cursor.execute("UPDATE tattoo_requests SET status = 'scheduled' WHERE id = %s", (tr_id,))
+        enqueue_appointment_sync(cursor, new_appointment_id)
 
         conn.commit()
 
-        try:
-            on_appointment_created(new_appointment_id)
-        except Exception as gcal_err:
-            logger.warning(f"Google Calendar senkronu atlandı (apt #{new_appointment_id}): {gcal_err}")
+        kick_gcal_queue()
 
         customer_msg = build_appointment_created_customer_message(
             date_str,
@@ -3364,7 +3432,9 @@ def admin_create_manual_appointment():
             status, duration_minutes, price
         ))
         appointment_id = cursor.fetchone()[0]
+        enqueue_appointment_sync(cursor, appointment_id)
         conn.commit()
+        kick_gcal_queue()
 
         staff_name, staff_phone = staff_row[1], staff_row[2]
         customer_phone_display = phone
@@ -3396,11 +3466,6 @@ def admin_create_manual_appointment():
 
         cursor.close()
         logger.info(f"Manuel randevu oluşturuldu: apt={appointment_id}, customer={customer_id}, staff={staff_id}")
-
-        try:
-            on_appointment_created(appointment_id)
-        except Exception as gcal_err:
-            logger.warning(f"Google Calendar senkronu atlandı (apt #{appointment_id}): {gcal_err}")
 
         return jsonify({
             'success': True,
@@ -3551,7 +3616,10 @@ def update_appointment_status(appointment_id):
                 s.name as staff_name,
                 tr.size, tr.body_area,
                 a.google_event_id,
-                a.customer_id
+                a.customer_id,
+                COALESCE(a.price, 0),
+                COALESCE(a.source, 'admin'),
+                a.staff_id
             FROM appointments a
             JOIN customers c ON a.customer_id = c.id
             JOIN artists s ON a.staff_id = s.id
@@ -3567,6 +3635,9 @@ def update_appointment_status(appointment_id):
         # Mevcut durumu al
         old_status = appointment[2]  # appointment[2] = a.status
         google_event_id = appointment[10]
+        apt_price = float(appointment[12] or 0)
+        apt_source = (appointment[13] or 'admin').lower()
+        apt_staff = appointment[14]
 
         if old_status != new_status and new_status == 'completed':
             if not _appointment_has_started(appointment[0], appointment[1]):
@@ -3575,18 +3646,53 @@ def update_appointment_status(appointment_id):
                     'success': False,
                     'message': 'Randevu saati gelmeden tamamlandı olarak işaretlenemez',
                 }), 400
+            if apt_source == 'google':
+                raw_price = data.get('price', None)
+                if raw_price is not None and raw_price != '':
+                    try:
+                        incoming_price = float(raw_price)
+                    except (TypeError, ValueError):
+                        cursor.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Geçerli bir ücret girin',
+                        }), 400
+                    if incoming_price <= 0:
+                        cursor.close()
+                        return jsonify({
+                            'success': False,
+                            'message': 'Ücret 0 olamaz',
+                        }), 400
+                    cursor.execute(
+                        'UPDATE appointments SET price = %s WHERE id = %s',
+                        (incoming_price, appointment_id),
+                    )
+                    apt_price = incoming_price
+                if apt_price <= 0:
+                    cursor.close()
+                    return jsonify({
+                        'success': False,
+                        'message': 'Google randevusu ücret girilmeden tamamlandı işaretlenemez',
+                    }), 400
 
         # Update status (sadece durum değişiyorsa güncelle)
         if old_status != new_status:
             if new_status == 'cancelled':
-                # İptal edilen randevular hemen siliniyor
-                cursor.execute("DELETE FROM appointments WHERE id = %s", (appointment_id,))
+                # İptal edilen randevular hemen siliniyor.
+                # Takvim silme işi satır gitmeden kuyruğa yazılmalı: aksi halde
+                # Google hata verirse event_id'yi bir daha bulamayız.
+                enqueue_event_delete(cursor, google_event_id)
+                cursor.execute(
+                    """
+                    UPDATE appointments
+                       SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, NOW())
+                     WHERE id = %s
+                    """,
+                    (appointment_id,),
+                )
                 conn.commit()
-                logger.info(f"Randevu {appointment_id} iptal edildi ve silindi: {old_status} -> {new_status}")
-                try:
-                    on_appointment_cancelled(google_event_id)
-                except Exception as gcal_err:
-                    logger.warning(f"Google Calendar silme atlandı (apt #{appointment_id}): {gcal_err}")
+                logger.info(f"Randevu {appointment_id} iptal edildi: {old_status} -> {new_status}")
+                kick_gcal_queue()
             else:
                 if new_status == 'completed':
                     cursor.execute("""
@@ -3601,10 +3707,6 @@ def update_appointment_status(appointment_id):
 
                 # Tamamlandı → fiyat varsa gelir kaydı ekle
                 if new_status == 'completed':
-                    cursor.execute("SELECT price, staff_id FROM appointments WHERE id = %s", (appointment_id,))
-                    apt_row = cursor.fetchone()
-                    apt_price = float(apt_row[0] or 0) if apt_row else 0
-                    apt_staff = apt_row[1] if apt_row else None
                     apt_date = appointment[0]
                     size_str = appointment[8] or ''
                     area_str = appointment[9] or ''
@@ -3621,12 +3723,10 @@ def update_appointment_status(appointment_id):
                             f"Sadakat puanı atlandı (apt #{appointment_id}): {loyalty_err}"
                         )
 
+                enqueue_appointment_sync(cursor, appointment_id)
                 conn.commit()
                 logger.info(f"Randevu {appointment_id} durumu güncellendi: {old_status} -> {new_status}")
-                try:
-                    on_appointment_status_changed(appointment_id)
-                except Exception as gcal_err:
-                    logger.warning(f"Google Calendar güncelleme atlandı (apt #{appointment_id}): {gcal_err}")
+                kick_gcal_queue()
         else:
             conn.commit()
             logger.info(f"Randevu {appointment_id} durumu zaten {new_status}, güncelleme yapılmadı")
@@ -3671,7 +3771,8 @@ Tekrar görüşmek üzere,
         
         # Send WhatsApp message if applicable (sadece durum değiştiyse)
         # Eğer aynı duruma tekrar güncelleniyorsa mesaj gönderme
-        if message and old_status != new_status:
+        # Google kaynaklı randevularda inbound kararı: WhatsApp yok
+        if message and old_status != new_status and apt_source != 'google':
             try:
                 send_wapio_message(customer_phone, message)
                 logger.info(f"Durum değişikliği mesajı gönderildi: {customer_phone} - {old_status} -> {new_status}")
@@ -3691,7 +3792,7 @@ Tekrar görüşmek üzere,
     except Exception as e:
         if conn:
             conn.rollback()
-        logger.error(f"update_appointment_status hatası: {e}", exc_info=True)
+        log_error(logger, E_UNK_001, "Randevu durumu guncellenemedi", exc=e)
         return jsonify({'success': False, 'message': 'Durum güncellenirken hata oluştu'}), 500
     finally:
         release_db_connection(conn)
@@ -4070,8 +4171,14 @@ def delete_staff(staff_id):
                 'active_count': active_appointments
             }), 400
         
-        # Tüm randevuları sil (force modunda veya sadece eski randevular)
-        cursor.execute("DELETE FROM appointments WHERE staff_id = %s", (staff_id,))
+        # Tüm randevuları sil (force modunda veya sadece eski randevular).
+        # Silinen her randevunun takvim etkinliği de kuyruğa girer, aksi halde
+        # personelin gelecek randevuları takvimde hayalet olarak kalır.
+        cursor.execute(
+            "DELETE FROM appointments WHERE staff_id = %s RETURNING google_event_id",
+            (staff_id,),
+        )
+        enqueue_event_deletes(cursor, [row[0] for row in cursor.fetchall() if row[0]])
         
         # Tattoo flow: staff_services removed
         
@@ -4085,6 +4192,7 @@ def delete_staff(staff_id):
         cursor.execute("DELETE FROM artists WHERE id = %s", (staff_id,))
         conn.commit()
         cursor.close()
+        kick_gcal_queue()
         
         logger.info(f"Personel silindi: id={staff_id}, force={force}")
         
@@ -5642,6 +5750,7 @@ def get_google_calendar_settings():
             'connected': bool(probe and probe.get('ok')),
             'probe_message': (probe or {}).get('message') or '',
         },
+        'queue': gcal_queue_stats(),
         'calendars': list_accessible_calendars(),
     })
 
@@ -5656,12 +5765,19 @@ def update_google_calendar_settings():
     enabled = data.get('enabled')
     timezone = data.get('timezone')
     try:
+        previous = get_google_calendar_config()
+        previous_calendar_id = (previous.get('calendar_id') or '').strip()
         save_google_calendar_config(
             calendar_id=calendar_id if calendar_id is not None else None,
             enabled=enabled if enabled is not None else None,
             timezone=timezone if timezone is not None else None,
         )
+        # Cache'lenmiş Google servisi eski ayarla kalmasın
+        reset_gcal_service()
         cfg = get_google_calendar_config()
+        new_calendar_id = (cfg.get('calendar_id') or '').strip()
+        if previous_calendar_id and previous_calendar_id != new_calendar_id:
+            reset_gcal_inbound_state(previous_calendar_id)
         probe = probe_google_calendar(cfg.get('calendar_id')) if cfg.get('calendar_id') and credentials_file_ok() else None
         logger.info(
             'Google Calendar ayarları güncellendi by staff_id=%s calendar_id=%s enabled=%s',
@@ -6237,6 +6353,9 @@ def start_scheduler_if_master():
             scheduler.add_job(func=cleanup_expired_webhook_messages, trigger="interval", hours=1, id='cleanup_webhook_messages', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_old_cancelled_appointments, trigger="interval", days=7, id='cleanup_cancelled_appointments', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_expired_admin_tokens, trigger="interval", hours=24, id='cleanup_admin_tokens', replace_existing=True, max_instances=1)
+            # Takvim kuyruğu: anlık tetikleme kaçırırsa/başarısız olursa telafi eder
+            scheduler.add_job(func=drain_gcal_queue, trigger="interval", minutes=2, id='gcal_queue_drain', replace_existing=True, max_instances=1)
+            scheduler.add_job(func=run_gcal_inbound_tick, trigger="interval", minutes=2, id='gcal_inbound_tick', replace_existing=True, max_instances=1)
             # Günlük veritabanı yedekleme: Her gün saat 00:30'da
             backup_hour = 0
             backup_minute = 30
@@ -6253,7 +6372,9 @@ def start_scheduler_if_master():
             logger.info("   - Admin tokens cleanup: her 24 saatte bir")
             logger.info(f"   - Database backup: Her gün saat {backup_hour:02d}:{backup_minute:02d}'da (max_instances=1)")
             if is_google_calendar_enabled():
-                logger.info("   - Google Calendar: aktif (Faz 1 — randevu oluşunca/güncellenince push)")
+                logger.info("   - Google Calendar: aktif (kuyruklu push + yerel meşguliyet + inbound)")
+                logger.info("   - Takvim kuyruğu tahliyesi: her 2 dakikada bir")
+                logger.info("   - Takvim inbound/mesguliyet: her 2 dakikada bir")
             else:
                 logger.info("   - Google Calendar: kapalı (GOOGLE_CALENDAR_ENABLED veya credentials)")
             
@@ -6916,12 +7037,17 @@ def cancel_customer_appointment(appointment_id):
         # Cancel appointment - DELETE (hemen sil)
         customer_name = f"{appointment[4]} {appointment[5]}"
         google_event_id = appointment[13]
-        cursor.execute("DELETE FROM appointments WHERE id = %s", (appointment_id,))
+        enqueue_event_delete(cursor, google_event_id)
+        cursor.execute(
+            """
+            UPDATE appointments
+               SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, NOW())
+             WHERE id = %s
+            """,
+            (appointment_id,),
+        )
         conn.commit()
-        try:
-            on_appointment_cancelled(google_event_id)
-        except Exception as gcal_err:
-            logger.warning(f"Google Calendar silme atlandı (apt #{appointment_id}): {gcal_err}")
+        kick_gcal_queue()
         staff_name = appointment[7]
         staff_phone = appointment[8]
         duration_minutes = int(appointment[9] or 30)

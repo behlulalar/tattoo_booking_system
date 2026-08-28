@@ -9,7 +9,7 @@
     <link rel="icon" type="image/png" href="img/logo.png" />
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20260826194000" />
+    <link rel="stylesheet" href="admin.css?v=20260828165000" />
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -639,6 +639,10 @@
                             <p class="gcal-field-hint">Google Takvim → Ayarlar → takvimi seç → Takvim kimliği</p>
                         </div>
                         <p id="gcal-current-summary" class="gcal-current-summary" hidden></p>
+                        <div id="gcal-queue-status" class="gcal-queue-status" hidden>
+                            <div class="gcal-queue-title">Senkron kuyruğu</div>
+                            <p id="gcal-queue-summary" class="gcal-queue-summary"></p>
+                        </div>
                         <div class="wapio-actions">
                             <button type="button" id="gcal-test-btn" class="filter-btn secondary">
                                 <i class="fas fa-stethoscope"></i> Bağlantıyı dene
@@ -648,7 +652,7 @@
                             </button>
                         </div>
                         <p id="gcal-save-note" class="gcal-field-hint" style="margin-top:14px;">
-                            Yeni randevular bu takvime yazılır. Eski etkinlikler önceki takvimde kalır.
+                            Yeni randevular bu takvime yazılır. Takvim kimliğini değiştirirseniz eski etkinlikler önceki takvimde kalır; eşleme sıfırlanır.
                         </p>
                     </div>
                 </div>
@@ -1271,6 +1275,31 @@
         </div>
     </div>
 
+    <div id="gcal-complete-price-overlay" class="modal-overlay" style="display:none;">
+        <div class="profile-modal" style="max-width:420px;">
+            <div class="modal-header">
+                <h2><i class="fas fa-tag"></i> Ücret girin</h2>
+                <button class="close-btn" type="button" onclick="closeGoogleCompletePriceModal()"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom:16px;color:var(--text-secondary);font-size:0.9rem;">
+                    Google’dan gelen randevu gelir raporuna düşmesi için ücret girilmeden tamamlanamaz.
+                </p>
+                <div class="form-group" style="margin-bottom:16px;">
+                    <label for="gcal-complete-price" style="display:block;margin-bottom:6px;font-size:0.9rem;color:var(--text-secondary);">Ücret (₺) <span style="color:var(--accent);">*</span></label>
+                    <input type="number" id="gcal-complete-price" min="1" step="50" placeholder="Örn: 4500"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();submitGoogleCompletePrice();}"
+                        style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:1rem;font-family:inherit;" />
+                </div>
+                <p id="gcal-complete-price-error" class="error-message" style="display:none;"></p>
+                <div style="display:flex;gap:10px;justify-content:flex-end;">
+                    <button type="button" onclick="closeGoogleCompletePriceModal()" style="padding:11px 22px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">İptal</button>
+                    <button type="button" id="gcal-complete-price-submit" onclick="submitGoogleCompletePrice()" style="padding:11px 22px;background:#fff;border:none;border-radius:8px;color:#000;font-weight:400;cursor:pointer;font-family:inherit;">Tamamlandı işaretle</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="custom-prompt-overlay" class="modal-overlay" style="display:none;">
         <div class="profile-modal" style="max-width:420px;">
             <div class="modal-header">
@@ -1386,7 +1415,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260826194000"></script>
+    <script src="admin.js?v=20260828165000"></script>
 </body>
 
 </html>

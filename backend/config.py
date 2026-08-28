@@ -168,7 +168,7 @@ def _merge_google_calendar_settings(stored: dict) -> dict:
     return {
         'enabled': _parse_bool(enabled, default=False),
         'credentials_path': GOOGLE_CALENDAR_CONFIG['credentials_path'],
-        'calendar_id': (stored.get('calendar_id') if 'calendar_id' in stored else GOOGLE_CALENDAR_CONFIG['calendar_id'] or '').strip(),
+        'calendar_id': ((stored.get('calendar_id') if 'calendar_id' in stored else GOOGLE_CALENDAR_CONFIG['calendar_id']) or '').strip(),
         'timezone': (
             stored.get('timezone')
             if stored.get('timezone')
