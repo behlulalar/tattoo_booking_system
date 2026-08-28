@@ -1145,30 +1145,13 @@ def _ensure_partial_slot_unique_index(conn):
 
 
 def _ensure_artist_calendar_aliases(conn):
-    """Personel adı değişince eski takvim yazımı eşleşmeye devam etsin."""
+    """Takvim takma ad kolonu (ad değişince eski yazım elle eklenebilir)."""
     cursor = conn.cursor()
     try:
         cursor.execute(
             """
             ALTER TABLE artists
                 ADD COLUMN IF NOT EXISTS calendar_aliases TEXT[] NOT NULL DEFAULT '{}'
-            """
-        )
-        cursor.execute(
-            """
-            UPDATE artists
-               SET calendar_aliases = (
-                    SELECT ARRAY(
-                        SELECT DISTINCT x
-                          FROM unnest(
-                              COALESCE(calendar_aliases, '{}'::text[])
-                              || ARRAY['Nihal', 'Nihal Karagöz']
-                          ) AS x
-                         WHERE NULLIF(BTRIM(x), '') IS NOT NULL
-                    )
-               )
-             WHERE name ILIKE 'Berke Uzun'
-               AND NOT ('Nihal' = ANY (COALESCE(calendar_aliases, '{}'::text[])))
             """
         )
         conn.commit()
