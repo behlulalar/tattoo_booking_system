@@ -692,6 +692,7 @@ function closeStaffModal() {
   $('staff-password').value = '';
   $('staff-role').value = 'staff';
   if ($('staff-instagram-url')) $('staff-instagram-url').value = '';
+  if ($('staff-calendar-aliases')) $('staff-calendar-aliases').value = '';
   staffPhotoData = undefined;
   staffPhotoChanged = false;
   resetStaffPhotoPreview(null);
@@ -733,6 +734,10 @@ function openStaffModal({ mode, staff } = { mode: 'create', staff: null }) {
     roleEl.value = roleSelectEl.value;
   }
   if ($('staff-instagram-url')) $('staff-instagram-url').value = staff?.instagram_url || '';
+  if ($('staff-calendar-aliases')) {
+    const aliases = Array.isArray(staff?.calendar_aliases) ? staff.calendar_aliases : [];
+    $('staff-calendar-aliases').value = aliases.join(', ');
+  }
 
   staffPhotoData = undefined;
   staffPhotoChanged = false;
@@ -3581,6 +3586,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const payload = { name, phone, role, instagram_url: ($('staff-instagram-url')?.value || '').trim() };
+    payload.calendar_aliases = ($('staff-calendar-aliases')?.value || '').trim();
     if (password) payload.password = password;
     if (staffModalState.mode === 'create' && staffPhotoData) {
       payload.profile_photo = staffPhotoData;
