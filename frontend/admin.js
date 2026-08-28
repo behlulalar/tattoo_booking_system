@@ -846,6 +846,8 @@ function isAppointmentStartInFuture(appointment) {
 
 function renderAppointmentStatusControls(appointmentId, currentStatus, appointment) {
   const futureStart = isAppointmentStartInFuture(appointment);
+  const sourceKey = appointmentSourceKey(appointment && appointment.source);
+  const price = parseFloat(appointment && appointment.price ? appointment.price : 0) || 0;
   const buttons = APT_STATUS_OPTIONS.map((opt) => {
     const isCurrent = opt.value === currentStatus;
     const blockComplete = opt.value === 'completed' && futureStart && !isCurrent;
@@ -854,15 +856,16 @@ function renderAppointmentStatusControls(appointmentId, currentStatus, appointme
     const title = blockComplete
       ? ' title="Randevu saati gelmeden tamamlandı işaretlenemez"'
       : '';
-    return `<button type="button" class="apt-status-btn${isCurrent ? ' is-current' : ''}${extraClass}" data-status-id="${appointmentId}" data-status-val="${opt.value}" ${disabled ? 'disabled' : ''}${title}>${opt.label}</button>`;
+    return `<button type="button" class="apt-status-btn${isCurrent ? ' is-current' : ''}${extraClass}" data-status-id="${appointmentId}" data-status-val="${opt.value}" data-apt-source="${escapeHtml(sourceKey)}" data-apt-price="${price}" ${disabled ? 'disabled' : ''}${title}>${opt.label}</button>`;
   }).join('');
   return `<div class="apt-status-grid"><span class="apt-status-grid-label">Durum değiştir</span><div class="apt-status-grid-btns">${buttons}</div></div>`;
 }
 
-async function updateAppointmentStatus(appointmentId, newStatus) {
+async function updateAppointmentStatus(appointmentId, newStatus, extra) {
+  const body = Object.assign({ status: newStatus }, extra || {});
   const { ok, data } = await apiCall(`/admin/appointments/${appointmentId}/status`, {
     method: 'PUT',
-    body: JSON.stringify({ status: newStatus }),
+    body: JSON.stringify(body),
   });
   if (!ok || !data.success) {
     showToast(data?.message || 'Durum güncellenemedi', 'error');
@@ -1131,12 +1134,79 @@ async function submitManualAppointment(e) {
   await reloadActiveAdminAppointments();
 }
 
+function googleAppointmentNeedsPrice(appointment) {
+  if (!appointment) return false;
+  if (appointmentSourceKey(appointment.source) !== 'google') return false;
+  if (parseFloat(appointment.price || 0) > 0) return false;
+  const status = appointment.status;
+  return status !== 'completed' && status !== 'cancelled' && status !== 'no_show';
+}
+
+function googlePriceHintRow(appointment) {
+  if (!googleAppointmentNeedsPrice(appointment)) return '';
+  return `<div class="apt-detail-row">
+             <span class="apt-detail-icon"><i class="fas fa-tag"></i></span>
+             <span class="apt-detail-label">Fiyat:</span>
+             <span class="apt-detail-value" style="color:var(--text-muted);">Tamamlamak için ücret girin</span>
+           </div>`;
+}
+
+let _gcalCompleteCtx = null;
+
+function closeGoogleCompletePriceModal() {
+  _gcalCompleteCtx = null;
+  const overlay = $('gcal-complete-price-overlay');
+  if (overlay) overlay.style.display = 'none';
+  const errEl = $('gcal-complete-price-error');
+  if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+}
+
+function openGoogleCompletePriceModal(appointmentId, afterSuccess) {
+  _gcalCompleteCtx = { appointmentId, afterSuccess };
+  const overlay = $('gcal-complete-price-overlay');
+  const input = $('gcal-complete-price');
+  const errEl = $('gcal-complete-price-error');
+  if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+  if (input) input.value = '';
+  if (overlay) overlay.style.display = 'flex';
+  setTimeout(() => input && input.focus(), 50);
+}
+
+async function submitGoogleCompletePrice() {
+  const ctx = _gcalCompleteCtx;
+  const errEl = $('gcal-complete-price-error');
+  if (!ctx || !ctx.appointmentId) return;
+  const price = parseFloat($('gcal-complete-price')?.value || '0');
+  if (!(price > 0) || Number.isNaN(price)) {
+    if (errEl) {
+      errEl.textContent = 'Tamamlamak için 0’dan büyük bir ücret girin';
+      errEl.style.display = 'block';
+    }
+    return;
+  }
+  const btn = $('gcal-complete-price-submit');
+  if (btn) btn.disabled = true;
+  const ok = await updateAppointmentStatus(ctx.appointmentId, 'completed', { price });
+  if (btn) btn.disabled = false;
+  if (!ok) return;
+  const afterSuccess = ctx.afterSuccess;
+  closeGoogleCompletePriceModal();
+  if (typeof afterSuccess === 'function') await afterSuccess();
+  else await reloadActiveAdminAppointments();
+}
+
 function bindAppointmentStatusControls(container, afterSuccess) {
   container.querySelectorAll('.apt-status-btn[data-status-id]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (btn.disabled || btn.classList.contains('is-current')) return;
       const id = btn.getAttribute('data-status-id');
       const status = btn.getAttribute('data-status-val');
+      const source = btn.getAttribute('data-apt-source') || '';
+      const price = parseFloat(btn.getAttribute('data-apt-price') || '0') || 0;
+      if (status === 'completed' && appointmentSourceKey(source) === 'google' && price <= 0) {
+        openGoogleCompletePriceModal(id, afterSuccess);
+        return;
+      }
       btn.disabled = true;
       const ok = await updateAppointmentStatus(id, status);
       btn.disabled = false;
@@ -2043,6 +2113,7 @@ function renderAppointmentsGrouped(containerId, items) {
               <span class="apt-detail-value">${escapeHtml(tr.body_area)}</span>
             </div>` : ''}
             ${priceRow}
+            ${googlePriceHintRow(a)}
           </div>
           <div class="apt-card-footer">
             ${renderAppointmentStatusControls(a.id, a.status, a)}
@@ -2127,6 +2198,7 @@ function renderAppointments(containerId, items) {
               <span class="apt-detail-value">${escapeHtml(tr.body_area)}</span>
             </div>` : ''}
             ${priceRow}
+            ${googlePriceHintRow(a)}
           </div>
           <div class="apt-card-footer">
             ${renderAppointmentStatusControls(a.id, a.status, a)}
@@ -4008,7 +4080,7 @@ function fillGcalCalendarSelect(calendars, selectedId) {
     }).join('');
 }
 
-function applyGcalSettings(s, calendars) {
+function applyGcalSettings(s, calendars, queue) {
   if ($('gcal-enabled')) $('gcal-enabled').checked = !!s.enabled;
   if ($('gcal-sa-email')) $('gcal-sa-email').value = s.service_account_email || '';
   if ($('gcal-calendar-id')) $('gcal-calendar-id').value = s.calendar_id || '';
@@ -4034,6 +4106,27 @@ function applyGcalSettings(s, calendars) {
   } else {
     setGcalStatus('unknown', 'Senkron kapalı');
   }
+  applyGcalQueueStats(queue);
+}
+
+function applyGcalQueueStats(queue) {
+  const wrap = $('gcal-queue-status');
+  const summaryEl = $('gcal-queue-summary');
+  if (!wrap || !summaryEl) return;
+  const pending = queue && queue.pending;
+  const dead = queue && queue.dead;
+  if (pending == null && dead == null) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  wrap.classList.toggle('gcal-queue-status--dead', Number(dead || 0) > 0);
+  const pendingN = Number(pending || 0);
+  const deadN = Number(dead || 0);
+  const oldest = queue.oldest_pending
+    ? ` En eski bekleyen: ${String(queue.oldest_pending).replace('T', ' ').slice(0, 16)}`
+    : '';
+  summaryEl.textContent = `Bekleyen: ${pendingN} · Bırakılan: ${deadN}.${oldest}`;
 }
 
 async function loadGoogleCalendarSettings() {
@@ -4043,7 +4136,7 @@ async function loadGoogleCalendarSettings() {
     setGcalStatus('err', res.data?.message || 'Ayarlar yüklenemedi');
     return;
   }
-  applyGcalSettings(res.data.settings || {}, res.data.calendars || []);
+  applyGcalSettings(res.data.settings || {}, res.data.calendars || [], res.data.queue || {});
 }
 
 async function saveGoogleCalendarSettings() {

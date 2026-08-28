@@ -3519,6 +3519,33 @@ strong, b, th {
     font-size: 0.9rem;
 }
 
+.gcal-queue-status {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-card-hover, rgba(255,255,255,0.03));
+}
+
+.gcal-queue-title {
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+
+.gcal-queue-summary {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.gcal-queue-status--dead .gcal-queue-summary {
+    color: var(--danger, #f87171);
+}
+
 .wapio-grid {
     display: grid;
     grid-template-columns: 1fr;

@@ -23,6 +23,8 @@ marshmallow>=3.20.0
 # Google Calendar API (Phase 1 sync)
 google-api-python-client>=2.100.0
 google-auth>=2.23.0
+# Google çağrılarına timeout verebilmek için (httplib2 tabanlı authorized http)
+google-auth-httplib2>=0.1.0
 
 # Production Server (WSGI)
 gunicorn>=21.2.0

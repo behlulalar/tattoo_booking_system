@@ -22,6 +22,8 @@ E_WA_004 = "E-WA-004"  # doğrulama kodu / hatırlatma gönderilemedi
 
 # Google Takvim
 E_GCAL_001 = "E-GCAL-001"  # senkron veya silme hatası
+E_GCAL_002 = "E-GCAL-002"  # senkron kuyruğu (outbox) hatası
+E_GCAL_003 = "E-GCAL-003"  # kuyruk işi tüm denemelerde başarısız (kalıcı)
 
 # Randevu / talep
 E_BOOK_001 = "E-BOOK-001"  # randevu oluşturulamadı
@@ -48,6 +50,8 @@ CODE_HELP = {
     E_WA_003: "Evolution api_key veya instance_name eksik.",
     E_WA_004: "OTP, hatırlatma veya karşılama mesajı gönderilemedi.",
     E_GCAL_001: "Google Takvim yazılamadı/silinemedi. credentials ve calendar_id.",
+    E_GCAL_002: "Takvim senkron kuyruğuna yazılamadı/okunamadı. google_calendar_queue tablosu.",
+    E_GCAL_003: "Takvim işi tüm denemelerden sonra bırakıldı. Kuyrukta dead_at dolu satıra bak.",
     E_BOOK_001: "Randevu kaydı oluşmadı (slot çakışması hariç beklenmeyen hata).",
     E_REQ_001: "Dövme talebi veya teklif linki oluşturulamadı.",
     E_BKP_001: "pg_dump veya Google Drive (rclone) yedekleme hatası.",
