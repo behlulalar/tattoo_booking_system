@@ -33,7 +33,7 @@ def _load_match_fns():
 ARTISTS = [
     (2, 'Tuncer Ürer', []),
     (3, 'İbrahim Çakmak', []),
-    (1, 'Berke Uzun', ['Nihal', 'Nihal Karagöz']),
+    (1, 'Berke Uzun', []),
     (4, 'Mert I\u0307rioglu', []),
 ]
 
@@ -54,8 +54,7 @@ def main():
         ('İbrahim', 3),
         ('Ibrahim Cakmak', 3),
         ('Berke', 1),
-        ('Nihal', 1),
-        ('nihal', 1),
+        ('Nihal', None),
         ('Ali Onur D', None),
         ('Tunxer', None),
         ('Toplantı', None),
