@@ -12,6 +12,7 @@ import os
 import random
 import re
 import threading
+import unicodedata
 from datetime import date, datetime, timedelta, time as dt_time
 
 import psycopg2
@@ -348,7 +349,9 @@ def _our_appointment_id_from_event(event):
 
 
 def _fold_tr(value):
-    text = (value or '').strip().lower()
+    text = unicodedata.normalize('NFKD', value or '')
+    text = ''.join(ch for ch in text if unicodedata.category(ch) != 'Mn')
+    text = text.strip().lower()
     return (
         text.replace('ı', 'i').replace('İ', 'i')
         .replace('ş', 's').replace('Ş', 's')
@@ -357,6 +360,32 @@ def _fold_tr(value):
         .replace('ö', 'o').replace('Ö', 'o')
         .replace('ç', 'c').replace('Ç', 'c')
     )
+
+
+def parse_calendar_aliases(raw):
+    """Takvim takma adlarını tekilleştirilmiş listeye çevirir."""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        items = re.split(r'[,;\n]+', str(raw))
+    out = []
+    seen = set()
+    for item in items:
+        name = ' '.join(str(item).split())
+        if not name:
+            continue
+        key = _fold_tr(name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(name[:80])
+    return out
+
+
+def merge_calendar_aliases(existing, extra):
+    return parse_calendar_aliases(list(existing or []) + list(extra or []))
 
 
 def _normalize_customer_phone(raw):
@@ -427,7 +456,11 @@ def _resolve_staff_from_title(title, artist_rows):
     best = {}
     for row in artist_rows or []:
         artist_id, name = row[0], row[1]
-        for key in _artist_name_keys(name):
+        aliases = row[2] if len(row) > 2 else None
+        keys = set(_artist_name_keys(name))
+        for alias in parse_calendar_aliases(aliases):
+            keys.update(_artist_name_keys(alias))
+        for key in keys:
             if not _key_in_title(folded_title, key):
                 continue
             key_len = len(key)
@@ -1068,6 +1101,7 @@ def ensure_queue_table():
             finally:
                 cursor.close()
         _ensure_partial_slot_unique_index(conn)
+        _ensure_artist_calendar_aliases(conn)
         return ok
     except Exception as e:
         log_error(logger, E_GCAL_002, 'Takvim senkron kuyrugu hazirlanamadi', exc=e)
@@ -1106,6 +1140,41 @@ def _ensure_partial_slot_unique_index(conn):
     except Exception as e:
         conn.rollback()
         logger.warning('Randevu slot unique index guncellenemedi: %s', str(e).strip()[:200])
+    finally:
+        cursor.close()
+
+
+def _ensure_artist_calendar_aliases(conn):
+    """Personel adı değişince eski takvim yazımı eşleşmeye devam etsin."""
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            ALTER TABLE artists
+                ADD COLUMN IF NOT EXISTS calendar_aliases TEXT[] NOT NULL DEFAULT '{}'
+            """
+        )
+        cursor.execute(
+            """
+            UPDATE artists
+               SET calendar_aliases = (
+                    SELECT ARRAY(
+                        SELECT DISTINCT x
+                          FROM unnest(
+                              COALESCE(calendar_aliases, '{}'::text[])
+                              || ARRAY['Nihal', 'Nihal Karagöz']
+                          ) AS x
+                         WHERE NULLIF(BTRIM(x), '') IS NOT NULL
+                    )
+               )
+             WHERE name ILIKE 'Berke Uzun'
+               AND NOT ('Nihal' = ANY (COALESCE(calendar_aliases, '{}'::text[])))
+            """
+        )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.warning('Takvim takma ad kolonu hazirlanamadi: %s', str(e).strip()[:200])
     finally:
         cursor.close()
 
@@ -1818,7 +1887,7 @@ def _apply_inbound_move(cursor, appointment_id, local_date, local_time, duration
 def _load_bookable_artists(cursor):
     cursor.execute(
         """
-        SELECT id, name
+        SELECT id, name, COALESCE(calendar_aliases, '{}'::text[])
           FROM artists
          WHERE role IS DISTINCT FROM 'tech_support'
          ORDER BY display_order ASC, id ASC

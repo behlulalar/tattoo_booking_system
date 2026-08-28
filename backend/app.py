@@ -55,6 +55,8 @@ from google_calendar_sync import (
     set_slot_validator as set_gcal_slot_validator,
     run_gcal_inbound_tick,
     reset_inbound_state as reset_gcal_inbound_state,
+    parse_calendar_aliases,
+    merge_calendar_aliases,
 )
 from whatsapp_provider import (
     WAPIO_INTEGRATION_ENABLED,
@@ -3895,7 +3897,8 @@ def get_staff_list():
         cursor = conn.cursor()
 
         cursor.execute("""
-            SELECT id, name, phone, role, profile_photo, COALESCE(display_order, 0) as display_order, instagram_url
+            SELECT id, name, phone, role, profile_photo, COALESCE(display_order, 0) as display_order,
+                   instagram_url, COALESCE(calendar_aliases, '{}'::text[])
             FROM artists
             ORDER BY display_order ASC, name
         """)
@@ -3913,6 +3916,7 @@ def get_staff_list():
                 'profile_photo': row[4],
                 'display_order': row[5],
                 'instagram_url': row[6] or '',
+                'calendar_aliases': list(row[7] or []),
             })
         
         return jsonify({'success': True, 'staff': staff_list})
@@ -4004,12 +4008,13 @@ def add_staff():
         
         # Şifreyi hashle
         hashed_password = hash_password_bcrypt(password)
+        aliases = parse_calendar_aliases(data.get('calendar_aliases'))
         
         cursor.execute("""
-            INSERT INTO artists (name, phone, password, role, profile_photo, instagram_url)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO artists (name, phone, password, role, profile_photo, instagram_url, calendar_aliases)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (name, phone, hashed_password, role, profile_photo, instagram_url))
+        """, (name, phone, hashed_password, role, profile_photo, instagram_url, aliases))
         
         new_id = cursor.fetchone()[0]
         conn.commit()
@@ -4050,7 +4055,13 @@ def update_staff(staff_id):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT role FROM artists WHERE id = %s", (staff_id,))
+        cursor.execute(
+            """
+            SELECT role, name, COALESCE(calendar_aliases, '{}'::text[])
+              FROM artists WHERE id = %s
+            """,
+            (staff_id,),
+        )
         existing = cursor.fetchone()
         if not existing:
             cursor.close()
@@ -4059,6 +4070,8 @@ def update_staff(staff_id):
         if role_err:
             cursor.close()
             return role_err
+        current_name = existing[1] or ''
+        current_aliases = list(existing[2] or [])
         
         # Dinamik güncelleme
         updates = []
@@ -4103,6 +4116,17 @@ def update_staff(staff_id):
                     return jsonify({'success': False, 'message': 'Geçerli bir Instagram kullanıcı adı veya linki girin'}), 400
                 updates.append("instagram_url = %s")
                 params.append(normalized_ig)
+        aliases_update = None
+        if 'calendar_aliases' in data:
+            aliases_update = parse_calendar_aliases(data.get('calendar_aliases'))
+        if name and current_name.strip() and name.strip() != current_name.strip():
+            aliases_update = merge_calendar_aliases(
+                aliases_update if aliases_update is not None else current_aliases,
+                [current_name],
+            )
+        if aliases_update is not None:
+            updates.append("calendar_aliases = %s")
+            params.append(aliases_update)
         
         if not updates:
             return jsonify({'success': False, 'message': 'Güncellenecek alan yok'}), 400

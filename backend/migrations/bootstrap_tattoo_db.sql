@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS artists (
   profile_photo  TEXT,
   instagram_url  VARCHAR(255),
   display_order  INTEGER DEFAULT 0,
+  calendar_aliases TEXT[] NOT NULL DEFAULT '{}',
   created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

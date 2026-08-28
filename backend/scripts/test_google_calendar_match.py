@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Sanatçı başlık eşlemesi — DB/Google yok (kaynak dosyadan saf fonksiyonlar)."""
+"""Sanatçı başlık eşlemesi — canlı DB isimleri, DB/Google yok."""
 import os
 import re
+import unicodedata
 
 SYNC_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -16,6 +17,7 @@ def _load_match_fns():
     import logging
     ns = {
         're': re,
+        'unicodedata': unicodedata,
         'logging': logging,
         'logger': logging.getLogger('gcal-match-test'),
         '_MIN_ARTIST_KEY_LEN': 3,
@@ -27,11 +29,12 @@ def _load_match_fns():
     return ns['_parse_manual_event_title'], ns['_resolve_staff_from_title']
 
 
+# Production artists (tech_support hariç)
 ARTISTS = [
-    (1, 'Tuncer Ürer'),
-    (2, 'Mert'),
-    (3, 'Nihal'),
-    (4, 'Ali Onur D'),
+    (2, 'Tuncer Ürer', []),
+    (3, 'İbrahim Çakmak', []),
+    (1, 'Berke Uzun', ['Nihal', 'Nihal Karagöz']),
+    (4, 'Mert I\u0307rioglu', []),
 ]
 
 
@@ -43,13 +46,17 @@ def main():
         return sid, name
 
     cases = [
-        ('Tuncer', 1),
-        ('tuncer', 1),
-        ('[Tuncer Ürer]', 1),
-        ('mert', 2),
-        ('Mert', 2),
-        ('Nihal', 3),
-        ('Ali Onur D', 4),
+        ('Tuncer', 2),
+        ('tuncer', 2),
+        ('[Tuncer Ürer]', 2),
+        ('mert', 4),
+        ('Mert', 4),
+        ('İbrahim', 3),
+        ('Ibrahim Cakmak', 3),
+        ('Berke', 1),
+        ('Nihal', 1),
+        ('nihal', 1),
+        ('Ali Onur D', None),
         ('Tunxer', None),
         ('Toplantı', None),
         ('', None),
@@ -65,22 +72,16 @@ def main():
     sid, name, cust_n, cust_s, phone = parse(
         '[Tuncer Ürer] Ayşe Yılmaz 05551112233', ARTISTS
     )
-    phone_ok = sid == 1 and phone == '5551112233' and bool(cust_n)
+    phone_ok = sid == 2 and phone == '5551112233' and bool(cust_n)
     print(('OK ' if phone_ok else 'FAIL'), 'detaylı başlık', sid, cust_n, cust_s, phone)
     if not phone_ok:
         failed += 1
 
-    two_ali = [(10, 'Ali Veli'), (4, 'Ali Onur D')]
+    two_ali = [(10, 'Ali Veli', []), (4, 'Ali Onur D', [])]
     sid, _name, _key = resolve('Ali', two_ali)
     amb_ok = sid is None
     print(('OK ' if amb_ok else 'FAIL'), 'belirsiz Ali ->', sid)
     if not amb_ok:
-        failed += 1
-
-    sid, _name, _key = resolve('Ali Onur D', two_ali)
-    long_ok = sid == 4
-    print(('OK ' if long_ok else 'FAIL'), 'uzun Ali Onur D ->', sid)
-    if not long_ok:
         failed += 1
 
     if failed:

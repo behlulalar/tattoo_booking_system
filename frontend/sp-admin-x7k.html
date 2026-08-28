@@ -9,7 +9,7 @@
     <link rel="icon" type="image/png" href="img/logo.png" />
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20260828165000" />
+    <link rel="stylesheet" href="admin.css?v=20260828171000" />
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
@@ -1002,6 +1002,11 @@
                         <input type="text" id="staff-name" placeholder="Örn: Ahmet Yılmaz" required>
                     </div>
                     <div class="form-group">
+                        <label for="staff-calendar-aliases">Takvim adı</label>
+                        <input type="text" id="staff-calendar-aliases" placeholder="Takvimde yazılan kısa ad, virgülle. Örn: Nihal" autocomplete="off">
+                        <small style="display:block;margin-top:6px;color:var(--text-muted);font-size:0.8rem;">Google takviminde personel adı farklı yazılıyorsa buraya ekleyin. Ad değişince eski isim otomatik kalır.</small>
+                    </div>
+                    <div class="form-group">
                         <label for="staff-phone">Telefon Numarası</label>
                         <input type="tel" id="staff-phone" placeholder="5XX XXX XX XX" maxlength="10" required>
                     </div>
@@ -1415,7 +1420,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260828165000"></script>
+    <script src="admin.js?v=20260828171000"></script>
 </body>
 
 </html>
