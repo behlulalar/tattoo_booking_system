@@ -4236,15 +4236,17 @@ def get_working_hours():
 @app.route('/api/admin/working-hours', methods=['PUT'])
 @token_required
 def update_working_hours():
-    """Çalışma saatlerini güncelle — yalnızca super_admin"""
-    if not is_studio_admin():
+    """Saatlerim: yalnız giriş yapan super_admin'in kendi koltuğu.
+    Diğer personel saatleri PUT /staff/<id>/working-hours ile ayarlanır.
+    """
+    if not can_access_income():
         return jsonify({
             'success': False,
             'message': 'Çalışma saatlerini düzenleme yetkiniz yok',
         }), 403
 
     data = request.get_json() or {}
-    staff_id = data.get('staff_id', request.staff_id)
+    staff_id = int(request.staff_id)
     working_hours = data.get('working_hours', [])
     
     conn = None
