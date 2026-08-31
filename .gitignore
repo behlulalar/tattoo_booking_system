@@ -19,6 +19,7 @@ backend/credentials/google-calendar.json
 backend/wapio_settings.json
 backend/evolution_settings.json
 backend/google_calendar_settings.json
+backend/message_settings.json
 
 ### Logs / runtime artifacts
 *.log

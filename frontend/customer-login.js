@@ -27,6 +27,31 @@ async function api(path, options = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
+function parseTrMobile(value) {
+  let d = String(value || '').replace(/\D/g, '');
+  if (d.startsWith('90')) d = d.slice(2);
+  if (d.startsWith('0')) d = d.replace(/^0+/, '');
+  return /^5\d{9}$/.test(d) ? d : '';
+}
+
+function bindTrMobileInput(el) {
+  if (!el || el.dataset.trMobileBound === '1') return;
+  el.dataset.trMobileBound = '1';
+  el.setAttribute('inputmode', 'numeric');
+  el.setAttribute('maxlength', '10');
+  el.addEventListener('input', () => {
+    const parsed = parseTrMobile(el.value);
+    if (parsed) {
+      el.value = parsed;
+      return;
+    }
+    let d = String(el.value || '').replace(/\D/g, '');
+    if (d.startsWith('90')) d = d.slice(2);
+    if (d.startsWith('0')) d = d.replace(/^0+/, '');
+    el.value = d.slice(0, 10);
+  });
+}
+
 function showErr(el, msg) {
   if (!el) return;
   el.textContent = msg;
@@ -141,15 +166,18 @@ function showErr(el, msg) {
 
   verifyBackBtn?.addEventListener('click', showLoginStep);
 
+  bindTrMobileInput(loginPhone);
+
   loginPhone?.addEventListener('focus', () => setTimeout(() => scrollActionIntoView(loginForm), 280));
 
   loginForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const value = (loginPhone?.value || '').trim();
-    if (!/^[0-9]{10}$/.test(value)) {
-      showErr(loginError, 'Lütfen geçerli bir telefon numarası girin.');
+    const value = parseTrMobile(loginPhone?.value);
+    if (!value) {
+      showErr(loginError, 'Geçerli bir cep numarası girin (5XX XXX XX XX). Başında 0 olmasın.');
       return;
     }
+    if (loginPhone) loginPhone.value = value;
     showErr(loginError, '');
     const { ok, data } = await api('/api/send-code', {
       method: 'POST',

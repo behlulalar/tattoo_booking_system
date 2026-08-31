@@ -2815,38 +2815,6 @@ body.success-modal-open .page-footer {
     max-width: none;
 }
 
-.private-zone-notice {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    margin-top: 12px;
-    padding: 12px 14px;
-    border-radius: 10px;
-    background: rgba(201, 162, 39, 0.1);
-    border: 1px solid rgba(201, 162, 39, 0.28);
-    color: rgba(255, 255, 255, 0.88);
-    font-size: 12px;
-    line-height: 1.45;
-}
-
-.private-zone-notice i {
-    color: var(--gold-hover);
-    margin-top: 2px;
-    flex-shrink: 0;
-}
-
-.private-zone-notice strong {
-    display: block;
-    margin-bottom: 4px;
-    font-size: 12px;
-    color: var(--gold-hover);
-}
-
-.private-zone-notice p {
-    margin: 0;
-    color: rgba(255, 255, 255, 0.72);
-}
-
 .config-size-panel {
     margin-top: 4px;
     padding-top: 12px;

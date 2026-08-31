@@ -255,37 +255,6 @@
       display: none;
     }
 
-    .private-zone-banner {
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      margin-bottom: 14px;
-      padding: 12px 14px;
-      border-radius: 10px;
-      background: rgba(201, 162, 39, 0.12);
-      border: 1px solid rgba(201, 162, 39, 0.28);
-      color: rgba(255, 255, 255, 0.88);
-      font-size: 0.8rem;
-      line-height: 1.4;
-    }
-
-    .private-zone-banner i {
-      color: #c9a227;
-      margin-top: 2px;
-      flex-shrink: 0;
-    }
-
-    .private-zone-banner strong {
-      display: block;
-      margin-bottom: 4px;
-      color: #e8c96a;
-    }
-
-    .private-zone-banner p {
-      margin: 0;
-      color: rgba(255, 255, 255, 0.72);
-    }
-
     /* Loading / Success states */
     #loading-state { text-align: center; padding: 48px 0; }
     #loading-state .spinner {
@@ -397,13 +366,6 @@
       <!-- Date + slot selection -->
       <div class="card">
         <h2><i class="fas fa-calendar-alt"></i> Tarih & Saat Seçin</h2>
-        <div id="private-zone-banner" class="private-zone-banner" style="display:none;">
-          <i class="fas fa-shield-alt"></i>
-          <div>
-            <strong>Mahremiyetinize önem veriyoruz</strong>
-            <p id="private-zone-banner-text"></p>
-          </div>
-        </div>
         <div class="date-row">
           <label for="date-select">Tarih</label>
           <select id="date-select"></select>
@@ -427,7 +389,7 @@
 
   </div>
 
-  <script src="slot-select.js?v=20260818174500"></script>
+  <script src="slot-select.js?v=20260828195000"></script>
 
   <footer class="slot-page-footer">
     <p style="margin:0; font-size:0.8rem; color:rgba(150,150,150,0.5); font-family:'Montserrat',sans-serif;">

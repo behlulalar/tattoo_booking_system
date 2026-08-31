@@ -21,6 +21,15 @@ server {
     root /opt/roof_tattoo/frontend;
     index index.html;
 
+    location = /admin.webmanifest {
+        default_type application/manifest+json;
+        add_header Cache-Control "no-cache";
+    }
+
+    location = /admin-sw.js {
+        add_header Cache-Control "no-cache";
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

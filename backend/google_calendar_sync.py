@@ -11,7 +11,9 @@ import json
 import os
 import random
 import re
+import socket
 import threading
+import time
 import unicodedata
 from datetime import date, datetime, timedelta, time as dt_time
 
@@ -31,7 +33,7 @@ _thread_local = threading.local()
 
 # Google API cagrilarinda timeout yoksa askida kalan baglanti gunicorn
 # thread'ini timeout suresi kadar tutar.
-GCAL_HTTP_TIMEOUT = int(os.getenv('GOOGLE_CALENDAR_HTTP_TIMEOUT', '30'))
+GCAL_HTTP_TIMEOUT = int(os.getenv('GOOGLE_CALENDAR_HTTP_TIMEOUT', '45'))
 
 # Kuyruk isi kac denemeden sonra birakilir + denemeler arasi bekleme
 GCAL_MAX_ATTEMPTS = int(os.getenv('GOOGLE_CALENDAR_MAX_ATTEMPTS', '6'))
@@ -78,10 +80,10 @@ GCAL_COLOR_NAMES = {
 
 
 def _color_id_for_staff(staff_id):
-    """Her sanatçıya Google Calendar colorId (1-11) — sabit eşleme."""
+    """Her sanatçıya Google Calendar colorId (1-11) — sabit, birbirinden ayrı."""
     if not staff_id:
         return '8'
-    return GCAL_STAFF_COLOR_IDS[int(staff_id) % len(GCAL_STAFF_COLOR_IDS)]
+    return GCAL_STAFF_COLOR_IDS[(max(int(staff_id), 1) - 1) % len(GCAL_STAFF_COLOR_IDS)]
 
 
 def _staff_color_label(staff_id):
@@ -194,6 +196,18 @@ def credentials_file_ok():
     return bool(cred_path and os.path.isfile(cred_path))
 
 
+def google_api_reachable(timeout=2.5):
+    """Sunucunun Google OAuth uç noktasına TCP ile çıkıp çıkamadığı.
+
+    Tam Calendar API çağrısı yapmaz; admin ayar sayfasını 45 sn askiya almaz.
+    """
+    try:
+        socket.create_connection(('oauth2.googleapis.com', 443), timeout=timeout)
+        return True
+    except OSError:
+        return False
+
+
 def _service_fingerprint(cfg):
     """Kimlik dosyasi degisince cache'lenmis servisi tazelemek icin."""
     path = cfg.get('credentials_path') or ''
@@ -243,6 +257,24 @@ def reset_calendar_service():
     """Ayarlar degistiginde cache'lenmis servisi dusur (bu thread icin)."""
     _thread_local.service = None
     _thread_local.fingerprint = None
+
+
+def _google_execute(make_request):
+    """Timeout olursa servisi yenileyip tekrar dener."""
+    last = None
+    for attempt in range(3):
+        try:
+            return make_request().execute()
+        except (TimeoutError, OSError) as exc:
+            last = exc
+            logger.warning(
+                'Google API zaman asimi deneme %s/3: %s',
+                attempt + 1,
+                str(exc).strip()[:160],
+            )
+            reset_calendar_service()
+            time.sleep(1.5 * (attempt + 1))
+    raise last
 
 
 def _http_status(exc):
@@ -413,6 +445,68 @@ def _split_person_name(full_name):
     return parts[0][:80], ' '.join(parts[1:])[:80]
 
 
+_GCAL_PLACEHOLDER_FOLDED = frozenset({'google', 'takvim', 'google takvim'})
+
+
+def _customer_full_folded(name, surname):
+    return _fold_tr(' '.join(
+        p for p in ((name or '').strip(), (surname or '').strip()) if p
+    ))
+
+
+def _is_real_customer_phone(phone):
+    digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
+    if digits.startswith('90') and len(digits) > 10:
+        digits = digits[2:]
+    if digits.startswith('0'):
+        digits = digits.lstrip('0')
+    return len(digits) == 10 and digits.startswith('5')
+
+
+def _pick_unique_customer_row(rows):
+    if not rows:
+        return None
+    real = [row for row in rows if _is_real_customer_phone(row[1])]
+    pool = real if real else list(rows)
+    if len(pool) != 1:
+        return None
+    return pool[0]
+
+
+def _match_customer_from_rows(name, surname, rows):
+    """Kayıtlı müşteride tek ve net ad eşleşmesi; belirsizse None."""
+    needle = _customer_full_folded(name, surname)
+    compact = needle.replace(' ', '')
+    if not compact or compact in _GCAL_PLACEHOLDER_FOLDED or needle in _GCAL_PLACEHOLDER_FOLDED:
+        return None
+    if len(compact) < 3:
+        return None
+
+    usable = []
+    for row in rows or []:
+        if not row or len(row) < 4:
+            continue
+        full = _customer_full_folded(row[2], row[3])
+        if not full or full in _GCAL_PLACEHOLDER_FOLDED:
+            continue
+        usable.append(row)
+
+    exact = [row for row in usable if _customer_full_folded(row[2], row[3]) == needle]
+    picked = _pick_unique_customer_row(exact)
+    if picked:
+        return picked[0]
+
+    if (surname or '').strip():
+        return None
+
+    first = _fold_tr((name or '').strip())
+    if not first:
+        return None
+    first_hits = [row for row in usable if _fold_tr((row[2] or '').strip()) == first]
+    picked = _pick_unique_customer_row(first_hits)
+    return picked[0] if picked else None
+
+
 def _normalize_title_text(value):
     text = (value or '').replace('[', ' ').replace(']', ' ')
     text = re.sub(r'[·|:_/,]+', ' ', text)
@@ -552,6 +646,16 @@ def probe_google_calendar(calendar_id=None):
             'calendar_id': cal.get('id') or calendar_id,
             'summary': cal.get('summary') or calendar_id,
             'time_zone': cal.get('timeZone') or cfg.get('timezone'),
+        }
+    except (TimeoutError, OSError, socket.timeout) as e:
+        return {
+            'ok': False,
+            'network': True,
+            'message': (
+                'Sunucu Google sunucularına ulaşamıyor (ağ / güvenlik duvarı). '
+                'Kimlik dosyası duruyor; barındırıcıda 443 çıkışını kontrol edin.'
+            ),
+            'error': str(e)[:240],
         }
     except Exception as e:
         hint = email or 'servis hesabı e-postası'
@@ -1668,20 +1772,25 @@ def _list_events_window(service, calendar_id, time_min, time_max):
     events = []
     page_token = None
     while True:
-        resp = service.events().list(
-            calendarId=calendar_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            singleEvents=True,
-            showDeleted=False,
-            maxResults=250,
-            pageToken=page_token,
-            fields=(
-                'items(id,status,transparency,start,end,summary,'
-                'extendedProperties,description,recurringEventId),'
-                'nextPageToken'
-            ),
-        ).execute()
+        token = page_token
+
+        def _make_request(page=token):
+            return _get_calendar_service().events().list(
+                calendarId=calendar_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                showDeleted=False,
+                maxResults=250,
+                pageToken=page,
+                fields=(
+                    'items(id,status,transparency,start,end,summary,'
+                    'extendedProperties,description,recurringEventId),'
+                    'nextPageToken'
+                ),
+            )
+
+        resp = _google_execute(_make_request)
         events.extend(resp.get('items') or [])
         page_token = resp.get('nextPageToken')
         if not page_token:
@@ -1879,8 +1988,43 @@ def _load_bookable_artists(cursor):
     return cursor.fetchall() or []
 
 
+def _match_customer_by_name(cursor, name, surname):
+    cursor.execute(
+        """
+        SELECT id, phone, name, surname
+          FROM customers
+         WHERE COALESCE(TRIM(name), '') <> ''
+        """
+    )
+    customer_id = _match_customer_from_rows(name, surname, cursor.fetchall() or [])
+    if customer_id:
+        logger.info(
+            'Google etkinligi kayitli musteriyle eslesti | customer_id=%s name=%s %s',
+            customer_id, name, surname,
+        )
+    return customer_id
+
+
 def _resolve_or_create_gcal_customer(cursor, name, surname, phone, event_id):
-    resolved_phone = phone or _synthetic_gcal_phone(event_id)
+    if phone:
+        cursor.execute(
+            """
+            INSERT INTO customers (phone, name, surname)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (phone) DO UPDATE
+               SET name = COALESCE(NULLIF(EXCLUDED.name, ''), customers.name),
+                   surname = COALESCE(NULLIF(EXCLUDED.surname, ''), customers.surname)
+            RETURNING id
+            """,
+            (phone, name, surname),
+        )
+        return cursor.fetchone()[0]
+
+    matched_id = _match_customer_by_name(cursor, name, surname)
+    if matched_id:
+        return matched_id
+
+    resolved_phone = _synthetic_gcal_phone(event_id)
     cursor.execute(
         """
         INSERT INTO customers (phone, name, surname)
@@ -1903,16 +2047,69 @@ def _stamp_origin_on_event(calendar_id, event_id, appointment_id, row_for_hash):
         content_hash = _content_hash(
             row_for_hash[0], row_for_hash[1], row_for_hash[2], 'confirmed', row_for_hash[3],
         )
+        staff_id = row_for_hash[3] if len(row_for_hash) > 3 else None
+        body = {'extendedProperties': _extended_properties(appointment_id, content_hash)}
+        if staff_id:
+            body['colorId'] = _color_id_for_staff(staff_id)
         service.events().patch(
             calendarId=calendar_id,
             eventId=event_id,
-            body={'extendedProperties': _extended_properties(appointment_id, content_hash)},
+            body=body,
         ).execute()
     except Exception as exc:
         logger.warning(
             'Google etkinligine origin yazilamadi | event=%s apt=%s hata=%s',
             event_id, appointment_id, str(exc)[:160],
         )
+
+
+def refresh_google_event_colors(limit=400):
+    """Mevcut etkinliklerin colorId'sini sanatçıya göre günceller; başlığı değiştirmez."""
+    if not is_google_calendar_enabled():
+        return {'ok': False, 'reason': 'disabled'}
+    calendar_id = get_google_calendar_config()['calendar_id']
+    conn = None
+    updated = 0
+    failed = 0
+    try:
+        conn = _connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT a.id, a.staff_id, a.google_event_id
+              FROM appointments a
+             WHERE a.google_event_id IS NOT NULL
+               AND a.status IS DISTINCT FROM 'cancelled'
+             ORDER BY a.appointment_date DESC, a.id DESC
+             LIMIT %s
+            """,
+            (int(limit),),
+        )
+        rows = cursor.fetchall() or []
+        cursor.close()
+        service = _get_calendar_service()
+        for apt_id, staff_id, event_id in rows:
+            try:
+                service.events().patch(
+                    calendarId=calendar_id,
+                    eventId=event_id,
+                    body={'colorId': _color_id_for_staff(staff_id)},
+                ).execute()
+                updated += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    'Google renk guncellenemedi | apt=%s event=%s hata=%s',
+                    apt_id, event_id, str(exc)[:160],
+                )
+        logger.info('Google etkinlik renkleri guncellendi | ok=%s fail=%s', updated, failed)
+        return {'ok': True, 'updated': updated, 'failed': failed, 'total': len(rows)}
+    except Exception as e:
+        log_error(logger, E_GCAL_001, 'Google etkinlik renkleri guncellenemedi', exc=e)
+        return {'ok': False, 'updated': updated, 'failed': failed, 'error': str(e)[:200]}
+    finally:
+        if conn:
+            conn.close()
 
 
 def _import_manual_google_event(cursor, event, calendar_id):
@@ -1993,8 +2190,8 @@ def _import_manual_google_event(cursor, event, calendar_id):
         (local_date, local_time, duration_minutes, staff_id),
     )
     logger.info(
-        'Google manuel etkinlik randevu oldu (WhatsApp yok) apt #%s event=%s staff=%s',
-        appointment_id, event_id, staff_id,
+        'Google manuel etkinlik randevu oldu (WhatsApp yok) apt #%s event=%s staff=%s customer=%s',
+        appointment_id, event_id, staff_id, customer_id,
     )
     return 'imported'
 
@@ -2133,7 +2330,7 @@ def poll_inbound_changes():
                     now = datetime.now(tz) if tz else datetime.utcnow()
                     kwargs['timeMin'] = (now - timedelta(days=_BUSY_LOOKBACK_DAYS)).isoformat()
                     kwargs['timeMax'] = (now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)).isoformat()
-                resp = service.events().list(**kwargs).execute()
+                resp = _google_execute(lambda kw=kwargs: _get_calendar_service().events().list(**kw))
                 items.extend(resp.get('items') or [])
                 page_token = resp.get('nextPageToken')
                 next_token = resp.get('nextSyncToken') or next_token

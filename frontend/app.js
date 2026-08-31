@@ -183,17 +183,17 @@ const TATTOO_SIZES = [
 const TATTOO_REGIONS_FALLBACK = [
   { id: 'head', label: 'Baş / ense' },
   { id: 'neck', label: 'Boyun' },
-  { id: 'chest', label: 'Göğüs', private: true },
-  { id: 'ribs', label: 'Kaburga', private: true },
-  { id: 'stomach', label: 'Karın', private: true },
+  { id: 'chest', label: 'Göğüs' },
+  { id: 'ribs', label: 'Kaburga' },
+  { id: 'stomach', label: 'Karın' },
   { id: 'back_upper', label: 'Üst sırt' },
-  { id: 'back_lower', label: 'Alt sırt / bel', private: true },
+  { id: 'back_lower', label: 'Alt sırt / bel' },
   { id: 'shoulder', label: 'Omuz' },
   { id: 'upper_arm', label: 'Üst kol' },
   { id: 'forearm', label: 'Ön kol' },
   { id: 'wrist', label: 'Bilek' },
   { id: 'hand', label: 'El / parmak' },
-  { id: 'thigh', label: 'Uyluk', private: true },
+  { id: 'thigh', label: 'Uyluk' },
   { id: 'knee', label: 'Diz' },
   { id: 'calf', label: 'Baldır' },
   { id: 'ankle', label: 'Ayak bileği' },
@@ -209,10 +209,6 @@ async function loadTattooConfigMeta() {
     return tattooConfigMeta;
   }
   tattooConfigMeta = {
-    private_zone: {
-      enabled: true,
-      schedule_summary: 'Salı 14:00-18:00, Perşembe 14:00-18:00',
-    },
     regions: TATTOO_REGIONS_FALLBACK.map((r) => ({ ...r })),
   };
   return tattooConfigMeta;
@@ -252,23 +248,6 @@ function buildSizeButtons() {
   });
 }
 
-function updatePrivateZoneNotice() {
-  const noticeEl = document.getElementById('private-zone-notice');
-  const textEl = document.getElementById('private-zone-notice-text');
-  if (!noticeEl || !textEl) return;
-  const region = getRegionMeta(savedBodyRegion);
-  const pz = tattooConfigMeta?.private_zone;
-  if (region?.private && pz?.enabled !== false && pz?.schedule_summary) {
-    textEl.textContent =
-      `Bu bölge için randevular yalnızca ${pz.schedule_summary} saatlerinde alınabilir. ` +
-      'Mahremiyetiniz için diğer gün ve saatlerde randevu oluşturulamaz.';
-    noticeEl.style.display = 'flex';
-  } else {
-    noticeEl.style.display = 'none';
-    textEl.textContent = '';
-  }
-}
-
 function syncConfigSelectionUI() {
   document.querySelectorAll('.region-btn').forEach((b) => {
     b.classList.toggle('selected', b.dataset.regionId === savedBodyRegion);
@@ -276,7 +255,6 @@ function syncConfigSelectionUI() {
   document.querySelectorAll('.size-btn').forEach((b) => {
     b.classList.toggle('selected', b.dataset.sizeId === savedConfigSizeId);
   });
-  updatePrivateZoneNotice();
   if (configSizePanel) configSizePanel.style.display = 'block';
   updateConfigContinueState();
   refreshTattooScrollHints();
@@ -411,8 +389,33 @@ async function initTattooConfigStep() {
   refreshTattooScrollHints();
 }
 
+function parseTrMobile(value) {
+  let d = String(value || '').replace(/\D/g, '');
+  if (d.startsWith('90')) d = d.slice(2);
+  if (d.startsWith('0')) d = d.replace(/^0+/, '');
+  return /^5\d{9}$/.test(d) ? d : '';
+}
+
 function isValidPhone(value) {
-  return /^[0-9]{10}$/.test(value);
+  return !!parseTrMobile(value);
+}
+
+function bindTrMobileInput(el) {
+  if (!el || el.dataset.trMobileBound === '1') return;
+  el.dataset.trMobileBound = '1';
+  el.setAttribute('inputmode', 'numeric');
+  el.setAttribute('maxlength', '10');
+  el.addEventListener('input', () => {
+    const parsed = parseTrMobile(el.value);
+    if (parsed) {
+      el.value = parsed;
+      return;
+    }
+    let d = String(el.value || '').replace(/\D/g, '');
+    if (d.startsWith('90')) d = d.slice(2);
+    if (d.startsWith('0')) d = d.replace(/^0+/, '');
+    el.value = d.slice(0, 10);
+  });
 }
 
 function showInlineError(el, message) {
@@ -526,7 +529,6 @@ function buildTattooRequestWhatsAppMessage(ref, summary = {}) {
 
   const lines = ['Merhaba,', '', 'Dövme talebi oluşturdum.', ''];
   appendRefAndArtist(lines, ref, artistName);
-  if (summary.styleLabel) lines.push(`Tarz: ${summary.styleLabel}`);
   if (summary.regionLabel) lines.push(`Bölge: ${summary.regionLabel}`);
   if (summary.size) lines.push(`Boyut: ${summary.size}`);
   lines.push(
@@ -665,6 +667,8 @@ async function api(path, options = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
+bindTrMobileInput(phoneInput);
+
 phoneInput?.addEventListener('focus', () => {
   setTimeout(() => {
     phoneForm?.querySelector('.primary-btn')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -677,12 +681,16 @@ phoneCheckBtn?.addEventListener('click', () => {
 
 phoneForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const value = (phoneInput.value || '').trim();
+  const value = parseTrMobile(phoneInput.value);
 
-  if (!isValidPhone(value)) {
-    showInlineError(document.getElementById('phone-form-error'), 'Lütfen geçerli bir telefon numarası girin.');
+  if (!value) {
+    showInlineError(
+      document.getElementById('phone-form-error'),
+      'Geçerli bir cep numarası girin (5XX XXX XX XX). Başında 0 olmasın.',
+    );
     return;
   }
+  if (phoneInput) phoneInput.value = value;
 
   showInlineError(document.getElementById('phone-form-error'), '');
 
@@ -1003,7 +1011,6 @@ function getTattooWhatsAppContext(extra = {}) {
   return {
     artistPhone: savedArtistPhone,
     summary: {
-      styleLabel: extra.styleLabel || '',
       regionLabel: region?.label || extra.regionLabel || '',
       size: savedConfigSize || extra.size || '',
       undecided: !!extra.undecided,
@@ -1090,7 +1097,6 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
     undecided,
     preConsultation,
     regionLabel: payload.body_area,
-    styleLabel: preConsultation ? 'Ön görüşme' : undecided ? 'Henüz belirlenmedi' : '',
   });
 
   try {

@@ -26,7 +26,7 @@ def _load_match_fns():
         '_UNMATCHED_LOG_CAP': 400,
     }
     exec(src[start:end], ns)
-    return ns['_parse_manual_event_title'], ns['_resolve_staff_from_title']
+    return ns['_parse_manual_event_title'], ns['_resolve_staff_from_title'], ns['_match_customer_from_rows']
 
 
 # Production artists (tech_support hariç)
@@ -39,7 +39,7 @@ ARTISTS = [
 
 
 def main():
-    parse, resolve = _load_match_fns()
+    parse, resolve, match_customer = _load_match_fns()
 
     def staff(title):
         sid, name, *_rest = parse(title, ARTISTS)
@@ -81,6 +81,48 @@ def main():
     amb_ok = sid is None
     print(('OK ' if amb_ok else 'FAIL'), 'belirsiz Ali ->', sid)
     if not amb_ok:
+        failed += 1
+
+    customers = [
+        (1, '5306820554', 'Ayşe', 'Yılmaz'),
+        (2, '5301112233', 'Mehmet', 'Demir'),
+        (3, '1111111111', 'Google', 'Takvim'),
+    ]
+    cust_cases = [
+        (('Ayşe', 'Yılmaz'), 1),
+        (('ayse', 'yilmaz'), 1),
+        (('Ayşe', ''), 1),
+        (('Mehmet', 'Yılmaz'), None),
+        (('Google', 'Takvim'), None),
+        (('', ''), None),
+    ]
+    for (n, s), expected in cust_cases:
+        got = match_customer(n, s, customers)
+        ok = got == expected
+        print(('OK ' if ok else 'FAIL'), 'musteri', repr(n), repr(s), '->', got)
+        if not ok:
+            failed += 1
+
+    two_ayse = customers + [(4, '5309998877', 'Ayşe', 'Kaya')]
+    got = match_customer('Ayşe', '', two_ayse)
+    ok = got is None
+    print(('OK ' if ok else 'FAIL'), 'belirsiz Ayşe ->', got)
+    if not ok:
+        failed += 1
+    got = match_customer('Ayşe', 'Yılmaz', two_ayse)
+    ok = got == 1
+    print(('OK ' if ok else 'FAIL'), 'Ayşe Yılmaz iki Ayşe arasında ->', got)
+    if not ok:
+        failed += 1
+
+    dup_full = [
+        (8, '1000000000', 'Ayşe', 'Yılmaz'),
+        (9, '5306820554', 'Ayşe', 'Yılmaz'),
+    ]
+    got = match_customer('Ayşe', 'Yılmaz', dup_full)
+    ok = got == 9
+    print(('OK ' if ok else 'FAIL'), 'gercek telefon tercih ->', got)
+    if not ok:
         failed += 1
 
     if failed:

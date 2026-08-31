@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import os
 from urllib.parse import urlparse
 
 from config import SITE_CONFIG, get_evolution_config
+
+MESSAGE_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'message_settings.json')
+WELCOME_MESSAGE_MAX_LEN = 4000
+
+WELCOME_PLACEHOLDERS = (
+    '{business_name}',
+    '{randevu_url}',
+    '{phone}',
+    '{address}',
+    '{hours}',
+)
 
 
 def _biz() -> dict:
@@ -41,24 +53,18 @@ def _truncate_text(text: str, max_len: int = 240) -> str:
 
 def _tattoo_detail_lines(
     *,
-    style_label: str | None = None,
     body_area: str | None = None,
     size: str | None = None,
     description: str | None = None,
     reference_number: str | None = None,
-    private_zone: bool = False,
 ) -> list[str]:
     lines: list[str] = []
     if reference_number:
         lines.append(f'🔖 Referans: *{reference_number}*')
-    if style_label:
-        lines.append(f'🎨 Tarz: {style_label}')
     if body_area:
         lines.append(f'🖋️ Bölge: {body_area}')
     if size:
         lines.append(f'📏 Boyut: {size}')
-    if private_zone:
-        lines.append('🔒 Özel bölge randevusu')
     if description and str(description).strip():
         lines.append(f'📝 Not: {_truncate_text(description)}')
     return lines
@@ -90,29 +96,83 @@ def _contact_footer(b: dict) -> str:
     return footer
 
 
-def build_welcome_message() -> str:
-    """Webhook: müşteri ilk mesaj attığında otomatik karşılama."""
-    b = _biz()
-    link = b['url'] or 'Web sitemizden randevu alabilirsiniz.'
-    return f"""👋 *{b['name']}'ya Hoş Geldiniz!*
+def default_welcome_message_template() -> str:
+    return """👋 *{business_name}'ya Hoş Geldiniz!*
 
 Merhaba! Bize ulaştığınız için teşekkür ederiz.
 
 🖋️ *Online Dövme Randevusu:*
-{link}
+{randevu_url}
 
 📞 *Telefon:*
-{b['phone'] or 'WhatsApp üzerinden yazabilirsiniz.'}
+{phone}
 
 📍 *Adres:*
-{b['address'] or '—'}
+{address}
 
 ⏰ *Çalışma Saatlerimiz:*
-{b['hours']}
+{hours}
 
 _Randevu almak için yukarıdaki linke tıklayabilirsiniz._
 
-{b['name']} 🎨"""
+{business_name} 🎨"""
+
+
+def _placeholder_values() -> dict:
+    b = _biz()
+    return {
+        '{business_name}': b['name'] or 'Roof Tattoo Gallery',
+        '{randevu_url}': b['url'] or 'Web sitemizden randevu alabilirsiniz.',
+        '{phone}': b['phone'] or 'WhatsApp üzerinden yazabilirsiniz.',
+        '{address}': b['address'] or '—',
+        '{hours}': b['hours'] or '—',
+    }
+
+
+def welcome_placeholder_values() -> dict:
+    return dict(_placeholder_values())
+
+
+def render_welcome_message(template: str | None = None) -> str:
+    text = template if template is not None else get_welcome_message_template()
+    for key, value in _placeholder_values().items():
+        text = text.replace(key, str(value))
+    return text
+
+
+def get_message_settings() -> dict:
+    try:
+        if os.path.exists(MESSAGE_SETTINGS_FILE):
+            with open(MESSAGE_SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                stored = json.load(f)
+                if isinstance(stored, dict):
+                    return stored
+    except Exception:
+        pass
+    return {}
+
+
+def get_welcome_message_template() -> str:
+    raw = get_message_settings().get('welcome_message')
+    if isinstance(raw, str) and raw.strip():
+        return raw
+    return default_welcome_message_template()
+
+
+def save_welcome_message_template(text: str) -> str:
+    template = (text or '').replace('\r\n', '\n')
+    if len(template) > WELCOME_MESSAGE_MAX_LEN:
+        template = template[:WELCOME_MESSAGE_MAX_LEN]
+    settings = get_message_settings()
+    settings['welcome_message'] = template
+    with open(MESSAGE_SETTINGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(settings, f, indent=4, ensure_ascii=False)
+    return template
+
+
+def build_welcome_message() -> str:
+    """Webhook: müşteri ilk mesaj attığında otomatik karşılama."""
+    return render_welcome_message()
 
 
 def build_tattoo_request_received_message(
@@ -121,7 +181,6 @@ def build_tattoo_request_received_message(
     *,
     body_area: str | None = None,
     size: str | None = None,
-    style_label: str | None = None,
     pre_consultation: bool = False,
     config_undecided: bool = False,
     loyalty_attached: dict | None = None,
@@ -144,8 +203,6 @@ def build_tattoo_request_received_message(
 
     lines = [f'📋 *{title}*', '', f'🔖 Referans: *{reference_number}*', f'👤 Sanatçı: {staff_name}']
 
-    if style_label and not pre_consultation:
-        lines.append(f'🎨 Tarz: {style_label}')
     if body_area and not pre_consultation:
         lines.append(f'🖋️ Bölge: {body_area}')
     if size and not (pre_consultation or config_undecided):
@@ -174,12 +231,10 @@ def build_tattoo_request_staff_message(
     customer_name: str | None = None,
     body_area: str | None = None,
     size: str | None = None,
-    style_label: str | None = None,
     description: str | None = None,
     pre_consultation: bool = False,
     config_undecided: bool = False,
     loyalty_attached: dict | None = None,
-    private_zone: bool = False,
     has_reference_image: bool = False,
 ) -> str:
     """Sanatçıya: yeni dövme / ön görüşme talebi."""
@@ -196,11 +251,9 @@ def build_tattoo_request_staff_message(
     lines.extend(
         _tattoo_detail_lines(
             reference_number=reference_number,
-            style_label=style_label if not pre_consultation else 'Ön görüşme',
             body_area=body_area,
             size=size if not (pre_consultation or config_undecided) else None,
             description=description,
-            private_zone=private_zone,
         )
     )
 
@@ -234,10 +287,8 @@ def build_appointment_created_customer_message(
     *,
     customer_name: str | None = None,
     reference_number: str | None = None,
-    style_label: str | None = None,
     body_area: str | None = None,
     tattoo_size: str | None = None,
-    private_zone: bool = False,
 ) -> str:
     """Müşteriye: randevu oluşturuldu."""
     b = _biz()
@@ -249,10 +300,8 @@ def build_appointment_created_customer_message(
 
     tattoo_lines = _tattoo_detail_lines(
         reference_number=reference_number,
-        style_label=style_label,
         body_area=body_area,
         size=tattoo_size,
-        private_zone=private_zone,
     )
     if tattoo_lines:
         lines.extend(tattoo_lines)
@@ -289,11 +338,9 @@ def build_appointment_created_staff_message(
     manual: bool = False,
     *,
     reference_number: str | None = None,
-    style_label: str | None = None,
     body_area: str | None = None,
     tattoo_size: str | None = None,
     description: str | None = None,
-    private_zone: bool = False,
 ) -> str:
     """Sanatçıya: yeni randevu bildirimi."""
     b = _biz()
@@ -307,11 +354,9 @@ def build_appointment_created_staff_message(
     lines.extend(
         _tattoo_detail_lines(
             reference_number=reference_number,
-            style_label=style_label,
             body_area=body_area,
             size=tattoo_size,
             description=description,
-            private_zone=private_zone,
         )
     )
 
