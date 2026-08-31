@@ -22,7 +22,6 @@ Dövme stüdyoları için uçtan uca **talep → teklif → slot seçimi → ran
 - **Süre belirle & link gönder** — teklif + WhatsApp
 - Manuel randevu, mesai / izin günleri
 - Sanatçıya özel dövme tarzları ve fiyat tahmini
-- **Özel bölge** — hassas bölgeler için gün/saat kısıtı
 - Gelir raporu, manuel gelir/gider (super admin)
 - Personel yönetimi, site ayarları
 

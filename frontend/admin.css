@@ -5617,11 +5617,81 @@ input:checked+.slider:before {
     line-height: 1.45;
 }
 
-.manual-appointment-modal .form-row-2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-    margin-bottom: 14px;
+.manual-appt-phone-wrap,
+.manual-appt-name-wrap {
+    position: relative;
+}
+
+.manual-appt-name-wrap .manual-appt-suggest {
+    max-height: 260px;
+    z-index: 40;
+}
+
+.manual-appt-suggest {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 10px;
+    background: #1c1c1c;
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.manual-appt-suggest[hidden] {
+    display: none !important;
+}
+
+.manual-appt-suggest-item {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.manual-appt-suggest-item:hover,
+.manual-appt-suggest-item:focus {
+    background: rgba(243, 240, 234, 0.08);
+    outline: none;
+}
+
+.manual-appt-suggest-name {
+    font-size: 0.95rem;
+}
+
+.manual-appt-suggest-phone {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.manual-appt-customer-hint {
+    margin: 8px 0 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.manual-appt-customer-hint.is-found {
+    color: #c4a574;
+}
+
+.manual-appt-customer-hint.is-new {
+    color: var(--text-secondary);
 }
 
 .manual-appointment-modal .form-group > label:not(.manual-appt-notify) {
@@ -6302,4 +6372,127 @@ input:checked+.slider:before {
         padding: 14px;
         gap: 8px;
     }
+}
+
+/* =============================================
+   PWA / STANDALONE
+   ============================================= */
+
+.pwa-banner {
+    position: sticky;
+    top: 0;
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    padding-top: max(10px, env(safe-area-inset-top, 0px));
+    font-size: 0.88rem;
+    text-align: center;
+}
+
+.pwa-banner[hidden] {
+    display: none !important;
+}
+
+.pwa-banner--offline {
+    background: #5c3d12;
+    color: #f3e6d0;
+}
+
+.pwa-banner--update,
+.pwa-banner--install {
+    background: #1c1c1c;
+    color: #f3f0ea;
+    border-bottom: 1px solid #2d2d2d;
+}
+
+.pwa-banner button {
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.85rem;
+    background: #f3f0ea;
+    color: #101010;
+}
+
+.pwa-banner-dismiss {
+    background: transparent !important;
+    color: #f3f0ea !important;
+    font-size: 1.3rem !important;
+    padding: 4px 10px !important;
+    line-height: 1;
+}
+
+@media (display-mode: standalone) {
+    body {
+        min-height: 100dvh;
+    }
+
+    .hamburger-btn {
+        top: calc(env(safe-area-inset-top, 0px) + 12px);
+        left: max(15px, env(safe-area-inset-left, 0px));
+    }
+
+    #login-page .login-container {
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        height: 100dvh;
+    }
+
+    .main-content {
+        padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .modal-overlay {
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+}
+
+.message-settings-editor {
+    width: 100%;
+    min-height: 280px;
+    padding: 14px 16px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    font-family: var(--font-ui);
+    resize: vertical;
+}
+
+.message-settings-editor:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.message-settings-preview {
+    margin: 0;
+    padding: 14px 16px;
+    min-height: 140px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: rgba(243, 240, 234, 0.04);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    line-height: 1.55;
+    font-family: var(--font-ui);
+}
+
+#section-message-settings .gcal-help code {
+    display: inline-block;
+    margin: 2px 4px 2px 0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(243, 240, 234, 0.06);
+    font-size: 0.78rem;
 }

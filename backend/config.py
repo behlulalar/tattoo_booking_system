@@ -132,13 +132,6 @@ def get_site_settings():
     return {
         'banner_image': '',
         'logo_image': '',
-        'private_zone': {
-            'enabled': True,
-            'days': [
-                {'day_of_week': 2, 'start_time': '14:00', 'end_time': '18:00'},
-                {'day_of_week': 4, 'start_time': '14:00', 'end_time': '18:00'},
-            ],
-        },
     }
 
 def save_site_settings(settings):

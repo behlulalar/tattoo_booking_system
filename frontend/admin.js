@@ -36,6 +36,12 @@ const ADMIN_STAFF_KEY = 'adminStaff';
 const ADMIN_REMEMBER_KEY = 'adminRememberMe';
 const ADMIN_REMEMBER_PHONE_KEY = 'adminRememberPhone';
 const ADMIN_SESSION_ACTIVE_KEY = 'adminSessionActive';
+const PWA_INSTALL_DISMISS_KEY = 'adminPwaInstallDismissed';
+
+function isAdminStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches
+    || window.navigator.standalone === true;
+}
 
 function getAdminToken() {
   return localStorage.getItem(ADMIN_TOKEN_KEY) || sessionStorage.getItem(ADMIN_TOKEN_KEY) || '';
@@ -132,7 +138,7 @@ function syncRememberCheckboxUI() {
 }
 
 function initRememberMeForm() {
-  const remember = isAdminRememberMe();
+  const remember = isAdminRememberMe() || (isAdminStandalone() && !getAdminToken());
   const phone = localStorage.getItem(ADMIN_REMEMBER_PHONE_KEY) || '';
   if ($('login-remember-me')) $('login-remember-me').checked = remember;
   if ($('login-phone') && phone) $('login-phone').value = phone;
@@ -396,8 +402,33 @@ function roleLabel(role) {
   return 'Personel Sanatçı';
 }
 
+function parseTrMobile(value) {
+  let d = String(value || '').replace(/\D/g, '');
+  if (d.startsWith('90')) d = d.slice(2);
+  if (d.startsWith('0')) d = d.replace(/^0+/, '');
+  return /^5\d{9}$/.test(d) ? d : '';
+}
+
 function normalizePhone10(phone) {
-  return String(phone || '').replace(/\D/g, '').slice(-10);
+  return parseTrMobile(phone);
+}
+
+function bindTrMobileInput(el) {
+  if (!el || el.dataset.trMobileBound === '1') return;
+  el.dataset.trMobileBound = '1';
+  el.setAttribute('inputmode', 'numeric');
+  el.setAttribute('maxlength', '10');
+  el.addEventListener('input', () => {
+    const parsed = parseTrMobile(el.value);
+    if (parsed) {
+      el.value = parsed;
+      return;
+    }
+    let d = String(el.value || '').replace(/\D/g, '');
+    if (d.startsWith('90')) d = d.slice(2);
+    if (d.startsWith('0')) d = d.replace(/^0+/, '');
+    el.value = d.slice(0, 10);
+  });
 }
 
 function updateSidebarStaffInfo(partial) {
@@ -607,6 +638,11 @@ function stopInactivityWatcher() {
 // API CALL
 // =============================================
 async function apiCall(endpoint, options = {}) {
+  if (!navigator.onLine) {
+    showToast('İnternet yok — bu işlem çevrimiçi gerekir', 'error');
+    return { ok: false, status: 0, data: { success: false, message: 'offline' } };
+  }
+
   const token = getAdminToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -614,7 +650,13 @@ async function apiCall(endpoint, options = {}) {
     ...(options.headers || {}),
   };
 
-  const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
+  } catch {
+    showToast('Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.', 'error');
+    return { ok: false, status: 0, data: { success: false, message: 'network' } };
+  }
   const data = await res.json().catch(() => ({}));
 
   // 401 gelirse token geçersiz/süresi dolmuş — login ekranına at
@@ -1039,6 +1081,7 @@ function openManualAppointmentModal() {
   overlay.style.display = 'flex';
   document.documentElement.classList.add('manual-appt-modal-open');
   document.body.classList.add('manual-appt-modal-open');
+  resetManualApptCustomerSuggest();
   initManualApptDatePicker();
   if (manualApptDatePicker) {
     manualApptDatePicker.setDate(localIsoDate(), false);
@@ -1054,6 +1097,165 @@ function closeManualAppointmentModal() {
   if (overlay) overlay.style.display = 'none';
   document.documentElement.classList.remove('manual-appt-modal-open');
   document.body.classList.remove('manual-appt-modal-open');
+  resetManualApptCustomerSuggest();
+}
+
+let _manualApptLookupTimer = null;
+let _manualApptLookupSeq = 0;
+let _manualApptFilledFromSuggest = null;
+
+function resetManualApptCustomerSuggest() {
+  clearTimeout(_manualApptLookupTimer);
+  _manualApptFilledFromSuggest = null;
+  const box = $('manual-appt-customer-suggest');
+  const hint = $('manual-appt-customer-hint');
+  if (box) {
+    box.hidden = true;
+    box.innerHTML = '';
+  }
+  if (hint) {
+    hint.hidden = true;
+    hint.textContent = '';
+    hint.classList.remove('is-new', 'is-found');
+  }
+}
+
+function hideManualApptSuggestList() {
+  ['manual-appt-customer-suggest', 'manual-appt-name-suggest'].forEach((id) => {
+    const box = $(id);
+    if (box) {
+      box.hidden = true;
+      box.innerHTML = '';
+    }
+  });
+}
+
+function hideManualApptSuggestBox(boxId) {
+  const box = $(boxId);
+  if (box) {
+    box.hidden = true;
+    box.innerHTML = '';
+  }
+}
+
+function applyManualApptCustomer(customer) {
+  const phone = parseTrMobile(customer.phone)
+    || String(customer.phone || '').replace(/\D/g, '').slice(-10);
+  if ($('manual-appt-phone') && phone) $('manual-appt-phone').value = phone;
+  if ($('manual-appt-name')) $('manual-appt-name').value = formatPersonName(customer.name || '');
+  if ($('manual-appt-surname')) $('manual-appt-surname').value = formatPersonName(customer.surname || '');
+  _manualApptFilledFromSuggest = phone;
+  hideManualApptSuggestList();
+  const hint = $('manual-appt-customer-hint');
+  if (hint) {
+    const label = (customer.full_name || [customer.name, customer.surname].filter(Boolean).join(' ')).trim();
+    hint.hidden = false;
+    hint.classList.remove('is-new');
+    hint.classList.add('is-found');
+    hint.textContent = label
+      ? `Kayıtlı müşteri seçildi: ${label}`
+      : 'Kayıtlı numara — ad ve soyadı tamamlayın';
+  }
+  if (customer.name) $('manual-appt-duration')?.focus();
+  else $('manual-appt-name')?.focus();
+}
+
+function renderManualApptSuggestions(customers, boxId = 'manual-appt-customer-suggest') {
+  const box = $(boxId);
+  if (!box) return;
+  if (!customers.length) {
+    hideManualApptSuggestBox(boxId);
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = customers.map((c) => {
+    const name = escapeHtml((c.full_name || `${c.name || ''} ${c.surname || ''}`).trim() || 'Ad kayıtlı değil');
+    const phone = escapeHtml(formatPhoneDisplay(c.phone) || c.phone || '');
+    return `<button type="button" class="manual-appt-suggest-item" data-customer-id="${Number(c.id)}">
+      <span class="manual-appt-suggest-name">${name}</span>
+      <span class="manual-appt-suggest-phone">${phone}</span>
+    </button>`;
+  }).join('');
+  box.querySelectorAll('.manual-appt-suggest-item').forEach((btn, idx) => {
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', () => applyManualApptCustomer(customers[idx]));
+  });
+}
+
+async function lookupManualApptCustomers() {
+  const phoneEl = $('manual-appt-phone');
+  const hint = $('manual-appt-customer-hint');
+  const digits = parseTrMobile(phoneEl?.value) || String(phoneEl?.value || '').replace(/\D/g, '');
+  if (_manualApptFilledFromSuggest && digits !== _manualApptFilledFromSuggest) {
+    _manualApptFilledFromSuggest = null;
+    if ($('manual-appt-name')) $('manual-appt-name').value = '';
+    if ($('manual-appt-surname')) $('manual-appt-surname').value = '';
+  }
+  if (digits.length < 3) {
+    hideManualApptSuggestBox('manual-appt-customer-suggest');
+    if (hint) { hint.hidden = true; hint.textContent = ''; }
+    return;
+  }
+  const seq = ++_manualApptLookupSeq;
+  const { ok, data } = await apiCall(`/admin/customers/lookup?q=${encodeURIComponent(digits)}`, { method: 'GET' });
+  if (seq !== _manualApptLookupSeq) return;
+  if (!ok || !data.success) {
+    hideManualApptSuggestBox('manual-appt-customer-suggest');
+    return;
+  }
+  const customers = data.customers || [];
+  hideManualApptSuggestBox('manual-appt-name-suggest');
+  renderManualApptSuggestions(customers, 'manual-appt-customer-suggest');
+  if (!hint) return;
+  if (digits.length === 10 && !customers.length) {
+    hint.hidden = false;
+    hint.classList.remove('is-found');
+    hint.classList.add('is-new');
+    hint.textContent = 'Yeni müşteri — ad ve soyadı girin';
+  } else if (customers.length) {
+    hint.hidden = false;
+    hint.classList.remove('is-new');
+    hint.classList.add('is-found');
+    hint.textContent = 'Kayıtlı müşteri bulundu — seçmek için tıklayın';
+  } else {
+    hint.hidden = true;
+    hint.textContent = '';
+  }
+}
+
+function scheduleManualApptCustomerLookup() {
+  clearTimeout(_manualApptLookupTimer);
+  _manualApptLookupTimer = setTimeout(() => {
+    lookupManualApptCustomers().catch(() => {});
+  }, 220);
+}
+
+async function lookupManualApptCustomersByName(openList = false) {
+  const nameEl = $('manual-appt-name');
+  const q = (nameEl?.value || '').trim();
+  hideManualApptSuggestBox('manual-appt-customer-suggest');
+  const seq = ++_manualApptLookupSeq;
+  const params = new URLSearchParams({ by: 'name' });
+  if (q) params.set('q', q);
+  const { ok, data } = await apiCall(`/admin/customers/lookup?${params.toString()}`, { method: 'GET' });
+  if (seq !== _manualApptLookupSeq) return;
+  if (!ok || !data.success) {
+    hideManualApptSuggestBox('manual-appt-name-suggest');
+    return;
+  }
+  const customers = data.customers || [];
+  if (!customers.length && !openList && !q) {
+    hideManualApptSuggestBox('manual-appt-name-suggest');
+    return;
+  }
+  renderManualApptSuggestions(customers, 'manual-appt-name-suggest');
+}
+
+function scheduleManualApptNameLookup(openList = false) {
+  clearTimeout(_manualApptLookupTimer);
+  _manualApptLookupTimer = setTimeout(() => {
+    lookupManualApptCustomersByName(openList).catch(() => {});
+  }, openList ? 0 : 180);
 }
 
 async function submitManualAppointment(e) {
@@ -1071,8 +1273,8 @@ async function submitManualAppointment(e) {
   const sendWhatsapp = $('manual-appt-whatsapp')?.checked !== false;
   const staffId = getManualApptStaffId();
 
-  if (!phone || phone.length !== 10) {
-    if (errEl) { errEl.textContent = 'Geçerli 10 haneli telefon girin'; errEl.style.display = 'block'; }
+  if (!parseTrMobile(phone)) {
+    if (errEl) { errEl.textContent = 'Geçerli cep numarası girin (5XX XXX XX XX, başında 0 yok)'; errEl.style.display = 'block'; }
     return;
   }
   if (!name || !surname) {
@@ -1590,13 +1792,17 @@ async function validateStoredAdminSession() {
   const token = getAdminToken();
   if (!token) return { ok: false, status: 401, staff: null };
 
-  const res = await fetch(`${API_BASE}/admin/me`, {
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-  });
-  if (res.status === 401) {
-    return { ok: false, status: 401, staff: null };
+  try {
+    const res = await fetch(`${API_BASE}/admin/me`, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    });
+    if (res.status === 401) {
+      return { ok: false, status: 401, staff: null };
+    }
+    return { ok: res.ok, status: res.status, staff: getAdminStaff() };
+  } catch {
+    return { ok: false, status: 0, staff: getAdminStaff() };
   }
-  return { ok: res.ok, status: res.status, staff: getAdminStaff() };
 }
 
 async function quickLogin() {
@@ -1656,9 +1862,13 @@ async function login(phone, password, rememberMe = false) {
 async function handleAdminLoginSubmit(e) {
   if (e) e.preventDefault();
   if ($('login-error')) $('login-error').textContent = '';
-  const phone = ($('login-phone')?.value || '').trim();
+  const phone = parseTrMobile($('login-phone')?.value);
   const password = ($('login-password')?.value || '').trim();
   const rememberMe = !!$('login-remember-me')?.checked;
+  if (!phone) {
+    if ($('login-error')) $('login-error').textContent = 'Geçerli cep numarası girin (5XX XXX XX XX)';
+    return;
+  }
   await login(phone, password, rememberMe);
 }
 
@@ -1682,9 +1892,17 @@ function escapeHtml(text) {
 }
 
 function formatPhonePretty(phone10) {
-  const p = String(phone10 || '').replace(/\D/g, '').slice(-10);
-  if (p.length !== 10) return p;
+  const parsed = parseTrMobile(phone10);
+  const p = parsed || String(phone10 || '').replace(/\D/g, '').slice(-10);
+  if (p.length !== 10) return String(phone10 || '').trim();
   return `${p.slice(0, 3)} ${p.slice(3, 6)} ${p.slice(6, 8)} ${p.slice(8, 10)}`;
+}
+
+function formatPhoneDisplay(phone) {
+  const parsed = parseTrMobile(phone);
+  if (parsed) return `0${formatPhonePretty(parsed)}`;
+  const d = String(phone || '').replace(/\D/g, '');
+  return d || '';
 }
 
 function formatPersonName(name) {
@@ -1701,12 +1919,13 @@ function formatPersonName(name) {
 
 /** wa.me için uluslararası format (örn. 905551234567) */
 function phoneToWhatsAppIntl(phone) {
+  const parsed = parseTrMobile(phone);
+  if (parsed) return `90${parsed}`;
   const digits = String(phone || '').replace(/\D/g, '');
   if (!digits) return null;
-  if (digits.startsWith('90') && digits.length === 12) return digits;
-  if (digits.startsWith('0') && digits.length === 11) return `90${digits.slice(1)}`;
-  if (digits.length === 10) return `90${digits}`;
-  if (digits.length >= 11) return digits;
+  if (digits.startsWith('90') && digits.length === 12 && digits[2] === '5') return digits;
+  if (digits.startsWith('0') && digits.length === 11 && digits[1] === '5') return `90${digits.slice(1)}`;
+  if (digits.length === 10 && digits.startsWith('5')) return `90${digits}`;
   return null;
 }
 
@@ -1742,10 +1961,13 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
     .map((tr) => {
       const createdAt = tr.created_at || '-';
       const customerName = formatPersonName((tr.customer?.full_name || '').trim() || 'Müşteri');
-      const phoneDigits = String(tr.customer?.phone || '').replace(/\D/g, '').slice(-10);
-      const customerPhone = phoneDigits ? `0${formatPhonePretty(phoneDigits)}` : 'Telefon yok';
+      const parsedPhone = parseTrMobile(tr.customer?.phone);
+      const phoneDigits = parsedPhone || String(tr.customer?.phone || '').replace(/\D/g, '').slice(-10);
+      const customerPhone = parsedPhone
+        ? formatPhoneDisplay(parsedPhone)
+        : (phoneDigits ? formatPhonePretty(phoneDigits) : 'Telefon yok');
       const phoneHtml = phoneDigits
-        ? `<a class="tr-customer-phone" href="tel:0${phoneDigits}"><i class="fas fa-phone"></i> ${escapeHtml(customerPhone)}</a>`
+        ? `<a class="tr-customer-phone" href="tel:${parsedPhone ? '0' : ''}${escapeHtml(phoneDigits)}"><i class="fas fa-phone"></i> ${escapeHtml(customerPhone)}</a>`
         : `<span class="tr-customer-phone is-missing"><i class="fas fa-phone"></i> Telefon yok</span>`;
 
       const statusRaw = String(tr.status || 'new');
@@ -2074,7 +2296,7 @@ function renderAppointmentsGrouped(containerId, items) {
       </div>
       <div class="apt-date-cards">`;
     dayItems.forEach((a) => {
-      const customer = a.customer?.full_name ? a.customer.full_name : `0${a.customer?.phone || '-'}`;
+      const customer = a.customer?.full_name ? a.customer.full_name : (formatPhoneDisplay(a.customer?.phone) || '-');
       const artist   = a.staff?.name || '-';
       const tr       = a.tattoo_request || {};
       const price    = parseFloat(a.price || 0);
@@ -2157,7 +2379,7 @@ function renderAppointments(containerId, items) {
 
   container.innerHTML = items
     .map((a) => {
-      const customer = a.customer?.full_name ? a.customer.full_name : `0${a.customer?.phone || '-'}`;
+      const customer = a.customer?.full_name ? a.customer.full_name : (formatPhoneDisplay(a.customer?.phone) || '-');
       const artist = a.staff?.name || '-';
       const tr = a.tattoo_request || {};
       const price = parseFloat(a.price || 0);
@@ -2611,8 +2833,8 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   };
   const statusClass = statusColors[a.status] || 'gcal-event--default';
 
-  const customer = a.customer?.full_name || (a.customer?.phone ? `0${a.customer.phone}` : 'Müşteri');
-  const phone = a.customer?.phone ? `0${a.customer.phone}` : '';
+  const customer = a.customer?.full_name || (formatPhoneDisplay(a.customer?.phone) || 'Müşteri');
+  const phone = formatPhoneDisplay(a.customer?.phone);
   const tr = a.tattoo_request || {};
   const detailParts = [tr.description, tr.body_area, tr.size].filter(Boolean);
   const detailLine = detailParts.join(' · ');
@@ -2852,7 +3074,7 @@ function renderPastAppointments(containerId, items) {
     return;
   }
   container.innerHTML = items.map((a) => {
-    const customer = a.customer?.full_name ? a.customer.full_name : `0${a.customer?.phone || '-'}`;
+    const customer = a.customer?.full_name ? a.customer.full_name : (formatPhoneDisplay(a.customer?.phone) || '-');
     const artist   = a.staff?.name || '-';
     const tr       = a.tattoo_request || {};
     const price    = parseFloat(a.price || 0);
@@ -3575,13 +3797,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('staff-error').textContent = '';
 
     const name = ($('staff-name').value || '').trim();
-    const phone = ($('staff-phone').value || '').trim();
+    const phone = parseTrMobile($('staff-phone').value);
     const password = ($('staff-password').value || '').trim();
   const role = (($('staff-role-select')?.value) || $('staff-role').value || 'staff').trim();
   $('staff-role').value = role;
 
     if (!name || !phone) {
-      $('staff-error').textContent = 'Ad ve telefon gerekli';
+      $('staff-error').textContent = 'Ad ve geçerli cep telefonu gerekli (5XX XXX XX XX)';
       return;
     }
 
@@ -3803,6 +4025,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.target === $('manual-appointment-overlay')) closeManualAppointmentModal();
   });
   $('manual-appointment-form')?.addEventListener('submit', submitManualAppointment);
+  $('manual-appt-phone')?.addEventListener('input', scheduleManualApptCustomerLookup);
+  $('manual-appt-phone')?.addEventListener('focus', () => {
+    hideManualApptSuggestBox('manual-appt-name-suggest');
+    if (($('manual-appt-phone')?.value || '').replace(/\D/g, '').length >= 3) {
+      scheduleManualApptCustomerLookup();
+    }
+  });
+  $('manual-appt-name')?.addEventListener('focus', () => scheduleManualApptNameLookup(true));
+  $('manual-appt-name')?.addEventListener('click', () => scheduleManualApptNameLookup(true));
+  $('manual-appt-name')?.addEventListener('input', () => scheduleManualApptNameLookup(false));
+  document.addEventListener('click', (e) => {
+    const phoneGroup = document.querySelector('.manual-appt-phone-wrap')?.closest('.form-group');
+    const nameGroup = document.querySelector('.manual-appt-name-wrap')?.closest('.form-group');
+    if (phoneGroup && !phoneGroup.contains(e.target)) hideManualApptSuggestBox('manual-appt-customer-suggest');
+    if (nameGroup && !nameGroup.contains(e.target)) hideManualApptSuggestBox('manual-appt-name-suggest');
+  });
   ['manual-appt-name', 'manual-appt-surname'].forEach((id) => {
     $(id)?.addEventListener('blur', (e) => {
       e.target.value = formatPersonName(e.target.value);
@@ -3879,6 +4117,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadIncomeReport();
       }
       if (page === 'api-settings') await loadWapioSettingsPage();
+      if (page === 'message-settings') {
+        if (!hasStudioAccess()) {
+          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+          showSection('dashboard');
+          await loadDashboard();
+          return;
+        }
+        await loadMessageSettings();
+      }
       if (page === 'google-calendar') {
         if (!hasStudioAccess()) {
           showToast('Bu sayfaya erişim yetkiniz yok', 'error');
@@ -3894,6 +4141,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   $('save-wapio-settings-btn')?.addEventListener('click', saveWapioSettings);
+  $('welcome-message-save-btn')?.addEventListener('click', saveWelcomeMessageSettings);
+  $('welcome-message-reset-btn')?.addEventListener('click', resetWelcomeMessageEditor);
+  $('welcome-message-editor')?.addEventListener('input', refreshWelcomeMessagePreview);
   $('gcal-save-btn')?.addEventListener('click', saveGoogleCalendarSettings);
   $('gcal-test-btn')?.addEventListener('click', testGoogleCalendarSettings);
   $('gcal-copy-email-btn')?.addEventListener('click', copyGcalServiceEmail);
@@ -4011,20 +4261,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadPastAppointments();
   });
 
-  // Giriş ekranı: tarayıcı yeniden açılınca login; aynı oturumda F5 ise panele devam
+  initAdminPwa();
+  ['login-phone', 'staff-phone', 'manual-appt-phone'].forEach((id) => bindTrMobileInput($(id)));
+
+  // Tarayıcı: F5 ile devam. PWA: Beni hatırla varsa uygulamayı açınca panele gir.
   const token = getAdminToken();
   const staffRaw = getAdminStaffRaw();
   const sessionActive = sessionStorage.getItem(ADMIN_SESSION_ACTIVE_KEY) === '1';
+  const restoreStandalone = isAdminStandalone() && hasRememberSession();
 
-  if (sessionActive && token && staffRaw) {
+  if ((sessionActive || restoreStandalone) && token && staffRaw) {
     try {
       const staff = JSON.parse(staffRaw);
       const { ok, status } = await validateStoredAdminSession();
-      if (ok && status !== 401) {
+      if (status === 401) {
+        clearAdminSession({ keepRememberPrefs: true });
+      } else if (ok || (status === 0 && restoreStandalone)) {
         await enterAdminDashboard(staff);
         return;
+      } else {
+        clearAdminSession({ keepRememberPrefs: true });
       }
-      clearAdminSession({ keepRememberPrefs: true });
     } catch {
       clearAdminSession({ keepRememberPrefs: true });
     }
@@ -4103,10 +4360,12 @@ function applyGcalSettings(s, calendars, queue) {
   }
   if (!s.credentials_ok) {
     setGcalStatus('err', 'Sunucuda Google kimlik dosyası yok');
+  } else if (s.outbound_ok === false) {
+    setGcalStatus('warn', s.probe_message || 'Kimlik dosyası duruyor; sunucu Google’a bağlanamıyor');
   } else if (s.sync_active && s.connected) {
     setGcalStatus('ok', s.calendar_summary ? `Bağlı: ${s.calendar_summary}` : 'Bağlı');
   } else if (s.enabled && s.calendar_id) {
-    setGcalStatus('warn', s.probe_message || 'Takvime erişilemiyor — paylaşımı kontrol edin');
+    setGcalStatus('unknown', 'Kimlik dosyası mevcut. Bağlantıyı denemek için butona basın');
   } else if (s.enabled) {
     setGcalStatus('warn', 'Takvim kimliği girilmedi');
   } else {
@@ -4133,6 +4392,83 @@ function applyGcalQueueStats(queue) {
     ? ` En eski bekleyen: ${String(queue.oldest_pending).replace('T', ' ').slice(0, 16)}`
     : '';
   summaryEl.textContent = `Bekleyen: ${pendingN} · Bırakılan: ${deadN}.${oldest}`;
+}
+
+let _welcomeMessageState = {
+  defaultTemplate: '',
+  placeholderValues: {},
+  maxLength: 4000,
+};
+
+function applyWelcomePlaceholders(text, values) {
+  let out = String(text || '');
+  Object.entries(values || {}).forEach(([key, value]) => {
+    out = out.split(key).join(value == null ? '' : String(value));
+  });
+  return out;
+}
+
+function refreshWelcomeMessagePreview() {
+  const editor = $('welcome-message-editor');
+  const preview = $('welcome-message-preview');
+  const count = $('welcome-message-count');
+  const text = editor?.value || '';
+  const maxLen = _welcomeMessageState.maxLength || 4000;
+  if (count) count.textContent = `${text.length} / ${maxLen}`;
+  if (preview) preview.textContent = applyWelcomePlaceholders(text, _welcomeMessageState.placeholderValues);
+}
+
+function applyWelcomeMessageSettings(data) {
+  _welcomeMessageState.defaultTemplate = data.default_welcome_message || '';
+  _welcomeMessageState.placeholderValues = data.placeholder_values || {};
+  _welcomeMessageState.maxLength = Number(data.max_length) || 4000;
+  const editor = $('welcome-message-editor');
+  if (editor) {
+    editor.maxLength = _welcomeMessageState.maxLength;
+    editor.value = data.welcome_message || '';
+  }
+  const status = $('welcome-message-status');
+  if (status) {
+    status.textContent = data.is_custom
+      ? 'Kayıtlı özel mesaj kullanılıyor.'
+      : 'Şu an varsayılan karşılama mesajı kullanılıyor.';
+  }
+  refreshWelcomeMessagePreview();
+}
+
+async function loadMessageSettings() {
+  const res = await apiCall('/admin/message-settings');
+  if (!res.ok || !res.data?.success) {
+    showToast(res.data?.message || 'Mesaj ayarları yüklenemedi', 'error');
+    return;
+  }
+  applyWelcomeMessageSettings(res.data);
+}
+
+async function saveWelcomeMessageSettings() {
+  const text = $('welcome-message-editor')?.value || '';
+  if (!text.trim()) {
+    showToast('Karşılama mesajı boş olamaz', 'error');
+    return;
+  }
+  const res = await apiCall('/admin/message-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ welcome_message: text }),
+  });
+  if (!res.ok || !res.data?.success) {
+    showToast(res.data?.message || 'Mesaj kaydedilemedi', 'error');
+    return;
+  }
+  applyWelcomeMessageSettings(res.data);
+  showToast('Karşılama mesajı kaydedildi', 'success');
+}
+
+function resetWelcomeMessageEditor() {
+  const editor = $('welcome-message-editor');
+  if (editor) editor.value = _welcomeMessageState.defaultTemplate || '';
+  const status = $('welcome-message-status');
+  if (status) status.textContent = 'Varsayılan yüklendi — kalıcı olması için kaydedin.';
+  refreshWelcomeMessagePreview();
 }
 
 async function loadGoogleCalendarSettings() {
@@ -4215,4 +4551,132 @@ $('sidebar-overlay')?.addEventListener('click', (e) => {
   e.preventDefault();
   toggleSidebar();
 });
+
+function syncPwaOfflineBanner() {
+  const el = $('pwa-offline-banner');
+  if (!el) return;
+  el.hidden = navigator.onLine;
+}
+
+function visibleAdminOverlays() {
+  return [...document.querySelectorAll('.modal-overlay')].filter((el) => {
+    if (el.style.display === 'none') return false;
+    if (el.hasAttribute('hidden')) return false;
+    const display = el.style.display || getComputedStyle(el).display;
+    return display !== 'none';
+  });
+}
+
+function closeTopAdminOverlay() {
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar?.classList.contains('active')) {
+    toggleSidebar();
+    return true;
+  }
+  const open = visibleAdminOverlays();
+  if (!open.length) return false;
+  const top = open[open.length - 1];
+  const closer = top.querySelector(
+    '.close-btn, .modal-header .close-btn, [onclick*="close"], button[id$="-cancel"], button[id$="-dismiss"]'
+  );
+  if (closer) closer.click();
+  else top.style.display = 'none';
+  return true;
+}
+
+function initPwaBackButton() {
+  window.addEventListener('popstate', () => {
+    if (closeTopAdminOverlay()) {
+      history.pushState({ roofAdminStay: 1 }, '');
+    }
+  });
+
+  const maybePush = () => {
+    if (visibleAdminOverlays().length || document.querySelector('.sidebar.active')) {
+      if (history.state?.roofAdminStay !== 1) {
+        history.pushState({ roofAdminStay: 1 }, '');
+      }
+    }
+  };
+
+  const observer = new MutationObserver(maybePush);
+  document.querySelectorAll('.modal-overlay').forEach((el) => {
+    observer.observe(el, { attributes: true, attributeFilter: ['style', 'hidden', 'class'] });
+  });
+  const sidebar = document.querySelector('.sidebar');
+  if (sidebar) observer.observe(sidebar, { attributes: true, attributeFilter: ['class'] });
+}
+
+function initPwaInstallBanner() {
+  const banner = $('pwa-install-banner');
+  const btn = $('pwa-install-btn');
+  const dismiss = $('pwa-install-dismiss');
+  const text = $('pwa-install-text');
+  if (!banner) return;
+  if (isAdminStandalone() || localStorage.getItem(PWA_INSTALL_DISMISS_KEY) === '1') return;
+
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isSafari = /safari/i.test(navigator.userAgent) && !/crios|fxios|edgios/i.test(navigator.userAgent);
+  let deferredPrompt = null;
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    banner.hidden = false;
+    if (text) text.textContent = 'Admin panelini ana ekrana ekleyin — tüm özellikler uygulama gibi açılır';
+    if (btn) btn.hidden = false;
+  });
+
+  if (isIos && isSafari) {
+    banner.hidden = false;
+    if (text) text.textContent = 'Paylaş → Ana Ekrana Ekle ile uygulamayı yükleyin. Tüm panel özellikleri çalışır.';
+    if (btn) btn.hidden = true;
+  }
+
+  btn?.addEventListener('click', async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice.catch(() => null);
+    deferredPrompt = null;
+    banner.hidden = true;
+  });
+
+  dismiss?.addEventListener('click', () => {
+    localStorage.setItem(PWA_INSTALL_DISMISS_KEY, '1');
+    banner.hidden = true;
+  });
+}
+
+function initPwaServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('/admin-sw.js', { scope: '/' }).then((reg) => {
+    if (reg.waiting) $('pwa-update-banner') && ($('pwa-update-banner').hidden = false);
+    reg.addEventListener('updatefound', () => {
+      const incoming = reg.installing;
+      if (!incoming) return;
+      incoming.addEventListener('statechange', () => {
+        if (incoming.state === 'installed' && navigator.serviceWorker.controller) {
+          const bar = $('pwa-update-banner');
+          if (bar) bar.hidden = false;
+        }
+      });
+    });
+  }).catch(() => {});
+
+  $('pwa-update-btn')?.addEventListener('click', async () => {
+    const reg = await navigator.serviceWorker.getRegistration();
+    reg?.waiting?.postMessage({ type: 'SKIP_WAITING' });
+    window.location.reload();
+  });
+}
+
+function initAdminPwa() {
+  document.documentElement.classList.toggle('is-standalone', isAdminStandalone());
+  syncPwaOfflineBanner();
+  window.addEventListener('online', syncPwaOfflineBanner);
+  window.addEventListener('offline', syncPwaOfflineBanner);
+  initPwaBackButton();
+  initPwaInstallBanner();
+  initPwaServiceWorker();
+}
 

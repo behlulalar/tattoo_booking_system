@@ -5,19 +5,37 @@
     <meta charset="UTF-8" />
     <title>Admin Panel - Roof Tattoo Gallery</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#101010" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Roof Admin" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <link rel="manifest" href="admin.webmanifest" />
     <link rel="icon" type="image/png" href="img/logo.png" />
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
+    <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20260828171000" />
-    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="admin.css?v=20260828200500" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/tr.js"></script>
+    <link rel="stylesheet" href="vendor/flatpickr/flatpickr.min.css" />
+    <script src="vendor/flatpickr/flatpickr.min.js"></script>
+    <script src="vendor/flatpickr/tr.js"></script>
 </head>
 
 <body>
+    <div id="pwa-offline-banner" class="pwa-banner pwa-banner--offline" hidden>
+        İnternet yok — randevu ve talepler çevrimiçi çalışır
+    </div>
+    <div id="pwa-update-banner" class="pwa-banner pwa-banner--update" hidden>
+        <span>Panelin yeni sürümü hazır</span>
+        <button type="button" id="pwa-update-btn">Yenile</button>
+    </div>
+    <div id="pwa-install-banner" class="pwa-banner pwa-banner--install" hidden>
+        <span id="pwa-install-text">Admin panelini ana ekrana ekleyin — tüm özellikler uygulama gibi açılır</span>
+        <button type="button" id="pwa-install-btn">Ekle</button>
+        <button type="button" id="pwa-install-dismiss" class="pwa-banner-dismiss" aria-label="Kapat">&times;</button>
+    </div>
     <!-- Login Page -->
     <div id="login-page" class="page">
         <div class="login-container">
@@ -139,6 +157,10 @@
                 <a href="#" class="nav-item super-admin-only" data-page="api-settings" style="display: none;">
                     <span class="nav-icon"><i class="fab fa-whatsapp"></i></span>
                     <span>Whatsapp Bağlantısı</span>
+                </a>
+                <a href="#" class="nav-item super-admin-only" data-page="message-settings" style="display: none;">
+                    <span class="nav-icon"><i class="fas fa-comment-dots"></i></span>
+                    <span>Mesaj Ayarları</span>
                 </a>
                 <a href="#" class="nav-item super-admin-only" data-page="google-calendar" style="display: none;">
                     <span class="nav-icon"><i class="fas fa-calendar-alt"></i></span>
@@ -587,6 +609,47 @@
                             <div id="wapio-compat-results" class="wapio-compat-results" hidden></div>
                         </div>
                     </details>
+                </div>
+            </section>
+
+            <section id="section-message-settings" class="content-section" style="display: none;">
+                <div class="section-header">
+                    <h1><i class="fas fa-comment-dots"></i> Mesaj Ayarları</h1>
+                </div>
+                <div class="wapio-page">
+                    <div class="wapio-card">
+                        <h2 class="wapio-card-title">Karşılama mesajı</h2>
+                        <p class="gcal-help">
+                            Müşteri stüdyo WhatsApp’ına ilk yazdığında gönderilen mesaj. Kaydettiğiniz metin birebir gider;
+                            aşağıdaki etiketler gönderimde stüdyo bilgileriyle doldurulur.
+                        </p>
+                        <div class="form-group">
+                            <label for="welcome-message-editor">Mesaj metni</label>
+                            <textarea id="welcome-message-editor" class="message-settings-editor" rows="16" maxlength="4000" spellcheck="true"></textarea>
+                            <p class="gcal-field-hint" id="welcome-message-count">0 / 4000</p>
+                        </div>
+                        <p class="gcal-field-hint">
+                            Kullanabileceğiniz etiketler:
+                            <code>{business_name}</code>
+                            <code>{randevu_url}</code>
+                            <code>{phone}</code>
+                            <code>{address}</code>
+                            <code>{hours}</code>
+                        </p>
+                        <div class="form-group">
+                            <label>Gönderilecek hali</label>
+                            <pre id="welcome-message-preview" class="message-settings-preview"></pre>
+                        </div>
+                        <div class="wapio-actions">
+                            <button type="button" id="welcome-message-reset-btn" class="filter-btn secondary">
+                                <i class="fas fa-undo"></i> Varsayılana dön
+                            </button>
+                            <button type="button" id="welcome-message-save-btn" class="save-btn" style="width:auto;margin-top:0;">
+                                <i class="fas fa-save"></i> Kaydet
+                            </button>
+                        </div>
+                        <p id="welcome-message-status" class="gcal-field-hint" style="margin-top:14px;"></p>
+                    </div>
                 </div>
             </section>
 
@@ -1171,14 +1234,19 @@
             </div>
             <div class="modal-body">
                 <p class="manual-appt-hint">
-                    Dükkana gelen veya telefonla gelen müşteriler için. Müşteri sisteme kaydedilir;
-                    ileride aynı numarayla giriş yaptığında ad-soyad tekrar sorulmaz.
+                    Dükkana gelen veya telefonla gelen müşteriler için. Telefonda kayıtlı numara,
+                    Ad’a tıklayınca kayıtlı müşteri listesi çıkar; seçince bilgiler dolar.
+                    Yeni müşteride ad ve soyadı elle girin.
                 </p>
                 <form id="manual-appointment-form">
                     <div class="form-row-2">
                         <div class="form-group">
                             <label for="manual-appt-phone">Telefon <span>*</span></label>
-                            <input type="tel" id="manual-appt-phone" maxlength="10" placeholder="5XX XXX XX XX" required />
+                            <div class="manual-appt-phone-wrap">
+                                <input type="tel" id="manual-appt-phone" maxlength="10" placeholder="5XX XXX XX XX" required autocomplete="off" />
+                                <div id="manual-appt-customer-suggest" class="manual-appt-suggest" hidden></div>
+                            </div>
+                            <p id="manual-appt-customer-hint" class="manual-appt-customer-hint" hidden></p>
                         </div>
                         <div class="form-group" id="manual-appt-staff-group" style="display:none;">
                             <label for="manual-appt-staff">Sanatçı</label>
@@ -1188,7 +1256,10 @@
                     <div class="form-row-2">
                         <div class="form-group">
                             <label for="manual-appt-name">Ad <span>*</span></label>
-                            <input type="text" id="manual-appt-name" required />
+                            <div class="manual-appt-name-wrap">
+                                <input type="text" id="manual-appt-name" required autocomplete="off" placeholder="Yazın veya tıklayıp seçin" />
+                                <div id="manual-appt-name-suggest" class="manual-appt-suggest" hidden></div>
+                            </div>
                         </div>
                         <div class="form-group">
                             <label for="manual-appt-surname">Soyad <span>*</span></label>
@@ -1420,7 +1491,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260828171000"></script>
+    <script src="admin.js?v=20260828200500"></script>
 </body>
 
 </html>

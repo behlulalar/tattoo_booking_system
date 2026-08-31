@@ -233,18 +233,6 @@ async function init() {
     meta.innerHTML += `<div class="meta-badge${isPrice ? ' meta-badge--price' : ''}"><i class="${icon}" style="margin-right:6px;opacity:0.6;"></i>${label}: <span>${value}</span></div>`;
   });
 
-  const pz = data.private_zone || {};
-  const banner = $('private-zone-banner');
-  const bannerText = $('private-zone-banner-text');
-  if (banner && bannerText && pz.active && pz.schedule_summary) {
-    bannerText.textContent =
-      `Bu bölge için randevular yalnızca ${pz.schedule_summary} saatlerinde alınabilir. ` +
-      'Diğer gün ve saatlerde randevu oluşturulamaz.';
-    banner.style.display = 'flex';
-  } else if (banner) {
-    banner.style.display = 'none';
-  }
-
   // Date dropdown
   const dateSelect = $('date-select');
   dateSelect.innerHTML = '';

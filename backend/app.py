@@ -32,6 +32,13 @@ from whatsapp_messages import (
     build_tattoo_request_staff_message,
     build_verification_code_message,
     build_welcome_message,
+    default_welcome_message_template,
+    get_welcome_message_template,
+    render_welcome_message,
+    save_welcome_message_template,
+    welcome_placeholder_values,
+    WELCOME_MESSAGE_MAX_LEN,
+    WELCOME_PLACEHOLDERS,
     get_reminder_hours_before,
     get_webhook_cooldown_seconds,
     get_webhook_url,
@@ -49,8 +56,8 @@ from google_calendar_sync import (
     is_google_calendar_enabled,
     credentials_file_ok,
     get_service_account_email,
+    google_api_reachable,
     probe_google_calendar,
-    list_accessible_calendars,
     load_external_busy_minutes,
     set_slot_validator as set_gcal_slot_validator,
     run_gcal_inbound_tick,
@@ -114,7 +121,7 @@ from datetime import datetime, timedelta, time as dt_time
 from urllib.parse import urlparse
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from threading import Lock
+from threading import Lock, Thread
 from marshmallow import Schema, fields, validate, ValidationError, validates
 import psutil
 
@@ -231,6 +238,28 @@ ERROR_MESSAGES = {
     'duplicate': 'Bu kayıt zaten mevcut.',
 }
 
+_TR_MOBILE_RE = re.compile(r'^5[0-9]{9}$')
+TR_MOBILE_ERROR = (
+    'Geçerli bir cep telefonu girin: 5 ile başlayan 10 hane '
+    '(ör. 5301234567). Başında 0 veya +90 yazmayın.'
+)
+
+
+def parse_tr_mobile(phone):
+    """TR cep: 5XXXXXXXXX. 05xx / +90 5xx kabul, 0530682054 gibi eksik/hatalı red."""
+    raw = str(phone or '').strip()
+    if not raw or '@' in raw:
+        return None
+    digits = ''.join(c for c in raw if c.isdigit())
+    if digits.startswith('90'):
+        digits = digits[2:]
+    if digits.startswith('0'):
+        digits = digits.lstrip('0')
+    if _TR_MOBILE_RE.fullmatch(digits):
+        return digits
+    return None
+
+
 # =============================================
 # INPUT VALIDATION SCHEMAS (Marshmallow)
 # =============================================
@@ -259,7 +288,7 @@ class AppointmentSchema(Schema):
 
 class SendCodeSchema(Schema):
     """Doğrulama kodu gönderme için input validation schema"""
-    phone = fields.String(required=True, validate=validate.Length(equal=10, error='Telefon numarası 10 haneli olmalıdır'))
+    phone = fields.String(required=True)
 
 # =============================================
 # DATABASE CONNECTION POOL
@@ -757,17 +786,6 @@ try:
     ensure_gcal_queue_table()
 except Exception as e:
     logger.warning(f"Takvim senkron kuyruğu hazırlanamadı: {e}")
-
-try:
-    import threading as _threading
-    def _startup_gcal_inbound():
-        try:
-            run_gcal_inbound_tick()
-        except Exception as inbound_err:
-            logger.warning(f"Takvim inbound baslangic atlandi: {inbound_err}")
-    _threading.Thread(target=_startup_gcal_inbound, name='gcal-inbound-start', daemon=True).start()
-except Exception as e:
-    logger.warning(f"Takvim inbound baslangic thread atlandi: {e}")
 
 # Uygulama başlatıldığında temizlik yap
 try:
@@ -1268,60 +1286,6 @@ def appointment_slot_conflicts(cursor, staff_id, formatted_date, time_str, durat
     return False
 
 
-def _python_weekday_to_db_day(python_weekday):
-    """Python weekday (Mon=0..Sun=6) → DB day_of_week (Sun=0..Sat=6)."""
-    return 0 if python_weekday == 6 else python_weekday + 1
-
-
-PRIVATE_ZONE_DAY_NAMES = [
-    'Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'
-]
-
-DEFAULT_PRIVATE_ZONE_SETTINGS = {
-    'enabled': True,
-    'days': [
-        {'day_of_week': 2, 'start_time': '14:00', 'end_time': '18:00'},
-        {'day_of_week': 4, 'start_time': '14:00', 'end_time': '18:00'},
-    ],
-}
-
-
-def get_private_zone_settings():
-    """Özel bölge randevu pencereleri (site_settings.json)."""
-    site = get_site_settings()
-    raw = site.get('private_zone') if isinstance(site.get('private_zone'), dict) else {}
-    days_in = raw.get('days') if isinstance(raw.get('days'), list) else []
-    days = []
-    for item in days_in[:2]:
-        if not isinstance(item, dict):
-            continue
-        try:
-            dow = int(item.get('day_of_week', -1))
-        except (TypeError, ValueError):
-            continue
-        if dow < 0 or dow > 6:
-            continue
-        start_time = str(item.get('start_time') or '14:00')[:5]
-        end_time = str(item.get('end_time') or '18:00')[:5]
-        if _time_str_to_minutes(start_time) >= _time_str_to_minutes(end_time):
-            continue
-        days.append({'day_of_week': dow, 'start_time': start_time, 'end_time': end_time})
-    if len(days) < 2:
-        days = [dict(d) for d in DEFAULT_PRIVATE_ZONE_SETTINGS['days']]
-    enabled = raw.get('enabled')
-    if enabled is None:
-        enabled = DEFAULT_PRIVATE_ZONE_SETTINGS['enabled']
-    return {'enabled': bool(enabled), 'days': days}
-
-
-def save_private_zone_settings(private_zone):
-    """Özel bölge ayarlarını site_settings.json içine kaydet."""
-    site = get_site_settings()
-    site['private_zone'] = private_zone
-    save_site_settings(site)
-    return True
-
-
 def resolve_body_region_id(body_region=None, body_area=None):
     region = (body_region or '').strip()
     if region and region in BODY_REGIONS:
@@ -1332,61 +1296,6 @@ def resolve_body_region_id(body_region=None, body_area=None):
             if meta.get('label') == area:
                 return key
     return None
-
-
-def is_private_body_region(body_region=None, body_area=None):
-    region_id = resolve_body_region_id(body_region, body_area)
-    if not region_id:
-        return False
-    return bool(BODY_REGIONS.get(region_id, {}).get('private'))
-
-
-def get_private_zone_window_for_date(formatted_date, private_zone_settings=None):
-    """Özel bölge için o günün izinli saat penceresi; gün uygun değilse None."""
-    pz = private_zone_settings or get_private_zone_settings()
-    if not pz.get('enabled'):
-        return {}
-    from datetime import datetime as dt
-    date_obj = dt.strptime(formatted_date, '%Y-%m-%d')
-    db_day = _python_weekday_to_db_day(date_obj.weekday())
-    for day_cfg in pz.get('days') or []:
-        if int(day_cfg.get('day_of_week', -1)) == db_day:
-            return {
-                'start_time': str(day_cfg.get('start_time') or '14:00')[:5],
-                'end_time': str(day_cfg.get('end_time') or '18:00')[:5],
-            }
-    return None
-
-
-def format_private_zone_schedule_summary(private_zone_settings=None):
-    """Müşteriye gösterilecek özet metin."""
-    pz = private_zone_settings or get_private_zone_settings()
-    if not pz.get('enabled'):
-        return ''
-    parts = []
-    for day_cfg in pz.get('days') or []:
-        dow = int(day_cfg.get('day_of_week', 0))
-        name = PRIVATE_ZONE_DAY_NAMES[dow] if 0 <= dow <= 6 else '?'
-        parts.append(
-            f"{name} {day_cfg.get('start_time', '')[:5]}-{day_cfg.get('end_time', '')[:5]}"
-        )
-    return ', '.join(parts)
-
-
-def get_private_zone_bookable_dates(days_ahead=14, private_zone_settings=None):
-    """Özel bölge talepleri için yalnızca izinli günleri döndürür."""
-    pz = private_zone_settings or get_private_zone_settings()
-    if not pz.get('enabled'):
-        return None
-    from datetime import date as dt_date, timedelta
-    allowed = {int(d['day_of_week']) for d in (pz.get('days') or [])}
-    today = dt_date.today()
-    dates = []
-    for i in range(days_ahead):
-        d = today + timedelta(days=i)
-        if _python_weekday_to_db_day(d.weekday()) in allowed:
-            dates.append(d.strftime('%d.%m.%Y'))
-    return dates
 
 
 # Müşteri randevu seçimi ve uygun saat üretimi bu adımla gider.
@@ -1428,7 +1337,7 @@ def _slots_from_working_hour_row(wh_start, wh_end):
 
 def compute_available_start_slots(
     cursor, staff_id, formatted_date, duration_minutes,
-    body_region=None, body_area=None, return_details=False,
+    return_details=False,
     skip_past_filter=False,
     past_filter_mode='buffer',
     exclude_appointment_id=None,
@@ -1534,38 +1443,6 @@ def compute_available_start_slots(
             cutoff = now_mins + SLOT_STEP_MINUTES
         starts = [s for s in starts if _time_str_to_minutes(s) > cutoff]
 
-    # Özel bölge: yalnızca yapılandırılmış gün/saat pencerelerinde randevu
-    if is_private_body_region(body_region, body_area):
-        pz = get_private_zone_settings()
-        if pz.get('enabled'):
-            window = get_private_zone_window_for_date(formatted_date, pz)
-            if not window:
-                starts = []
-                available_slots = []
-                booked_set = set()
-            else:
-                win_start_m = _time_str_to_minutes(window['start_time'])
-                win_end_m = _time_str_to_minutes(window['end_time'])
-                available_slots = [
-                    t for t in available_slots
-                    if win_start_m <= _time_str_to_minutes(t) < win_end_m
-                ]
-                booked_set = set()
-                for t in available_slots:
-                    slot_start = _time_str_to_minutes(t)
-                    slot_end = slot_start + SLOT_STEP_MINUTES
-                    if any(_ranges_overlap(slot_start, slot_end, b0, b1) for b0, b1 in busy_intervals):
-                        booked_set.add(t)
-                starts = []
-                for start in available_slots:
-                    start_m = _time_str_to_minutes(start)
-                    end_m = start_m + req
-                    if end_m > win_end_m:
-                        continue
-                    if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
-                        continue
-                    starts.append(start)
-
     if return_details:
         work_start = available_slots[0] if available_slots else None
         work_end = available_slots[-1] if available_slots else None
@@ -1589,7 +1466,6 @@ def _gcal_inbound_slot_allowed(
         staff_id,
         formatted_date,
         duration_minutes,
-        body_area=body_area,
         exclude_appointment_id=exclude_id,
         skip_past_filter=True,
     )
@@ -1825,7 +1701,10 @@ def send_code():
     # Input validation
     schema = SendCodeSchema()
     try:
-        data = schema.load(request.get_json())
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({'success': False, 'message': 'Geçersiz JSON formatı'}), 400
+        data = schema.load(payload)
     except ValidationError as err:
         logger.warning(f"Validation error in send_code: {err.messages}")
         return jsonify({
@@ -1833,13 +1712,15 @@ def send_code():
             'message': 'Geçersiz telefon numarası',
             'errors': err.messages
         }), 400
-    except TypeError:
-        return jsonify({'success': False, 'message': 'Geçersiz JSON formatı'}), 400
     except Exception as e:
         logger.error(f"Unexpected error in send_code validation: {e}")
         return jsonify({'success': False, 'message': ERROR_MESSAGES['validation']}), 400
 
-    phone = data['phone']  # Validated: 10 haneli
+    phone = data['phone']
+    parsed = parse_tr_mobile(phone)
+    if not parsed:
+        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+    phone = parsed
 
     try:
         if is_wapio_demo_mode():
@@ -1953,6 +1834,10 @@ def register_customer():
     # Tattoo flow: phone verification only, name/surname optional
     if not phone:
         return jsonify({'success': False, 'message': 'Telefon numarası gereklidir'}), 400
+    parsed = parse_tr_mobile(phone)
+    if not parsed:
+        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+    phone = parsed
 
     phone = customer_phone_for_db(str(phone).strip())
     if len(phone) != 10:
@@ -2188,17 +2073,17 @@ def get_booked_times():
 BODY_REGIONS = {
     'head': {'label': 'Baş / ense'},
     'neck': {'label': 'Boyun'},
-    'chest': {'label': 'Göğüs', 'private': True},
-    'ribs': {'label': 'Kaburga', 'private': True},
-    'stomach': {'label': 'Karın', 'private': True},
+    'chest': {'label': 'Göğüs'},
+    'ribs': {'label': 'Kaburga'},
+    'stomach': {'label': 'Karın'},
     'back_upper': {'label': 'Üst sırt'},
-    'back_lower': {'label': 'Alt sırt / bel', 'private': True},
+    'back_lower': {'label': 'Alt sırt / bel'},
     'shoulder': {'label': 'Omuz'},
     'upper_arm': {'label': 'Üst kol'},
     'forearm': {'label': 'Ön kol'},
     'wrist': {'label': 'Bilek'},
     'hand': {'label': 'El / parmak'},
-    'thigh': {'label': 'Uyluk', 'private': True},
+    'thigh': {'label': 'Uyluk'},
     'knee': {'label': 'Diz'},
     'calf': {'label': 'Baldır'},
     'ankle': {'label': 'Ayak bileği'},
@@ -2208,25 +2093,13 @@ BODY_REGIONS = {
 
 @app.route('/api/tattoo-config', methods=['GET'])
 def get_tattoo_config():
-    """Vücut bölgesi ve özel bölge randevu penceresi meta verisi."""
-    pz = get_private_zone_settings()
-    schedule_summary = format_private_zone_schedule_summary(pz)
+    """Vücut bölgesi meta verisi."""
     return jsonify({
         'success': True,
         'regions': [
-            {
-                'id': k,
-                'label': v['label'],
-                'private': bool(v.get('private')),
-            }
+            {'id': k, 'label': v['label']}
             for k, v in BODY_REGIONS.items()
         ],
-        'private_zone': {
-            'enabled': bool(pz.get('enabled')),
-            'schedule_summary': schedule_summary,
-            'days': pz.get('days') or [],
-            'day_names': PRIVATE_ZONE_DAY_NAMES,
-        },
     })
 
 
@@ -2260,6 +2133,10 @@ def validate_loyalty_code():
     code = (data.get('loyalty_code') or '').strip()
     if not phone or not code:
         return jsonify({'success': False, 'message': 'Telefon ve indirim kodu gerekli'}), 400
+    parsed = parse_tr_mobile(phone)
+    if not parsed:
+        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+    phone = parsed
 
     conn = None
     try:
@@ -2300,6 +2177,10 @@ def create_tattoo_request():
 
     if not phone or not staff_id:
         return jsonify({'success': False, 'message': 'phone ve staff_id gerekli'}), 400
+    parsed = parse_tr_mobile(phone)
+    if not parsed:
+        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+    phone = parsed
 
     if config_undecided or pre_consultation:
         if pre_consultation:
@@ -2391,14 +2272,12 @@ def create_tattoo_request():
         conn.commit()
         cursor.close()
 
-        private_zone = is_private_body_region(stored_body_region, body_area)
         try:
             wa_msg = build_tattoo_request_received_message(
                 reference_number,
                 staff_name,
                 body_area=body_area or None,
                 size=size or None,
-                style_label=style_label,
                 pre_consultation=pre_consultation,
                 config_undecided=config_undecided,
                 loyalty_attached=loyalty_attached,
@@ -2418,12 +2297,10 @@ def create_tattoo_request():
                     customer_name=customer_name,
                     body_area=body_area or None,
                     size=size or None,
-                    style_label=style_label,
                     description=description or None,
                     pre_consultation=pre_consultation,
                     config_undecided=config_undecided,
                     loyalty_attached=loyalty_attached,
-                    private_zone=private_zone,
                     has_reference_image=bool(reference_image),
                 )
                 if send_wapio_message(staff_phone, staff_msg):
@@ -2515,9 +2392,6 @@ def get_offer(token):
          size, body_area, body_region, tattoo_style, estimated_price_req, desc, ref_img,
          customer_phone, staff_name, loyalty_code) = row
 
-        is_private = is_private_body_region(body_region, body_area)
-        pz = get_private_zone_settings()
-
         if used_at is not None:
             cursor.close()
             return jsonify({'success': False, 'message': 'Bu link daha önce kullanılmış'}), 410
@@ -2551,11 +2425,6 @@ def get_offer(token):
                 'estimated_price': float(estimated_price_req) if estimated_price_req is not None else None,
                 'description': desc,
                 'reference_image': ref_img,
-                'is_private_zone': is_private,
-            },
-            'private_zone': {
-                'active': is_private and bool(pz.get('enabled')),
-                'schedule_summary': format_private_zone_schedule_summary(pz) if is_private else '',
             },
         }
 
@@ -2566,7 +2435,7 @@ def get_offer(token):
 
             slot_details = compute_available_start_slots(
                 cursor, staff_id, formatted_date, duration_minutes,
-                body_region=body_region, body_area=body_area, return_details=True
+                return_details=True
             )
             payload['slots'] = {
                 'date': date_str,
@@ -2575,16 +2444,12 @@ def get_offer(token):
                 'booked_slots': slot_details['booked_slots'],
             }
         else:
-            private_dates = get_private_zone_bookable_dates(days_ahead=14) if is_private else None
-            if private_dates is not None:
-                payload['dates'] = private_dates
-            else:
-                from datetime import date as dt_date
-                today = dt_date.today()
-                payload['dates'] = [
-                    (today + timedelta(days=i)).strftime('%d.%m.%Y')
-                    for i in range(14)
-                ]
+            from datetime import date as dt_date
+            today = dt_date.today()
+            payload['dates'] = [
+                (today + timedelta(days=i)).strftime('%d.%m.%Y')
+                for i in range(14)
+            ]
 
         cursor.close()
         return jsonify(payload)
@@ -2668,17 +2533,10 @@ def choose_offer_slot(token):
 
         available_start_slots, _ = compute_available_start_slots(
             cursor, staff_id, formatted_date, duration_minutes,
-            body_region=body_region, body_area=body_area
         )
 
         if time_str not in available_start_slots:
-            if is_private_body_region(body_region, body_area) and get_private_zone_settings().get('enabled'):
-                msg = (
-                    'Seçilen saat özel bölge randevu penceresine uygun değil. '
-                    f'Yalnızca {format_private_zone_schedule_summary()} aralıklarında randevu alınabilir.'
-                )
-            else:
-                msg = 'Seçilen saat artık uygun değil. Lütfen saatleri yeniden yükleyip tekrar deneyin.'
+            msg = 'Seçilen saat artık uygun değil. Lütfen saatleri yeniden yükleyip tekrar deneyin.'
             cursor.close()
             return jsonify({'success': False, 'message': msg}), 409
 
@@ -2705,10 +2563,8 @@ def choose_offer_slot(token):
             staff_name=staff_name,
             customer_name=customer_name,
             reference_number=reference_number,
-            style_label=tattoo_style,
             body_area=body_area,
             tattoo_size=tattoo_size,
-            private_zone=is_private_body_region(body_region, body_area),
         )
         staff_msg = build_appointment_created_staff_message(
             customer_phone,
@@ -2718,11 +2574,9 @@ def choose_offer_slot(token):
             offer_price,
             customer_name=customer_name,
             reference_number=reference_number,
-            style_label=tattoo_style,
             body_area=body_area,
             tattoo_size=tattoo_size,
             description=request_description,
-            private_zone=is_private_body_region(body_region, body_area),
         )
 
         send_wapio_message(customer_phone, customer_msg)
@@ -2758,6 +2612,9 @@ def admin_login():
     
     if not phone or not password:
         return jsonify({'success': False, 'message': 'Telefon ve şifre gerekli'}), 400
+    parsed_login = parse_tr_mobile(phone)
+    if parsed_login:
+        phone = parsed_login
     
     conn = None
     try:
@@ -2875,12 +2732,12 @@ def admin_list_tattoo_requests():
 
         kind_filter = (request.args.get('kind') or '').strip().lower()
         undecided_clause = """(
-            tr.tattoo_style IN ('undecided', 'Karar verilmedi')
-            OR tr.body_area IN ('Henüz belirlenmedi')
+            COALESCE(tr.tattoo_style, '') IN ('undecided', 'Karar verilmedi')
+            OR COALESCE(tr.body_area, '') IN ('Henüz belirlenmedi')
         )"""
         preconsult_clause = """(
-            tr.tattoo_style IN ('pre_consultation', 'Ön görüşme')
-            OR tr.body_area IN ('Ön görüşme')
+            COALESCE(tr.tattoo_style, '') IN ('pre_consultation', 'Ön görüşme')
+            OR COALESCE(tr.body_area, '') IN ('Ön görüşme')
         )"""
         if kind_filter in ('undecided', 'karar'):
             query += f" AND {undecided_clause} AND NOT {preconsult_clause}"
@@ -3308,6 +3165,96 @@ def admin_manual_appointment_available_slots():
         release_db_connection(conn)
 
 
+@app.route('/api/admin/customers/lookup', methods=['GET'])
+@limiter.exempt
+@token_required
+def admin_lookup_customers():
+    """Manuel randevu: telefon veya ada göre kayıtlı müşteri önerisi."""
+    raw = (request.args.get('q') or request.args.get('phone') or '').strip()
+    by = (request.args.get('by') or '').strip().lower()
+    digits = ''.join(c for c in raw if c.isdigit())
+    if digits.startswith('90') and len(digits) > 10:
+        digits = digits[2:]
+    if digits.startswith('0'):
+        digits = digits.lstrip('0')
+
+    name_q = raw
+    use_phone = by == 'phone' or (by != 'name' and len(digits) >= 3 and not any(ch.isalpha() for ch in raw))
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if use_phone:
+            like_prefix = f'{digits}%'
+            like_suffix = f'%{digits}'
+            like_cc = f'90{digits}%'
+            cursor.execute(
+                """
+                SELECT id, phone, name, surname
+                  FROM customers
+                 WHERE phone LIKE %s
+                    OR phone LIKE %s
+                    OR phone LIKE %s
+                 ORDER BY
+                    CASE WHEN COALESCE(name, '') <> '' THEN 0 ELSE 1 END,
+                    CASE WHEN phone = %s THEN 0 ELSE 1 END,
+                    name NULLS LAST,
+                    id DESC
+                 LIMIT 8
+                """,
+                (like_prefix, like_suffix, like_cc, digits),
+            )
+        else:
+            needle = f"%{name_q}%" if name_q else None
+            if needle:
+                cursor.execute(
+                    """
+                    SELECT id, phone, name, surname
+                      FROM customers
+                     WHERE COALESCE(TRIM(name), '') <> ''
+                       AND (
+                            name ILIKE %s
+                         OR surname ILIKE %s
+                         OR CONCAT_WS(' ', name, surname) ILIKE %s
+                       )
+                     ORDER BY name, surname, id DESC
+                     LIMIT 40
+                    """,
+                    (needle, needle, needle),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, phone, name, surname
+                      FROM customers
+                     WHERE COALESCE(TRIM(name), '') <> ''
+                     ORDER BY name, surname, id DESC
+                     LIMIT 50
+                    """
+                )
+        rows = cursor.fetchall()
+        cursor.close()
+        items = []
+        for row in rows:
+            name = (row[2] or '').strip()
+            surname = (row[3] or '').strip()
+            full_name = ' '.join(p for p in (name, surname) if p)
+            items.append({
+                'id': row[0],
+                'phone': row[1],
+                'name': name or None,
+                'surname': surname or None,
+                'full_name': full_name or None,
+            })
+        return jsonify({'success': True, 'customers': items})
+    except Exception as e:
+        logger.error(f"admin_lookup_customers hatası: {e}")
+        return jsonify({'success': False, 'message': 'Müşteriler alınamadı'}), 500
+    finally:
+        release_db_connection(conn)
+
+
 @app.route('/api/admin/appointments/manual', methods=['POST'])
 @limiter.exempt
 @token_required
@@ -3337,8 +3284,9 @@ def admin_create_manual_appointment():
         price = 0
 
     phone = customer_phone_for_db(phone_raw)
-    if len(phone) != 10:
-        return jsonify({'success': False, 'message': 'Geçerli 10 haneli telefon girin'}), 400
+    if not parse_tr_mobile(phone_raw) or len(phone) != 10:
+        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+    phone = parse_tr_mobile(phone_raw)
 
     try:
         day, month, year = date_str.split('.')
@@ -3976,10 +3924,10 @@ def add_staff():
     
     if not name or not phone or not password:
         return jsonify({'success': False, 'message': 'Ad, telefon ve şifre gerekli'}), 400
-    
-    # Telefon numarası 10 haneli olmalı
-    if len(phone) != 10 or not phone.isdigit():
-        return jsonify({'success': False, 'message': 'Telefon numarası 10 haneli olmalı (5XXXXXXXXX)'}), 400
+
+    phone = parse_tr_mobile(phone)
+    if not phone:
+        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
     
     # Şifre en az 6 karakter
     if len(password) < 6:
@@ -4081,7 +4029,11 @@ def update_staff(staff_id):
             updates.append("name = %s")
             params.append(name)
         if phone:
-            # Telefon numarası başka birinde var mı kontrol et
+            parsed_phone = parse_tr_mobile(phone)
+            if not parsed_phone:
+                cursor.close()
+                return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+            phone = parsed_phone
             cursor.execute("SELECT id FROM artists WHERE phone = %s AND id != %s", (phone, staff_id))
             if cursor.fetchone():
                 cursor.close()
@@ -5623,85 +5575,53 @@ def admin_evolution_update_webhook():
     })
 
 
-@app.route('/api/admin/private-zone-settings', methods=['GET'])
-@token_required
-def get_admin_private_zone_settings():
-    """Özel bölge randevu pencereleri ayarları."""
-    try:
-        pz = get_private_zone_settings()
-        private_regions = [
-            {'id': k, 'label': v['label']}
-            for k, v in BODY_REGIONS.items()
-            if v.get('private')
-        ]
-        return jsonify({
-            'success': True,
-            'private_zone': pz,
-            'day_names': PRIVATE_ZONE_DAY_NAMES,
-            'private_regions': private_regions,
-        })
-    except Exception as e:
-        logger.error(f"get_admin_private_zone_settings hatası: {e}")
-        return jsonify({'success': False, 'message': 'Ayarlar alınamadı'}), 500
+def _message_settings_payload(template):
+    default_template = default_welcome_message_template()
+    return {
+        'welcome_message': template,
+        'default_welcome_message': default_template,
+        'preview': render_welcome_message(template),
+        'is_custom': template.strip() != default_template.strip(),
+        'max_length': WELCOME_MESSAGE_MAX_LEN,
+        'placeholders': list(WELCOME_PLACEHOLDERS),
+        'placeholder_values': welcome_placeholder_values(),
+    }
 
 
-@app.route('/api/admin/private-zone-settings', methods=['PUT'])
+@app.route('/api/admin/message-settings', methods=['GET'])
 @token_required
-def update_admin_private_zone_settings():
-    """Özel bölge randevu pencerelerini güncelle — yalnızca super_admin."""
+def get_admin_message_settings():
     if not is_studio_admin():
-        return jsonify({
-            'success': False,
-            'message': 'Özel bölge saatlerini yalnızca Super Admin düzenleyebilir',
-        }), 403
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+    return jsonify({
+        'success': True,
+        **_message_settings_payload(get_welcome_message_template()),
+    })
 
+
+@app.route('/api/admin/message-settings', methods=['PUT'])
+@token_required
+def update_admin_message_settings():
+    if not is_studio_admin():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     data = request.get_json() or {}
     try:
-        enabled = data.get('enabled', True)
-        if isinstance(enabled, str):
-            enabled = enabled.lower() in ('1', 'true', 'yes', 'on')
-        days_in = data.get('days')
-        if not isinstance(days_in, list) or len(days_in) != 2:
-            return jsonify({
-                'success': False,
-                'message': 'Tam olarak 2 gün ve saat aralığı tanımlanmalıdır',
-            }), 400
-
-        seen_days = set()
-        normalized = []
-        for item in days_in:
-            if not isinstance(item, dict):
-                return jsonify({'success': False, 'message': 'Geçersiz gün ayarı'}), 400
-            try:
-                dow = int(item.get('day_of_week'))
-            except (TypeError, ValueError):
-                return jsonify({'success': False, 'message': 'Geçersiz gün seçimi'}), 400
-            if dow < 0 or dow > 6:
-                return jsonify({'success': False, 'message': 'Gün 0-6 arasında olmalı'}), 400
-            if dow in seen_days:
-                return jsonify({'success': False, 'message': 'Aynı gün iki kez seçilemez'}), 400
-            seen_days.add(dow)
-            start_time = str(item.get('start_time') or '')[:5]
-            end_time = str(item.get('end_time') or '')[:5]
-            if _time_str_to_minutes(start_time) >= _time_str_to_minutes(end_time):
-                return jsonify({'success': False, 'message': 'Bitiş saati başlangıçtan sonra olmalı'}), 400
-            normalized.append({
-                'day_of_week': dow,
-                'start_time': start_time,
-                'end_time': end_time,
-            })
-
-        private_zone = {'enabled': bool(enabled), 'days': normalized}
-        save_private_zone_settings(private_zone)
-        logger.info(f"Özel bölge ayarları güncellendi by staff_id={request.staff_id}")
+        if data.get('reset'):
+            template = save_welcome_message_template(default_welcome_message_template())
+        else:
+            raw = data.get('welcome_message')
+            if not isinstance(raw, str) or not raw.strip():
+                return jsonify({'success': False, 'message': 'Karşılama mesajı boş olamaz'}), 400
+            template = save_welcome_message_template(raw)
+        logger.info('Karşılama mesajı güncellendi by staff_id=%s', request.staff_id)
         return jsonify({
             'success': True,
-            'message': 'Özel bölge randevu saatleri kaydedildi',
-            'private_zone': private_zone,
+            'message': 'Karşılama mesajı kaydedildi',
+            **_message_settings_payload(template),
         })
     except Exception as e:
-        logger.error(f"update_admin_private_zone_settings hatası: {e}")
-        return jsonify({'success': False, 'message': 'Ayarlar kaydedilemedi'}), 500
+        logger.error(f"update_admin_message_settings hatası: {e}")
+        return jsonify({'success': False, 'message': 'Mesaj kaydedilemedi'}), 500
 
 
 @app.route('/api/admin/site-settings', methods=['GET'])
@@ -5758,24 +5678,33 @@ def get_google_calendar_settings():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     cfg = get_google_calendar_config()
-    probe = None
-    if cfg.get('calendar_id') and credentials_file_ok():
-        probe = probe_google_calendar(cfg.get('calendar_id'))
+    creds_ok = credentials_file_ok()
+    outbound_ok = google_api_reachable() if creds_ok else False
+    if not creds_ok:
+        probe_message = 'Sunucuda Google kimlik dosyası yok.'
+    elif not outbound_ok:
+        probe_message = (
+            'Kimlik dosyası duruyor. Sunucu Google’a bağlanamıyor '
+            '(ağ / güvenlik duvarı).'
+        )
+    else:
+        probe_message = ''
     return jsonify({
         'success': True,
         'settings': {
             'enabled': bool(cfg.get('enabled')),
             'calendar_id': cfg.get('calendar_id') or '',
             'timezone': cfg.get('timezone') or 'Europe/Istanbul',
-            'credentials_ok': credentials_file_ok(),
+            'credentials_ok': creds_ok,
             'service_account_email': get_service_account_email() or '',
             'sync_active': is_google_calendar_enabled(),
-            'calendar_summary': (probe or {}).get('summary') or '',
-            'connected': bool(probe and probe.get('ok')),
-            'probe_message': (probe or {}).get('message') or '',
+            'calendar_summary': '',
+            'connected': False,
+            'outbound_ok': outbound_ok,
+            'probe_message': probe_message,
         },
         'queue': gcal_queue_stats(),
-        'calendars': list_accessible_calendars(),
+        'calendars': [],
     })
 
 
@@ -5802,7 +5731,8 @@ def update_google_calendar_settings():
         new_calendar_id = (cfg.get('calendar_id') or '').strip()
         if previous_calendar_id and previous_calendar_id != new_calendar_id:
             reset_gcal_inbound_state(previous_calendar_id)
-        probe = probe_google_calendar(cfg.get('calendar_id')) if cfg.get('calendar_id') and credentials_file_ok() else None
+        creds_ok = credentials_file_ok()
+        outbound_ok = google_api_reachable() if creds_ok else False
         logger.info(
             'Google Calendar ayarları güncellendi by staff_id=%s calendar_id=%s enabled=%s',
             request.staff_id,
@@ -5816,10 +5746,17 @@ def update_google_calendar_settings():
                 'enabled': bool(cfg.get('enabled')),
                 'calendar_id': cfg.get('calendar_id') or '',
                 'timezone': cfg.get('timezone') or 'Europe/Istanbul',
+                'credentials_ok': creds_ok,
+                'service_account_email': get_service_account_email() or '',
                 'sync_active': is_google_calendar_enabled(),
-                'connected': bool(probe and probe.get('ok')),
-                'calendar_summary': (probe or {}).get('summary') or '',
-                'probe_message': (probe or {}).get('message') or '',
+                'connected': False,
+                'outbound_ok': outbound_ok,
+                'calendar_summary': '',
+                'probe_message': (
+                    'Kimlik dosyası duruyor. Sunucu Google’a bağlanamıyor '
+                    '(ağ / güvenlik duvarı).'
+                    if creds_ok and not outbound_ok else ''
+                ),
             },
         })
     except Exception as e:
@@ -6399,6 +6336,14 @@ def start_scheduler_if_master():
                 logger.info("   - Google Calendar: aktif (kuyruklu push + yerel meşguliyet + inbound)")
                 logger.info("   - Takvim kuyruğu tahliyesi: her 2 dakikada bir")
                 logger.info("   - Takvim inbound/mesguliyet: her 2 dakikada bir")
+                def _startup_gcal_inbound():
+                    try:
+                        run_gcal_inbound_tick()
+                    except Exception as inbound_err:
+                        logger.warning(f"Takvim inbound baslangic atlandi: {inbound_err}")
+                Thread(
+                    target=_startup_gcal_inbound, name='gcal-inbound-start', daemon=True
+                ).start()
             else:
                 logger.info("   - Google Calendar: kapalı (GOOGLE_CALENDAR_ENABLED veya credentials)")
             
