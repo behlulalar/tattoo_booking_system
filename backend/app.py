@@ -51,6 +51,7 @@ from google_calendar_sync import (
     drain_queue as drain_gcal_queue,
     ensure_queue_table as ensure_gcal_queue_table,
     queue_stats as gcal_queue_stats,
+    inbound_sync_health as gcal_inbound_sync_health,
     reset_calendar_service as reset_gcal_service,
     set_connection_provider as set_gcal_connection_provider,
     is_google_calendar_enabled,
@@ -5672,37 +5673,57 @@ def get_public_site_settings():
         return jsonify({'success': False, 'message': 'Ayarlar alınamadı'}), 500
 
 
-@app.route('/api/admin/google-calendar-settings', methods=['GET'])
-@token_required
-def get_google_calendar_settings():
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+def _google_calendar_settings_payload():
+    """Admin sayfası: senkron backend scheduler'da çalışır, oturuma bağlı değildir."""
     cfg = get_google_calendar_config()
     creds_ok = credentials_file_ok()
     outbound_ok = google_api_reachable() if creds_ok else False
+    sync_active = is_google_calendar_enabled()
+    health = gcal_inbound_sync_health(cfg.get('calendar_id')) if creds_ok else {}
+    last_sync_at = health.get('last_sync_at')
+    stale = health.get('stale')
+    connected = bool(sync_active and outbound_ok)
     if not creds_ok:
         probe_message = 'Sunucuda Google kimlik dosyası yok.'
     elif not outbound_ok:
         probe_message = (
             'Kimlik dosyası duruyor. Sunucu Google’a bağlanamıyor '
-            '(ağ / güvenlik duvarı).'
+            '(ağ / güvenlik duvarı). Senkron bu sürede durur.'
+        )
+    elif sync_active and stale:
+        probe_message = (
+            'Google ağı açık ama son yoklama gecikmiş. '
+            'Arka plan senkronu kontrol edin.'
         )
     else:
         probe_message = ''
+    return {
+        'enabled': bool(cfg.get('enabled')),
+        'calendar_id': cfg.get('calendar_id') or '',
+        'timezone': cfg.get('timezone') or 'Europe/Istanbul',
+        'credentials_ok': creds_ok,
+        'service_account_email': get_service_account_email() or '',
+        'sync_active': sync_active,
+        'calendar_summary': '',
+        'connected': connected,
+        'outbound_ok': outbound_ok,
+        'probe_message': probe_message,
+        'last_sync_at': last_sync_at,
+        'last_events_at': health.get('last_events_at'),
+        'last_busy_at': health.get('last_busy_at'),
+        'sync_stale': stale,
+        'sync_age_seconds': health.get('age_seconds'),
+    }
+
+
+@app.route('/api/admin/google-calendar-settings', methods=['GET'])
+@token_required
+def get_google_calendar_settings():
+    if not is_studio_admin():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
     return jsonify({
         'success': True,
-        'settings': {
-            'enabled': bool(cfg.get('enabled')),
-            'calendar_id': cfg.get('calendar_id') or '',
-            'timezone': cfg.get('timezone') or 'Europe/Istanbul',
-            'credentials_ok': creds_ok,
-            'service_account_email': get_service_account_email() or '',
-            'sync_active': is_google_calendar_enabled(),
-            'calendar_summary': '',
-            'connected': False,
-            'outbound_ok': outbound_ok,
-            'probe_message': probe_message,
-        },
+        'settings': _google_calendar_settings_payload(),
         'queue': gcal_queue_stats(),
         'calendars': [],
     })
@@ -5731,8 +5752,6 @@ def update_google_calendar_settings():
         new_calendar_id = (cfg.get('calendar_id') or '').strip()
         if previous_calendar_id and previous_calendar_id != new_calendar_id:
             reset_gcal_inbound_state(previous_calendar_id)
-        creds_ok = credentials_file_ok()
-        outbound_ok = google_api_reachable() if creds_ok else False
         logger.info(
             'Google Calendar ayarları güncellendi by staff_id=%s calendar_id=%s enabled=%s',
             request.staff_id,
@@ -5742,22 +5761,7 @@ def update_google_calendar_settings():
         return jsonify({
             'success': True,
             'message': 'Google Takvim ayarları kaydedildi',
-            'settings': {
-                'enabled': bool(cfg.get('enabled')),
-                'calendar_id': cfg.get('calendar_id') or '',
-                'timezone': cfg.get('timezone') or 'Europe/Istanbul',
-                'credentials_ok': creds_ok,
-                'service_account_email': get_service_account_email() or '',
-                'sync_active': is_google_calendar_enabled(),
-                'connected': False,
-                'outbound_ok': outbound_ok,
-                'calendar_summary': '',
-                'probe_message': (
-                    'Kimlik dosyası duruyor. Sunucu Google’a bağlanamıyor '
-                    '(ağ / güvenlik duvarı).'
-                    if creds_ok and not outbound_ok else ''
-                ),
-            },
+            'settings': _google_calendar_settings_payload(),
         })
     except Exception as e:
         logger.error(f"update_google_calendar_settings hatası: {e}")

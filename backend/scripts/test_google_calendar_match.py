@@ -83,6 +83,12 @@ def main():
     if not amb_ok:
         failed += 1
 
+    sid, _n, cust_n, cust_s, phone = parse('Tuncer', ARTISTS)
+    placeholder_ok = sid == 2 and phone is None and cust_n == 'Google'
+    print(('OK ' if placeholder_ok else 'FAIL'), 'Tuncer yalniz musteri placeholder', cust_n, cust_s)
+    if not placeholder_ok:
+        failed += 1
+
     customers = [
         (1, '5306820554', 'Ayşe', 'Yılmaz'),
         (2, '5301112233', 'Mehmet', 'Demir'),

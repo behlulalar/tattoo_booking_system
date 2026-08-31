@@ -2,8 +2,9 @@
 PostgreSQL randevulari paylaşılan Google Calendar ile senkronlar.
 
 Sistem randevusu -> Google (kuyruk). Elle Google etkinliği -> source=google
-randevu (WhatsApp yok). origin=roof taşı/sil inbound. Tüm-gün ve yinelenen
-master randevu olmaz; meşgul zaman olarak kalabilir.
+randevu. origin=roof taşı/sil inbound. Tüm-gün randevu/meşguliyet olmaz.
+Yinelenen master randevu olmaz; meşgul zaman olarak kalabilir.
+Google kaynaklı hatırlatma/bakım WhatsApp'ı app.py job'larında (telefon varsa).
 """
 import hashlib
 import logging
@@ -15,7 +16,7 @@ import socket
 import threading
 import time
 import unicodedata
-from datetime import date, datetime, timedelta, time as dt_time
+from datetime import date, datetime, timedelta, timezone, time as dt_time
 
 import psycopg2
 
@@ -619,6 +620,12 @@ def _parse_manual_event_title(summary, artist_rows):
         return staff_id, staff_name, 'Google', 'Takvim', phone
     customer_name, customer_surname = _split_person_name(title)
     return staff_id, staff_name, customer_name, customer_surname, phone
+
+
+def _is_placeholder_person(name, surname):
+    folded = _customer_full_folded(name, surname)
+    compact = folded.replace(' ', '')
+    return (not compact) or compact in _GCAL_PLACEHOLDER_FOLDED or folded in _GCAL_PLACEHOLDER_FOLDED
 
 
 def _subscribe_calendar(service, calendar_id):
@@ -1640,6 +1647,75 @@ def queue_stats():
         _disconnect(conn)
 
 
+# Scheduler 2 dakikada bir yoklar; birkaç kaçan turdan sonra gerçekten durmuş say.
+_INBOUND_STALE_SECONDS = 8 * 60
+
+
+def _aware_utc(value):
+    if value is None:
+        return None
+    if getattr(value, 'tzinfo', None) is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def inbound_sync_health(calendar_id=None):
+    """Admin oturumuna bağlı olmayan arka plan senkron sağlığı."""
+    cfg = get_google_calendar_config()
+    calendar_id = (calendar_id or cfg.get('calendar_id') or '').strip()
+    empty = {
+        'last_events_at': None,
+        'last_busy_at': None,
+        'last_sync_at': None,
+        'stale': None,
+        'age_seconds': None,
+    }
+    if not calendar_id:
+        return empty
+    conn = None
+    try:
+        conn = _connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT last_events_at, last_busy_at, updated_at
+              FROM google_calendar_sync_state
+             WHERE calendar_id = %s
+            """,
+            (calendar_id,),
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.commit()
+        if not row:
+            return empty
+        last_events, last_busy, updated = row
+        stamps = [_aware_utc(x) for x in (last_events, last_busy, updated) if x is not None]
+        last_sync = max(stamps) if stamps else None
+        age_seconds = None
+        stale = None
+        if last_sync is not None:
+            age_seconds = max(0, int((datetime.now(timezone.utc) - last_sync).total_seconds()))
+            stale = age_seconds > _INBOUND_STALE_SECONDS
+        return {
+            'last_events_at': last_events.isoformat() if last_events else None,
+            'last_busy_at': last_busy.isoformat() if last_busy else None,
+            'last_sync_at': last_sync.isoformat() if last_sync else None,
+            'stale': stale,
+            'age_seconds': age_seconds,
+        }
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.warning('Takvim senkron sagligi alinamadi: %s', e)
+        return empty
+    finally:
+        _disconnect(conn)
+
+
 # =============================================
 # FAZ 2a / 2b — yerel meşguliyet + inbound (yankı filtresi)
 # =============================================
@@ -1708,6 +1784,41 @@ def _round_duration_minutes(start_dt, end_dt):
     if minutes % 30:
         minutes = ((minutes // 30) + 1) * 30
     return minutes
+
+
+def _studio_slot_grid_ok(start_dt, duration_minutes):
+    """Stüdyo slotu: saat başı başlangıç, süre 60/120/180…"""
+    if not start_dt:
+        return False
+    if int(getattr(start_dt, 'minute', 0) or 0) != 0:
+        return False
+    if int(getattr(start_dt, 'second', 0) or 0) != 0:
+        return False
+    dur = int(duration_minutes or 0)
+    return dur >= 60 and dur % 60 == 0
+
+
+def _inbound_slot_allowed(
+    cursor, staff_id, start_dt, duration_minutes,
+    exclude_appointment_id=None, body_area=None,
+):
+    if not staff_id or not _studio_slot_grid_ok(start_dt, duration_minutes):
+        return False
+    if _slot_validator is None:
+        return True
+    try:
+        return bool(_slot_validator(
+            cursor,
+            staff_id,
+            start_dt.date().isoformat(),
+            start_dt.strftime('%H:%M'),
+            duration_minutes,
+            exclude_appointment_id,
+            body_area,
+        ))
+    except Exception as exc:
+        logger.warning('Google slot dogrulamasi hata: %s', str(exc)[:160])
+        return False
 
 
 def load_external_busy_minutes(cursor, formatted_date):
@@ -1784,7 +1895,7 @@ def _list_events_window(service, calendar_id, time_min, time_max):
                 maxResults=250,
                 pageToken=page,
                 fields=(
-                    'items(id,status,transparency,start,end,summary,'
+                    'items(id,status,transparency,start,end,summary,etag,'
                     'extendedProperties,description,recurringEventId),'
                     'nextPageToken'
                 ),
@@ -1815,8 +1926,22 @@ def refresh_external_busy():
         cursor = conn.cursor()
         imported = 0
         for event in events:
-            if _import_manual_google_event(cursor, event, calendar_id) == 'imported':
-                imported += 1
+            try:
+                cursor.execute('SAVEPOINT gcal_busy_import')
+                result = _import_manual_google_event(cursor, event, calendar_id)
+                cursor.execute('RELEASE SAVEPOINT gcal_busy_import')
+                if result == 'imported':
+                    imported += 1
+            except Exception as exc:
+                try:
+                    cursor.execute('ROLLBACK TO SAVEPOINT gcal_busy_import')
+                except Exception:
+                    pass
+                logger.warning(
+                    'Google busy import atlandi | event=%s hata=%s',
+                    (event.get('id') or '')[:80],
+                    str(exc).strip()[:200],
+                )
 
         rows = []
         for event in events:
@@ -1841,10 +1966,11 @@ def refresh_external_busy():
             start_dt, end_dt, all_day = _parse_event_datetimes(event)
             if not start_dt or not end_dt or end_dt <= start_dt:
                 continue
-            # Saatli elle etkinlik sanatçıya bağlanır; eşleşmezse herkesi kilitleme.
-            # Tüm-gün / yinelenen etkinlik stüdyo geneli meşgul kalır.
-            if not all_day and not event.get('recurringEventId'):
+            # Tüm-gün sistemden kapatılır; Google all-day randevu/meşguliyet değil.
+            if all_day:
                 continue
+            # Saatli etkinlik randevu olmadıysa (eşleşmedi / çakıştı / grid dışı)
+            # o aralık stüdyo geneli kilitlenir — sitede boş görünmesin.
             rows.append((calendar_id, start_dt, end_dt, event.get('id')))
 
         cursor.execute(
@@ -1976,6 +2102,55 @@ def _apply_inbound_move(cursor, appointment_id, local_date, local_time, duration
     return cursor.fetchone() is not None
 
 
+def _refresh_google_source_identity(
+    cursor, appointment_id, event, calendar_id,
+    current_staff_id, source, start_dt, duration_minutes,
+):
+    """source=google: başlık değişince müşteri/sanatçı güncelle. Adı ezme."""
+    if (source or '').lower() != 'google' or not start_dt:
+        return
+    artists = _load_bookable_artists(cursor)
+    new_staff, _staff_name, cust_name, cust_surname, phone = _parse_manual_event_title(
+        event.get('summary') or '', artists
+    )
+    if phone or not _is_placeholder_person(cust_name, cust_surname):
+        customer_id = _resolve_or_create_gcal_customer(
+            cursor, cust_name, cust_surname, phone, (event.get('id') or '').strip()
+        )
+        cursor.execute(
+            """
+            UPDATE appointments
+               SET customer_id = %s
+             WHERE id = %s
+               AND customer_id IS DISTINCT FROM %s
+            """,
+            (customer_id, appointment_id, customer_id),
+        )
+    if new_staff and int(new_staff) != int(current_staff_id or 0):
+        if _inbound_slot_allowed(
+            cursor, new_staff, start_dt, duration_minutes,
+            exclude_appointment_id=appointment_id,
+        ):
+            cursor.execute(
+                """
+                UPDATE appointments
+                   SET staff_id = %s
+                 WHERE id = %s
+                   AND status NOT IN ('cancelled', 'completed')
+                """,
+                (new_staff, appointment_id),
+            )
+            _stamp_origin_on_event(
+                calendar_id, (event.get('id') or '').strip(), appointment_id,
+                (start_dt.date(), start_dt.strftime('%H:%M') + ':00', duration_minutes, new_staff),
+            )
+        else:
+            logger.warning(
+                'Google baslikta sanatci degisti ama yeni slot uygun degil | apt=%s staff=%s->%s',
+                appointment_id, current_staff_id, new_staff,
+            )
+
+
 def _load_bookable_artists(cursor):
     cursor.execute(
         """
@@ -2006,23 +2181,30 @@ def _match_customer_by_name(cursor, name, surname):
 
 
 def _resolve_or_create_gcal_customer(cursor, name, surname, phone, event_id):
+    """Telefon varsa mevcut müşteriyi bağla; dolu adı/soyadı ezme."""
+    name = (name or '').strip()
+    surname = (surname or '').strip()
     if phone:
+        cursor.execute('SELECT id FROM customers WHERE phone = %s', (phone,))
+        found = cursor.fetchone()
+        if found:
+            return found[0]
         cursor.execute(
             """
             INSERT INTO customers (phone, name, surname)
             VALUES (%s, %s, %s)
             ON CONFLICT (phone) DO UPDATE
-               SET name = COALESCE(NULLIF(EXCLUDED.name, ''), customers.name),
-                   surname = COALESCE(NULLIF(EXCLUDED.surname, ''), customers.surname)
+               SET phone = customers.phone
             RETURNING id
             """,
             (phone, name, surname),
         )
         return cursor.fetchone()[0]
 
-    matched_id = _match_customer_by_name(cursor, name, surname)
-    if matched_id:
-        return matched_id
+    if not _is_placeholder_person(name, surname):
+        matched_id = _match_customer_by_name(cursor, name, surname)
+        if matched_id:
+            return matched_id
 
     resolved_phone = _synthetic_gcal_phone(event_id)
     cursor.execute(
@@ -2030,8 +2212,7 @@ def _resolve_or_create_gcal_customer(cursor, name, surname, phone, event_id):
         INSERT INTO customers (phone, name, surname)
         VALUES (%s, %s, %s)
         ON CONFLICT (phone) DO UPDATE
-           SET name = COALESCE(NULLIF(EXCLUDED.name, ''), customers.name),
-               surname = COALESCE(NULLIF(EXCLUDED.surname, ''), customers.surname)
+           SET phone = customers.phone
         RETURNING id
         """,
         (resolved_phone, name, surname),
@@ -2143,6 +2324,12 @@ def _import_manual_google_event(cursor, event, calendar_id):
     if not staff_id:
         _log_unmatched_artist(event_id, event.get('summary') or '')
         return 'unmatched'
+    if _is_placeholder_person(cust_name, cust_surname) and not phone:
+        logger.warning(
+            'Google etkinliginde musteri yok, randevu yazilmadi | event=%s title=%s',
+            event_id, (event.get('summary') or '')[:120],
+        )
+        return 'unmatched'
 
     cursor.execute(
         'SELECT id FROM appointments WHERE google_event_id = %s',
@@ -2150,6 +2337,17 @@ def _import_manual_google_event(cursor, event, calendar_id):
     )
     if cursor.fetchone():
         return 'skip'
+
+    cursor.execute(
+        'DELETE FROM google_external_busy WHERE google_event_id = %s',
+        (event_id,),
+    )
+    if not _inbound_slot_allowed(cursor, staff_id, start_dt, duration_minutes):
+        logger.warning(
+            'Google manuel randevu slot/cakisma nedeniyle yazilmadi | event=%s staff=%s %s %s %s dk',
+            event_id, staff_id, local_date, local_time, duration_minutes,
+        )
+        return 'conflict'
 
     try:
         cursor.execute('SAVEPOINT gcal_import')
@@ -2259,19 +2457,17 @@ def _handle_inbound_event(cursor, event, calendar_id):
                 'UPDATE appointments SET google_etag = %s, google_updated_at = NOW() WHERE id = %s',
                 (event.get('etag'), appointment_id),
             )
+        _refresh_google_source_identity(
+            cursor, appointment_id, event, calendar_id,
+            staff_id, source, start_dt, duration_minutes,
+        )
         return 'echo'
 
-    allowed = True
-    if source != 'google' and _slot_validator is not None:
-        allowed = bool(_slot_validator(
-            cursor,
-            staff_id,
-            local_date.isoformat(),
-            local_time,
-            duration_minutes,
-            appointment_id,
-            body_area or None,
-        ))
+    allowed = _inbound_slot_allowed(
+        cursor, staff_id, start_dt, duration_minutes,
+        exclude_appointment_id=appointment_id,
+        body_area=body_area or None,
+    )
     if not allowed:
         enqueue_appointment_sync(cursor, appointment_id)
         return 'revert'
@@ -2283,13 +2479,19 @@ def _handle_inbound_event(cursor, event, calendar_id):
             'Google tasima uygulandi (WhatsApp yok) apt #%s %s %s',
             appointment_id, local_date, local_time,
         )
+        _refresh_google_source_identity(
+            cursor, appointment_id, event, calendar_id,
+            staff_id, source, start_dt, duration_minutes,
+        )
         return 'moved'
     enqueue_appointment_sync(cursor, appointment_id)
     return 'revert'
 
 
 def poll_inbound_changes():
-    """syncToken ile yalniz origin=roof etkinliklerini isler. Randevu uretmez."""
+    """syncToken ile değişen etkinlikleri işler: origin=roof taşı/sil/geri al;
+    elle saatli etkinliği source=google randevu yapar. Tüm-gün randevu üretmez.
+    """
     if not is_google_calendar_enabled():
         return {'ok': False, 'reason': 'disabled'}
     calendar_id = get_google_calendar_config()['calendar_id']
@@ -2356,13 +2558,27 @@ def poll_inbound_changes():
 
         summary = {
             'echo': 0, 'moved': 0, 'cancel': 0, 'revert': 0,
-            'skip': 0, 'imported': 0, 'unmatched': 0,
+            'skip': 0, 'imported': 0, 'unmatched': 0, 'conflict': 0,
         }
         for event in items:
             if event.get('recurringEventId') and not event.get('start'):
                 summary['skip'] += 1
                 continue
-            action = _handle_inbound_event(cursor, event, calendar_id) or 'skip'
+            try:
+                cursor.execute('SAVEPOINT gcal_inbound_event')
+                action = _handle_inbound_event(cursor, event, calendar_id) or 'skip'
+                cursor.execute('RELEASE SAVEPOINT gcal_inbound_event')
+            except Exception as exc:
+                try:
+                    cursor.execute('ROLLBACK TO SAVEPOINT gcal_inbound_event')
+                except Exception:
+                    pass
+                logger.warning(
+                    'Google inbound event atlandi | event=%s hata=%s',
+                    (event.get('id') or '')[:80],
+                    str(exc).strip()[:200],
+                )
+                action = 'skip'
             summary[action] = summary.get(action, 0) + 1
 
         if next_token:
@@ -2382,7 +2598,7 @@ def poll_inbound_changes():
         cursor.close()
         if (
             summary['moved'] or summary['cancel'] or summary['revert']
-            or summary['imported'] or summary['unmatched']
+            or summary['imported'] or summary['unmatched'] or summary['conflict']
         ):
             if summary['moved'] or summary['cancel'] or summary['revert'] or summary['imported']:
                 kick_queue_worker()
@@ -2416,6 +2632,7 @@ def enqueue_identity_backfill(cursor=None):
               FROM appointments
              WHERE google_event_id IS NOT NULL
                AND status IS DISTINCT FROM 'cancelled'
+               AND COALESCE(source, '') IS DISTINCT FROM 'google'
                AND (google_etag IS NULL OR google_calendar_id IS NULL)
             """
         )

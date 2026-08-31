@@ -4343,16 +4343,34 @@ function fillGcalCalendarSelect(calendars, selectedId) {
     }).join('');
 }
 
+function formatGcalSyncAge(iso) {
+  if (!iso) return '';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  if (mins < 1) return 'az önce';
+  if (mins < 60) return `${mins} dk önce`;
+  const hours = Math.floor(mins / 60);
+  const remaining = mins % 60;
+  if (hours < 24) return remaining ? `${hours} sa ${remaining} dk önce` : `${hours} sa önce`;
+  const days = Math.floor(hours / 24);
+  return `${days} gün önce`;
+}
+
 function applyGcalSettings(s, calendars, queue) {
   if ($('gcal-enabled')) $('gcal-enabled').checked = !!s.enabled;
   if ($('gcal-sa-email')) $('gcal-sa-email').value = s.service_account_email || '';
   if ($('gcal-calendar-id')) $('gcal-calendar-id').value = s.calendar_id || '';
   fillGcalCalendarSelect(calendars, s.calendar_id || '');
   const sum = $('gcal-current-summary');
+  const ageLabel = formatGcalSyncAge(s.last_sync_at);
   if (sum) {
-    if (s.connected && s.calendar_summary) {
+    if (s.calendar_summary) {
       sum.hidden = false;
       sum.textContent = `Aktif takvim: ${s.calendar_summary}`;
+    } else if (s.sync_active && ageLabel) {
+      sum.hidden = false;
+      sum.textContent = `Arka plan senkronu açık (admin girişi gerekmez). Son yoklama: ${ageLabel}`;
     } else {
       sum.hidden = true;
       sum.textContent = '';
@@ -4362,10 +4380,18 @@ function applyGcalSettings(s, calendars, queue) {
     setGcalStatus('err', 'Sunucuda Google kimlik dosyası yok');
   } else if (s.outbound_ok === false) {
     setGcalStatus('warn', s.probe_message || 'Kimlik dosyası duruyor; sunucu Google’a bağlanamıyor');
+  } else if (s.sync_active && s.sync_stale) {
+    setGcalStatus(
+      'warn',
+      s.probe_message || (ageLabel ? `Senkron gecikmiş · son yoklama ${ageLabel}` : 'Senkron gecikmiş')
+    );
   } else if (s.sync_active && s.connected) {
-    setGcalStatus('ok', s.calendar_summary ? `Bağlı: ${s.calendar_summary}` : 'Bağlı');
+    const live = ageLabel
+      ? `Senkron çalışıyor · son yoklama ${ageLabel}`
+      : 'Senkron çalışıyor (7/24, oturuma bağlı değil)';
+    setGcalStatus('ok', s.calendar_summary ? `Bağlı: ${s.calendar_summary}` : live);
   } else if (s.enabled && s.calendar_id) {
-    setGcalStatus('unknown', 'Kimlik dosyası mevcut. Bağlantıyı denemek için butona basın');
+    setGcalStatus('warn', 'Senkron açık görünüyor ama Google ağı doğrulanamadı');
   } else if (s.enabled) {
     setGcalStatus('warn', 'Takvim kimliği girilmedi');
   } else {
