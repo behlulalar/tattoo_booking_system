@@ -142,7 +142,7 @@
                     <span class="nav-icon"><i class="fas fa-history"></i></span>
                     <span>Geçmiş Randevular</span>
                 </a>
-                <a href="#" class="nav-item super-admin-only" data-page="schedule" style="display: none;">
+                <a href="#" class="nav-item super-admin-only owner-hours-only" data-page="schedule" style="display: none;">
                     <span class="nav-icon"><i class="fas fa-clock"></i></span>
                     <span>Saatlerim</span>
                 </a>
@@ -488,9 +488,9 @@
                 <!-- Çalışma Saatleri -->
                 <div class="schedule-block">
                     <h3><i class="fas fa-calendar-week"></i> Haftalık Çalışma Saatleri</h3>
-                    <p id="working-hours-notice" class="working-hours-notice" style="display: none;">
+                    <p id="working-hours-notice" class="working-hours-notice" style="display: flex;">
                         <i class="fas fa-info-circle"></i>
-                        <span id="working-hours-notice-text">Çalışma saatleri Super Admin tarafından belirlenir.</span>
+                        <span id="working-hours-notice-text">Bu saatler yalnızca sizin koltuğunuz içindir. Bir günü kapatmak diğer sanatçıları kapatmaz. Berke, Mert, İbrahim için Personel sayfasındaki saat ikonunu kullanın.</span>
                     </p>
                     <div id="working-hours-table" class="working-hours-container">
                         <p class="empty-message">Yükleniyor...</p>
@@ -1150,6 +1150,10 @@
                 <!-- Çalışma Saatleri -->
                 <div class="schedule-block">
                     <h3><i class="fas fa-calendar-week"></i> Haftalık Çalışma Saatleri</h3>
+                    <p class="working-hours-notice" style="display:flex;">
+                        <i class="fas fa-info-circle"></i>
+                        <span>Yalnızca bu personelin koltuğu. Personel kendi saatini değiştiremez.</span>
+                    </p>
                     <div id="staff-working-hours-table" class="working-hours-container">
                         <p class="empty-message">Yükleniyor...</p>
                     </div>
@@ -1491,7 +1495,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260831203000"></script>
+    <script src="admin.js?v=20260831211500"></script>
 </body>
 
 </html>

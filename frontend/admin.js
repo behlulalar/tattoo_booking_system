@@ -817,9 +817,11 @@ function setRoleVisibility(role) {
     const page = el.getAttribute('data-page');
     const incomeOnly = page === 'reports' || el.classList.contains('income-only');
     const tattooOnly = page === 'all-tattoo-requests' || el.classList.contains('tattoo-request-nav');
+    const ownerHoursOnly = page === 'schedule' || el.classList.contains('owner-hours-only');
     let show = studio;
     if (incomeOnly) show = income;
     if (tattooOnly) show = role === 'super_admin';
+    if (ownerHoursOnly) show = role === 'super_admin';
     el.style.display = show ? '' : 'none';
   });
 
@@ -3143,7 +3145,7 @@ async function loadPending() {
 }
 
 async function loadSchedule() {
-  if (!hasStudioAccess()) return;
+  if (!canAccessIncome()) return;
   const canEditHours = true;
   const saveWh = $('save-working-hours-btn');
   if (saveWh) saveWh.style.display = canEditHours ? '' : 'none';
@@ -3162,18 +3164,11 @@ async function loadSchedule() {
     const notice = $('working-hours-notice');
     const noticeText = $('working-hours-notice-text');
     if (notice) {
-      if (!canEditHours) {
-        notice.style.display = 'flex';
-        if (noticeText) {
-          noticeText.textContent = hours.length
-            ? 'Çalışma saatleriniz Super Admin tarafından belirlenmiştir. Değişiklik için stüdyo yöneticisine başvurun.'
-            : 'Çalışma saatleri henüz belirlenmemiş. Super Admin kaydettikten sonra burada görünür.';
-        }
-      } else {
-        notice.style.display = hours.length === 0 ? 'flex' : 'none';
-        if (noticeText) {
-          noticeText.innerHTML = 'Çalışma saatleri henüz kaydedilmemiş. Aşağıdaki saatler önizlemedir — müşteri tarafında da aynı aralık (10:00–20:00) kullanılır. Kesinleştirmek için <strong>Kaydet</strong>’e basın.';
-        }
+      notice.style.display = 'flex';
+      if (noticeText) {
+        noticeText.innerHTML = hours.length
+          ? 'Bu saatler yalnızca sizin koltuğunuz içindir. Bir günü kapatmak diğer sanatçıları kapatmaz. Diğer personel için <strong>Personel</strong> sayfasındaki saat ikonunu kullanın.'
+          : 'Saatler henüz kaydedilmemiş. Önizleme 10:00–20:00; kaydedince sizin koltuğunuz için kesinleşir. Diğer sanatçılar etkilenmez.';
       }
     }
   }
@@ -3971,7 +3966,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Schedule save
   $('save-working-hours-btn')?.addEventListener('click', async () => {
-    if (!hasStudioAccess()) {
+    if (!canAccessIncome()) {
       showToast('Çalışma saatlerini düzenleme yetkiniz yok', 'error');
       return;
     }
@@ -4091,7 +4086,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadStaff();
       }
       if (page === 'schedule') {
-        if (!hasStudioAccess()) {
+        if (!canAccessIncome()) {
           showToast('Bu sayfaya erişim yetkiniz yok', 'error');
           showSection('dashboard');
           await loadDashboard();
