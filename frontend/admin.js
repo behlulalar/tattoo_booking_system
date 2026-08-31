@@ -2354,7 +2354,7 @@ function renderAppointmentsGrouped(containerId, items) {
   });
 
   container.innerHTML = html;
-  bindAppointmentStatusControls(container, loadAllAppointments);
+  bindAppointmentStatusControls(container);
 }
 
 function formatDateParts(dateStr) {

@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 PROVIDER_WAPIO = "wapio"
 PROVIDER_EVOLUTION = "evolution"
 
-# Şimdilik tüm giden WhatsApp mesajları kapalı. Tekrar açmak için True yapın.
-WHATSAPP_SENDING_ENABLED = False
+# Giden WhatsApp (iptal, onay, hatırlatma, talep…). OTP ayrı: is_wapio_demo_mode.
+WHATSAPP_SENDING_ENABLED = True
 
 
 def get_whatsapp_provider() -> str:
