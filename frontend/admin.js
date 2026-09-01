@@ -311,6 +311,141 @@ function customConfirmResolve(value) {
   if (_confirmResolve) { _confirmResolve(value); _confirmResolve = null; }
 }
 
+const TATTOO_REQUEST_SIZES = [
+  'Minimal (2–5 cm)',
+  'Küçük - Orta (5–10 cm)',
+  'Orta (10–20 cm)',
+  'Büyük (20 cm ve üzeri)',
+  'Tam Bölge (Sleeve/Back)',
+];
+
+let _editTattooRequestId = null;
+let _editTattooRequestArea = '';
+let _tattooConfigRegions = null;
+
+async function loadAdminTattooRegions() {
+  if (_tattooConfigRegions) return _tattooConfigRegions;
+  const { ok, data } = await apiCall('/tattoo-config', { method: 'GET' });
+  _tattooConfigRegions = ok && data.success && Array.isArray(data.regions)
+    ? data.regions
+    : [
+      { id: 'head', label: 'Baş / ense' },
+      { id: 'neck', label: 'Boyun' },
+      { id: 'chest', label: 'Göğüs' },
+      { id: 'ribs', label: 'Kaburga' },
+      { id: 'stomach', label: 'Karın' },
+      { id: 'back_upper', label: 'Üst sırt' },
+      { id: 'back_lower', label: 'Alt sırt / bel' },
+      { id: 'shoulder', label: 'Omuz' },
+      { id: 'upper_arm', label: 'Üst kol' },
+      { id: 'forearm', label: 'Ön kol' },
+      { id: 'wrist', label: 'Bilek' },
+      { id: 'hand', label: 'El / parmak' },
+      { id: 'thigh', label: 'Uyluk' },
+      { id: 'knee', label: 'Diz' },
+      { id: 'calf', label: 'Baldır' },
+      { id: 'ankle', label: 'Ayak bileği' },
+      { id: 'foot', label: 'Ayak üstü' },
+    ];
+  return _tattooConfigRegions;
+}
+
+async function openEditTattooRequestModal(tr) {
+  _editTattooRequestId = tr.id;
+  _editTattooRequestArea = tr.body_area || '';
+  const regions = await loadAdminTattooRegions();
+  const regionSel = $('tr-edit-region');
+  const sizeSel = $('tr-edit-size');
+  const descEl = $('tr-edit-description');
+  const errEl = $('tr-edit-error');
+  if (!regionSel || !sizeSel) return;
+
+  regionSel.innerHTML = '<option value="">Seçilmedi</option>';
+  regions.forEach((region) => {
+    const opt = document.createElement('option');
+    opt.value = region.id;
+    opt.textContent = region.label;
+    regionSel.appendChild(opt);
+  });
+
+  const currentRegion = (tr.body_region || '').trim();
+  const matched = regions.find((r) => r.id === currentRegion)
+    || regions.find((r) => r.label === (tr.body_area || '').trim());
+  if (matched) {
+    regionSel.value = matched.id;
+  } else if (tr.body_area) {
+    const custom = document.createElement('option');
+    custom.value = '__keep__';
+    custom.textContent = tr.body_area;
+    regionSel.appendChild(custom);
+    regionSel.value = '__keep__';
+  }
+
+  const sizes = [...TATTOO_REQUEST_SIZES];
+  if (tr.size && !sizes.includes(tr.size)) sizes.unshift(tr.size);
+  sizeSel.innerHTML = '<option value="">Seçilmedi</option>';
+  sizes.forEach((sz) => {
+    const opt = document.createElement('option');
+    opt.value = sz;
+    opt.textContent = sz;
+    sizeSel.appendChild(opt);
+  });
+  if (tr.size) sizeSel.value = tr.size;
+
+  if (descEl) descEl.value = tr.description || '';
+  if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+  $('tr-edit-overlay').style.display = 'flex';
+  setTimeout(() => regionSel.focus(), 50);
+}
+
+function closeEditTattooRequestModal() {
+  $('tr-edit-overlay').style.display = 'none';
+  _editTattooRequestId = null;
+}
+
+async function submitEditTattooRequest() {
+  if (!_editTattooRequestId) return;
+  const errEl = $('tr-edit-error');
+  const btn = $('tr-edit-save-btn');
+  const regionVal = $('tr-edit-region')?.value || '';
+  const size = $('tr-edit-size')?.value || '';
+  const description = ($('tr-edit-description')?.value || '').trim();
+
+  const body = { size, description };
+  if (regionVal === '__keep__') {
+    body.body_area = _editTattooRequestArea;
+  } else if (regionVal) {
+    body.body_region = regionVal;
+  } else {
+    body.body_region = '';
+    body.body_area = '';
+  }
+
+  if (btn) btn.disabled = true;
+  if (errEl) errEl.style.display = 'none';
+  try {
+    const { ok, data } = await apiCall(`/admin/tattoo-requests/${_editTattooRequestId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    if (!ok || !data.success) {
+      if (errEl) {
+        errEl.textContent = data?.message || 'Talep güncellenemedi';
+        errEl.style.display = 'block';
+      } else {
+        showToast(data?.message || 'Talep güncellenemedi', 'error');
+      }
+      return;
+    }
+    showToast(data.message || 'Talep güncellendi', 'success');
+    closeEditTattooRequestModal();
+    await reloadNewTattooRequestPages();
+    await loadOfferedRequests();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // Time-off form modal
 let _timeOffResolve = null;
 
@@ -1988,6 +2123,7 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
         ['Boyut', tr.size || 'Belirtilmedi'],
       ];
       if (tr.tattoo_style) specRows.push(['Stil', tr.tattoo_style]);
+      if (tr.description) specRows.push(['Not', tr.description]);
       if (tr.loyalty_discount) {
         specRows.push([
           'Sadakat',
@@ -2031,6 +2167,14 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
                    <i class="fas fa-paper-plane"></i> Süre Belirle & Link Gönder
                  </button>`
             }
+            <div class="tr-manage-row">
+              <button type="button" class="action-btn edit-btn" data-edit="${tr.id}">
+                <i class="fas fa-pen"></i> Düzenle
+              </button>
+              <button type="button" class="action-btn delete-btn" data-delete="${tr.id}">
+                <i class="fas fa-trash"></i> Sil
+              </button>
+            </div>
             ${waBtn}
           </div>
         </div>
@@ -2103,6 +2247,40 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
             'error'
           );
         }
+        await loadOfferedRequests();
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+
+  container.querySelectorAll('button[data-edit]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-edit');
+      const tr = items.find((item) => String(item.id) === String(id));
+      if (tr) void openEditTattooRequestModal(tr);
+    });
+  });
+
+  container.querySelectorAll('button[data-delete]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-delete');
+      const tr = items.find((item) => String(item.id) === String(id));
+      const ref = tr?.reference_number ? ` (${tr.reference_number})` : '';
+      const okConfirm = await customConfirm(
+        'Talebi sil',
+        `Bu dövme talebi${ref} silinecek. Bu işlem geri alınamaz.`
+      );
+      if (!okConfirm) return;
+      btn.disabled = true;
+      try {
+        const { ok, data } = await apiCall(`/admin/tattoo-requests/${id}`, { method: 'DELETE' });
+        if (!ok || !data.success) {
+          showToast(data.message || 'Talep silinemedi', 'error');
+          return;
+        }
+        showToast(data.message || 'Talep silindi', 'success');
+        await reloadNewTattooRequestPages();
         await loadOfferedRequests();
       } finally {
         btn.disabled = false;

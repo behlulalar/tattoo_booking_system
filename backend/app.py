@@ -2706,7 +2706,8 @@ def admin_list_tattoo_requests():
                 tr.loyalty_discount_percent,
                 lr.redemption_code,
                 lr.discount_percent,
-                lr.used_at
+                lr.used_at,
+                tr.body_region
             FROM tattoo_requests tr
             JOIN customers c ON tr.customer_id = c.id
             JOIN artists s ON tr.staff_id = s.id
@@ -2778,6 +2779,7 @@ def admin_list_tattoo_requests():
                     'full_name': (f"{r[12]} {r[13]}").strip() or None
                 },
                 'staff': {'id': r[14], 'name': r[15]},
+                'body_region': r[21],
             }
             discount_code = r[16] or r[18]
             if discount_code:
@@ -2792,6 +2794,162 @@ def admin_list_tattoo_requests():
     except Exception as e:
         logger.error(f"admin_list_tattoo_requests hatası: {e}")
         return jsonify({'success': False, 'message': 'Talepler alınırken hata oluştu'}), 500
+    finally:
+        release_db_connection(conn)
+
+
+def _admin_tattoo_request_row(cursor, tattoo_request_id):
+    """Talep satırı + yetki. (row, None) veya (None, (json, status))."""
+    cursor.execute(
+        """
+        SELECT id, staff_id, status, size, body_area, body_region, tattoo_style, description
+        FROM tattoo_requests
+        WHERE id = %s
+        """,
+        (tattoo_request_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None, (jsonify({'success': False, 'message': 'Talep bulunamadı'}), 404)
+    rec = {
+        'id': row[0],
+        'staff_id': row[1],
+        'status': row[2],
+        'size': row[3],
+        'body_area': row[4],
+        'body_region': row[5],
+        'tattoo_style': row[6],
+        'description': row[7],
+    }
+    if not is_studio_admin() and int(rec['staff_id']) != int(request.staff_id):
+        return None, (jsonify({'success': False, 'message': 'Bu talep için yetkiniz yok'}), 403)
+    return rec, None
+
+
+@app.route('/api/admin/tattoo-requests/<int:tattoo_request_id>', methods=['PUT'])
+@token_required
+def admin_update_tattoo_request(tattoo_request_id):
+    """Bölge, boyut ve açıklamayı güncelle."""
+    if not can_access_tattoo_requests():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+
+    data = request.get_json() or {}
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        rec, err = _admin_tattoo_request_row(cursor, tattoo_request_id)
+        if err:
+            cursor.close()
+            return err
+
+        if rec['status'] not in ('new', 'offered'):
+            cursor.close()
+            return jsonify({
+                'success': False,
+                'message': 'Randevuya dönüşmüş talep düzenlenemez',
+            }), 409
+
+        size = rec['size']
+        if 'size' in data:
+            size = (data.get('size') or '').strip() or None
+
+        description = rec['description']
+        if 'description' in data:
+            description = (data.get('description') or '').strip() or None
+
+        body_area = rec['body_area']
+        body_region = rec['body_region']
+        tattoo_style = rec['tattoo_style']
+        region_in = 'body_region' in data or 'body_area' in data
+        if region_in:
+            requested_region = (data.get('body_region') or '').strip()
+            requested_area = (data.get('body_area') or '').strip()
+            if requested_region and requested_region in BODY_REGIONS:
+                body_region = requested_region
+                body_area = BODY_REGIONS[requested_region]['label']
+                if (tattoo_style or '') in (
+                    'undecided', 'Karar verilmedi', 'pre_consultation', 'Ön görüşme',
+                ):
+                    tattoo_style = None
+            elif requested_area:
+                body_area = requested_area
+                body_region = resolve_body_region_id(body_area=requested_area)
+            else:
+                body_area = None
+                body_region = None
+
+        cursor.execute(
+            """
+            UPDATE tattoo_requests
+            SET size = %s, body_area = %s, body_region = %s, description = %s, tattoo_style = %s
+            WHERE id = %s
+            """,
+            (size, body_area, body_region, description, tattoo_style, tattoo_request_id),
+        )
+        conn.commit()
+        cursor.close()
+        return jsonify({'success': True, 'message': 'Talep güncellendi'})
+    except Exception as e:
+        logger.error(f"admin_update_tattoo_request hatası: {e}")
+        return jsonify({'success': False, 'message': 'Talep güncellenemedi'}), 500
+    finally:
+        release_db_connection(conn)
+
+
+@app.route('/api/admin/tattoo-requests/<int:tattoo_request_id>', methods=['DELETE'])
+@token_required
+def admin_delete_tattoo_request(tattoo_request_id):
+    """Yeni veya teklif gönderilmiş talebi sil."""
+    if not can_access_tattoo_requests():
+        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        rec, err = _admin_tattoo_request_row(cursor, tattoo_request_id)
+        if err:
+            cursor.close()
+            return err
+
+        if rec['status'] not in ('new', 'offered'):
+            cursor.close()
+            return jsonify({
+                'success': False,
+                'message': 'Randevuya dönüşmüş talep silinemez',
+            }), 409
+
+        cursor.execute(
+            """
+            SELECT id FROM appointments
+            WHERE tattoo_request_id = %s AND status NOT IN ('cancelled')
+            LIMIT 1
+            """,
+            (tattoo_request_id,),
+        )
+        if cursor.fetchone():
+            cursor.close()
+            return jsonify({
+                'success': False,
+                'message': 'Bu talebe bağlı aktif randevu var, silinemez',
+            }), 409
+
+        cursor.execute(
+            """
+            UPDATE loyalty_redemptions
+            SET tattoo_request_id = NULL
+            WHERE tattoo_request_id = %s AND used_at IS NULL
+            """,
+            (tattoo_request_id,),
+        )
+        cursor.execute("DELETE FROM tattoo_requests WHERE id = %s", (tattoo_request_id,))
+        conn.commit()
+        cursor.close()
+        return jsonify({'success': True, 'message': 'Talep silindi'})
+    except Exception as e:
+        logger.error(f"admin_delete_tattoo_request hatası: {e}")
+        return jsonify({'success': False, 'message': 'Talep silinemedi'}), 500
     finally:
         release_db_connection(conn)
 
