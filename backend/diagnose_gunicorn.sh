@@ -7,7 +7,7 @@ echo "  Gunicorn Diagnostik ve Düzeltme"
 echo "=========================================="
 echo ""
 
-cd /opt/randevu
+cd /opt/roof_tattoo
 
 # 1. Virtual environment var mı?
 echo "[1/5] Virtual environment kontrolü..."
@@ -81,5 +81,5 @@ echo "Gunicorn path: $(which gunicorn)"
 echo "Python path: $(which python)"
 echo ""
 echo "Test etmek için:"
-echo "  /opt/randevu/venv/bin/gunicorn --version"
+echo "  /opt/roof_tattoo/venv/bin/gunicorn --version"
 

@@ -40,5 +40,10 @@ backend/*_pgadmin.sql
 Thumbs.db
 .idea/
 .vscode/
-.cursor/
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+
+# Local CBM graph cache (optional team artifact lives in .codebase-memory/)
+.codebase-memory/
 

@@ -1,5 +1,5 @@
 -- =============================================
--- SEFA RANDEVU SİSTEMİ - VERİTABANI ŞEMASI
+-- ROOF TATTOO GALLERY - VERİTABANI ŞEMASI (eski referans; production: bootstrap_tattoo_db.sql)
 -- PostgreSQL
 -- =============================================
 
@@ -104,24 +104,31 @@ CREATE INDEX idx_working_hours_staff ON working_hours(staff_id);
 CREATE TABLE time_off (
     id           SERIAL PRIMARY KEY,
     staff_id     INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
-    off_date     DATE NOT NULL,                -- İzin tarihi
-    start_time   TIME,                         -- NULL=Tüm gün izin
-    end_time     TIME,                         -- NULL=Tüm gün izin
-    reason       VARCHAR(100),                 -- Açıklama (opsiyonel)
+    off_date     DATE NOT NULL,                -- Off Day tarihi
+    start_time   TIME,                         -- NULL=Tüm gün
+    end_time     TIME,                         -- NULL=Tüm gün
+    reason       VARCHAR(100),                 -- Açıklama (diş, düğün, toplantı)
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    google_event_id VARCHAR(255),
+    google_etag VARCHAR(255),
+    google_calendar_id VARCHAR(255),
+    google_updated_at TIMESTAMPTZ,
     UNIQUE(staff_id, off_date, start_time)
 );
 
 CREATE INDEX idx_time_off_staff ON time_off(staff_id);
 CREATE INDEX idx_time_off_date ON time_off(off_date);
+CREATE UNIQUE INDEX uq_time_off_google_event_id
+    ON time_off (google_event_id)
+    WHERE google_event_id IS NOT NULL;
 
 -- =============================================
 -- ÖRNEK VERİLER (Opsiyonel - Test için)
 -- =============================================
 
--- Süper Admin (Sefa Abi) ekle - Şifre: 123456 (hash'lenmiş hali girilmeli!)
+-- Süper Admin ekle - Şifre hash'lenmiş olmalı
 -- INSERT INTO artists (name, phone, password, role) 
--- VALUES ('Sefa', '5551234567', 'HASHED_PASSWORD_HERE', 'super_admin');
+-- VALUES ('Roof Admin', '5551234567', 'HASHED_PASSWORD_HERE', 'super_admin');
 
 -- Hizmetler ekle
 -- INSERT INTO services (name, price, duration_min) VALUES
@@ -152,4 +159,4 @@ CREATE INDEX idx_payment_methods_active ON payment_methods(is_active);
 INSERT INTO payment_methods (name, code, icon, description, details, sort_order) VALUES
 ('Nakit', 'nakit', '💵', 'Randevu sonrası ödeyin', NULL, 1),
 ('Havale / EFT', 'havale', '🏦', 'Banka transferi ile ödeyin', 
- '{"banka": "Ziraat Bankası", "hesap_adi": "Sefa Pertev", "iban": "TR00 0000 0000 0000 0000 0000 00", "not": "Açıklama kısmına telefon numaranızı yazınız."}', 2);
+ '{"banka": "Ziraat Bankası", "hesap_adi": "Roof Tattoo Gallery", "iban": "TR00 0000 0000 0000 0000 0000 00", "not": "Açıklama kısmına telefon numaranızı yazınız."}', 2);

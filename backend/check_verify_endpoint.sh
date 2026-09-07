@@ -8,7 +8,7 @@ echo ""
 
 # 1. Endpoint'in var olup olmadığını kontrol et
 echo "[1] Backend'de verify-code endpoint'ini kontrol ediyoruz..."
-if grep -q "@app.route('/api/verify-code'" /opt/randevu/backend/app.py; then
+if grep -q "@app.route('/api/verify-code'" /opt/roof_tattoo/backend/app.py; then
     echo "✅ Endpoint tanımlı: /api/verify-code"
 else
     echo "❌ Endpoint bulunamadı!"
@@ -19,12 +19,12 @@ echo ""
 
 # 2. Route'u göster
 echo "[2] Route detayları:"
-grep -A 5 "@app.route('/api/verify-code'" /opt/randevu/backend/app.py | head -10
+grep -A 5 "@app.route('/api/verify-code'" /opt/roof_tattoo/backend/app.py | head -10
 echo ""
 
 # 3. Son logları kontrol et
 echo "[3] Son verify-code istekleri (loglar):"
-sudo journalctl -u randevu-backend --since "5 minutes ago" | grep -i "verify-code\|verify_code\|POST.*verify" | tail -10
+sudo journalctl -u roof-tattoo-backend --since "5 minutes ago" | grep -i "verify-code\|verify_code\|POST.*verify" | tail -10
 echo ""
 
 # 4. Test isteği gönder
@@ -48,7 +48,7 @@ if [ "$HTTP_CODE" == "404" ]; then
     echo "  2. Gunicorn worker'ları eski kodu çalıştırıyor"
     echo ""
     echo "Çözüm:"
-    echo "  sudo systemctl restart randevu-backend"
+    echo "  sudo systemctl restart roof-tattoo-backend"
 elif [ "$HTTP_CODE" == "400" ] || [ "$HTTP_CODE" == "200" ]; then
     echo "✅ Endpoint çalışıyor (HTTP $HTTP_CODE)"
 else

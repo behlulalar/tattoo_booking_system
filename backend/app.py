@@ -45,6 +45,7 @@ from whatsapp_messages import (
 )
 from google_calendar_sync import (
     enqueue_appointment_sync,
+    enqueue_time_off_sync,
     enqueue_event_delete,
     enqueue_event_deletes,
     kick_queue_worker as kick_gcal_queue,
@@ -166,7 +167,7 @@ def build_cors_origins():
     defaults = [
         "http://localhost", "http://localhost:80", "http://127.0.0.1", "http://127.0.0.1:80",
         "http://localhost:8000", "http://localhost:8080", "http://127.0.0.1:8000", "http://127.0.0.1:8080",
-        "https://randevu-al.sefapertev.com", "http://randevu-al.sefapertev.com"
+        "https://tattoo.roof.behlulalar.online", "http://tattoo.roof.behlulalar.online"
     ]
 
     env_list = []
@@ -209,7 +210,7 @@ limiter = Limiter(
 logger.info("Rate limiter initialized") 
 
 # JWT Secret Key
-JWT_SECRET = os.getenv('JWT_SECRET', 'sefa-admin-secret-key-2024')
+JWT_SECRET = os.getenv('JWT_SECRET', 'roof-tattoo-admin-secret-change-me')
 
 # Bot Phone Number (webhook filtreleme için)
 BOT_PHONE_NUMBER = os.getenv('BOT_PHONE_NUMBER', '5359708001')
@@ -2160,6 +2161,62 @@ def validate_loyalty_code():
         release_db_connection(conn)
 
 
+def _notify_tattoo_request_whatsapp(
+    *,
+    reference_number,
+    staff_name,
+    staff_phone,
+    phone_stored,
+    customer_name,
+    body_area,
+    size,
+    description,
+    pre_consultation,
+    config_undecided,
+    loyalty_attached,
+    has_reference_image,
+):
+    """WhatsApp bildirimi HTTP yanıtını bekletmesin diye arka planda çalışır."""
+    try:
+        wa_msg = build_tattoo_request_received_message(
+            reference_number,
+            staff_name,
+            body_area=body_area,
+            size=size,
+            pre_consultation=pre_consultation,
+            config_undecided=config_undecided,
+            loyalty_attached=loyalty_attached,
+        )
+        if send_wapio_message(phone_stored, wa_msg):
+            logger.info(f"Talep alındı WhatsApp mesajı gönderildi: {phone_stored} — {reference_number}")
+        else:
+            logger.warning(f"Talep alındı WhatsApp mesajı gönderilemedi: {phone_stored}")
+    except Exception as wa_err:
+        logger.warning(f"Talep alındı WhatsApp bildirimi atlandı: {wa_err}")
+
+    if not staff_phone:
+        return
+    try:
+        staff_msg = build_tattoo_request_staff_message(
+            reference_number,
+            phone_stored,
+            customer_name=customer_name,
+            body_area=body_area,
+            size=size,
+            description=description,
+            pre_consultation=pre_consultation,
+            config_undecided=config_undecided,
+            loyalty_attached=loyalty_attached,
+            has_reference_image=has_reference_image,
+        )
+        if send_wapio_message(staff_phone, staff_msg):
+            logger.info(f"Sanatçı talep bildirimi gönderildi: {staff_phone} — {reference_number}")
+        else:
+            logger.warning(f"Sanatçı talep bildirimi gönderilemedi: {staff_phone}")
+    except Exception as staff_wa_err:
+        logger.warning(f"Sanatçı talep WhatsApp bildirimi atlandı: {staff_wa_err}")
+
+
 @app.route('/api/tattoo-requests', methods=['POST'])
 @limiter.limit("10 per minute")
 def create_tattoo_request():
@@ -2273,43 +2330,25 @@ def create_tattoo_request():
         conn.commit()
         cursor.close()
 
-        try:
-            wa_msg = build_tattoo_request_received_message(
-                reference_number,
-                staff_name,
-                body_area=body_area or None,
-                size=size or None,
-                pre_consultation=pre_consultation,
-                config_undecided=config_undecided,
-                loyalty_attached=loyalty_attached,
-            )
-            if send_wapio_message(phone_stored, wa_msg):
-                logger.info(f"Talep alındı WhatsApp mesajı gönderildi: {phone_stored} — {reference_number}")
-            else:
-                logger.warning(f"Talep alındı WhatsApp mesajı gönderilemedi: {phone_stored}")
-        except Exception as wa_err:
-            logger.warning(f"Talep alındı WhatsApp bildirimi atlandı: {wa_err}")
-
-        if staff_phone:
-            try:
-                staff_msg = build_tattoo_request_staff_message(
-                    reference_number,
-                    phone_stored,
-                    customer_name=customer_name,
-                    body_area=body_area or None,
-                    size=size or None,
-                    description=description or None,
-                    pre_consultation=pre_consultation,
-                    config_undecided=config_undecided,
-                    loyalty_attached=loyalty_attached,
-                    has_reference_image=bool(reference_image),
-                )
-                if send_wapio_message(staff_phone, staff_msg):
-                    logger.info(f"Sanatçı talep bildirimi gönderildi: {staff_phone} — {reference_number}")
-                else:
-                    logger.warning(f"Sanatçı talep bildirimi gönderilemedi: {staff_phone}")
-            except Exception as staff_wa_err:
-                logger.warning(f"Sanatçı talep WhatsApp bildirimi atlandı: {staff_wa_err}")
+        Thread(
+            target=_notify_tattoo_request_whatsapp,
+            name='tattoo-request-wa',
+            daemon=True,
+            kwargs={
+                'reference_number': reference_number,
+                'staff_name': staff_name,
+                'staff_phone': staff_phone,
+                'phone_stored': phone_stored,
+                'customer_name': customer_name,
+                'body_area': body_area or None,
+                'size': size or None,
+                'description': description or None,
+                'pre_consultation': pre_consultation,
+                'config_undecided': config_undecided,
+                'loyalty_attached': loyalty_attached,
+                'has_reference_image': bool(reference_image),
+            },
+        ).start()
 
         base_message = (
             f'Talebiniz alındı. Referans numaranız: {reference_number}. '
@@ -3233,6 +3272,35 @@ def get_admin_appointments():
         
         cursor.execute(query, params)
         rows = cursor.fetchall()
+
+        to_query = """
+            SELECT t.id, t.off_date, t.start_time, t.end_time, t.reason, t.created_at,
+                   t.staff_id, s.name
+              FROM time_off t
+              JOIN artists s ON s.id = t.staff_id
+             WHERE 1=1
+        """
+        to_params = []
+        if is_all_scope and staff_id_filter:
+            to_query += " AND t.staff_id = %s"
+            to_params.append(staff_id_filter)
+        elif not is_all_scope:
+            to_query += " AND t.staff_id = %s"
+            to_params.append(request.staff_id)
+        if date_filter:
+            day, month, year = date_filter.split('.')
+            formatted_date = f"{year}-{month}-{day}"
+            to_query += " AND t.off_date = %s"
+            to_params.append(formatted_date)
+        if start_date:
+            to_query += " AND t.off_date >= %s"
+            to_params.append(start_date)
+        if end_date:
+            to_query += " AND t.off_date <= %s"
+            to_params.append(end_date)
+        to_query += " ORDER BY t.off_date DESC, t.start_time"
+        cursor.execute(to_query, to_params)
+        time_off_rows = cursor.fetchall()
         cursor.close()
         
         appointments = []
@@ -3267,8 +3335,14 @@ def get_admin_appointments():
                 'price': float(row[17] or 0),
                 'source': row[18] or 'admin'
             })
+
+        time_offs = []
+        for row in time_off_rows:
+            item = _serialize_time_off_row(row, include_staff=True)
+            item['staff'] = {'id': row[6], 'name': row[7]}
+            time_offs.append(item)
         
-        return jsonify({'success': True, 'appointments': appointments})
+        return jsonify({'success': True, 'appointments': appointments, 'time_offs': time_offs})
     except Exception as e:
         logger.error(f"get_admin_appointments hatası: {e}")
         return jsonify({'success': False, 'message': 'Randevular alınırken hata oluştu'}), 500
@@ -4320,7 +4394,11 @@ def delete_staff(staff_id):
         # Working_hours kayıtlarını sil (foreign key constraint için)
         cursor.execute("DELETE FROM working_hours WHERE staff_id = %s", (staff_id,))
         
-        # Time_off (izin) kayıtlarını sil (foreign key constraint için)
+        cursor.execute(
+            "SELECT google_event_id FROM time_off WHERE staff_id = %s",
+            (staff_id,),
+        )
+        enqueue_event_deletes(cursor, [row[0] for row in cursor.fetchall() if row[0]])
         cursor.execute("DELETE FROM time_off WHERE staff_id = %s", (staff_id,))
         
         # Personeli sil
@@ -4341,8 +4419,81 @@ def delete_staff(staff_id):
         release_db_connection(conn)
 
 # =============================================
-# ÇALIŞMA SAATLERİ VE İZİN YÖNETİMİ
+# ÇALIŞMA SAATLERİ VE İZİN / OFF DAY YÖNETİMİ
 # =============================================
+
+
+def _normalize_time_off_hours(start_time, end_time):
+    start_time = (start_time or '').strip() or None
+    end_time = (end_time or '').strip() or None
+    if start_time and not end_time:
+        return None, 'Bitiş saati gerekli'
+    if end_time and not start_time:
+        return None, 'Başlangıç saati gerekli'
+    return (start_time, end_time), None
+
+
+def _serialize_time_off_row(row, include_staff=False, staff_id=None, staff_name=None):
+    payload = {
+        'id': row[0],
+        'date': row[1].strftime('%d.%m.%Y'),
+        'date_raw': row[1].strftime('%Y-%m-%d'),
+        'start_time': str(row[2])[:5] if row[2] else None,
+        'end_time': str(row[3])[:5] if row[3] else None,
+        'is_full_day': row[2] is None,
+        'reason': row[4] or '',
+        'kind': 'off_day',
+        'source': 'off_day',
+    }
+    if len(row) > 5 and row[5]:
+        payload['created_at'] = row[5].strftime('%d.%m.%Y %H:%M')
+    if include_staff or staff_id is not None:
+        payload['staff'] = {
+            'id': staff_id if staff_id is not None else (row[6] if len(row) > 6 else None),
+            'name': staff_name if staff_name is not None else (row[7] if len(row) > 7 else None),
+        }
+    return payload
+
+
+def _time_off_overlap_count(cursor, staff_id, off_date, start_time, end_time):
+    cursor.execute(
+        """
+        SELECT appointment_time, duration_minutes
+          FROM appointments
+         WHERE staff_id = %s AND appointment_date = %s AND status != 'cancelled'
+        """,
+        (staff_id, off_date),
+    )
+    rows = cursor.fetchall() or []
+    if start_time is None:
+        return len(rows)
+    start_m = _time_str_to_minutes(str(start_time)[:5])
+    end_str = str(end_time)[:5] if end_time else '00:00'
+    end_m = 24 * 60 if end_str in ('00:00', '24:00') else _time_str_to_minutes(end_str)
+    if end_m <= start_m:
+        end_m = 24 * 60
+    count = 0
+    for appt_time, dur in rows:
+        apt_s = _time_str_to_minutes(str(appt_time)[:5])
+        apt_e = apt_s + int(dur or SLOT_STEP_MINUTES)
+        if apt_s < end_m and start_m < apt_e:
+            count += 1
+    return count
+
+
+def _insert_time_off(cursor, staff_id, off_date, start_time, end_time, reason):
+    cursor.execute(
+        """
+        INSERT INTO time_off (staff_id, off_date, start_time, end_time, reason)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (staff_id, off_date, start_time, end_time, reason or ''),
+    )
+    new_id = cursor.fetchone()[0]
+    enqueue_time_off_sync(cursor, new_id)
+    overlap = _time_off_overlap_count(cursor, staff_id, off_date, start_time, end_time)
+    return new_id, overlap
 
 @app.route('/api/admin/working-hours', methods=['GET'])
 @token_required
@@ -4440,7 +4591,7 @@ def update_working_hours():
 @app.route('/api/admin/time-off', methods=['GET'])
 @token_required
 def get_time_off():
-    """İzin günlerini listele"""
+    """Off Day kayıtlarını listele"""
     staff_id = request.args.get('staff_id', request.staff_id)
     start_date = request.args.get('start_date')  # Format: YYYY-MM-DD
     end_date = request.args.get('end_date')      # Format: YYYY-MM-DD
@@ -4476,21 +4627,12 @@ def get_time_off():
         
         time_offs = []
         for row in rows:
-            time_offs.append({
-                'id': row[0],
-                'date': row[1].strftime('%d.%m.%Y'),
-                'date_raw': row[1].strftime('%Y-%m-%d'),
-                'start_time': str(row[2])[:5] if row[2] else None,
-                'end_time': str(row[3])[:5] if row[3] else None,
-                'is_full_day': row[2] is None,
-                'reason': row[4],
-                'created_at': row[5].strftime('%d.%m.%Y %H:%M')
-            })
+            time_offs.append(_serialize_time_off_row(row))
         
         return jsonify({'success': True, 'time_offs': time_offs})
     except Exception as e:
         logger.error(f"get_time_off hatası: {e}")
-        return jsonify({'success': False, 'message': 'İzinler alınamadı'}), 500
+        return jsonify({'success': False, 'message': 'Off Day listesi alınamadı'}), 500
     finally:
         release_db_connection(conn)
 
@@ -4515,27 +4657,35 @@ def add_time_off():
     
     conn = None
     try:
+        hours, hour_err = _normalize_time_off_hours(start_time, end_time)
+        if hour_err:
+            return jsonify({'success': False, 'message': hour_err}), 400
+        start_time, end_time = hours
+
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            INSERT INTO time_off (staff_id, off_date, start_time, end_time, reason)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
-        """, (staff_id, off_date, start_time, end_time, reason))
+        new_id, overlap = _insert_time_off(
+            cursor, staff_id, off_date, start_time, end_time, reason
+        )
         
-        new_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
+        kick_gcal_queue()
         
-        logger.info(f"İzin eklendi: staff_id={staff_id}, date={off_date}")
-        
-        return jsonify({'success': True, 'message': 'İzin eklendi', 'id': new_id})
+        logger.info(f"Off Day eklendi: staff_id={staff_id}, date={off_date}")
+        message = 'Off Day eklendi'
+        if overlap:
+            message = (
+                f'Off Day eklendi. Bu aralıkta {overlap} mevcut randevu var; '
+                'randevular iptal edilmedi.'
+            )
+        return jsonify({'success': True, 'message': message, 'id': new_id, 'overlap_count': overlap})
     except Exception as e:
         if conn:
             conn.rollback()
         logger.error(f"add_time_off hatası: {e}")
-        return jsonify({'success': False, 'message': 'İzin eklenemedi'}), 500
+        return jsonify({'success': False, 'message': 'Off Day eklenemedi'}), 500
     finally:
         release_db_connection(conn)
 
@@ -4543,37 +4693,42 @@ def add_time_off():
 @app.route('/api/admin/time-off/<int:time_off_id>', methods=['DELETE'])
 @token_required
 def delete_time_off(time_off_id):
-    """İzin iptal et"""
+    """Off Day iptal et"""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         
         # İznin sahibini kontrol et
-        cursor.execute("SELECT staff_id FROM time_off WHERE id = %s", (time_off_id,))
+        cursor.execute(
+            "SELECT staff_id, google_event_id FROM time_off WHERE id = %s",
+            (time_off_id,),
+        )
         row = cursor.fetchone()
         
         if not row:
             cursor.close()
-            return jsonify({'success': False, 'message': 'İzin bulunamadı'}), 404
+            return jsonify({'success': False, 'message': 'Off Day bulunamadı'}), 404
         
         # Yetki kontrolü
         if not is_studio_admin() and row[0] != request.staff_id:
             cursor.close()
             return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
         
+        enqueue_event_delete(cursor, row[1])
         cursor.execute("DELETE FROM time_off WHERE id = %s", (time_off_id,))
         conn.commit()
         cursor.close()
+        kick_gcal_queue()
         
-        logger.info(f"İzin silindi: id={time_off_id}")
+        logger.info(f"Off Day silindi: id={time_off_id}")
         
-        return jsonify({'success': True, 'message': 'İzin silindi'})
+        return jsonify({'success': True, 'message': 'Off Day silindi'})
     except Exception as e:
         if conn:
             conn.rollback()
         logger.error(f"delete_time_off hatası: {e}")
-        return jsonify({'success': False, 'message': 'İzin silinemedi'}), 500
+        return jsonify({'success': False, 'message': 'Off Day silinemedi'}), 500
     finally:
         release_db_connection(conn)
 
@@ -6157,9 +6312,9 @@ def create_database_backup():
         os.makedirs(BACKUP_DIR)
         logger.info(f"Backup klasörü oluşturuldu: {BACKUP_DIR}")
     
-    # Dosya adı: backup_2024-12-28_02-00-00.sql
+    # Dosya adı: roof_tattoo_backup_2024-12-28_02-00-00.sql
     timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    backup_filename = f"backup_{timestamp}.sql"
+    backup_filename = f"roof_tattoo_backup_{timestamp}.sql"
     backup_path = os.path.join(BACKUP_DIR, backup_filename)
     
     # Veritabanı bilgileri
@@ -6254,9 +6409,9 @@ def upload_to_google_drive(backup_path, backup_filename):
     import subprocess
     
     # Rclone remote adı ve Google Drive klasörü
-    # .env'den al, yoksa 'sefadrive' varsayılan (kullanıcının remote adı)
-    RCLONE_REMOTE = os.getenv('RCLONE_REMOTE', 'sefadrive')
-    GDRIVE_FOLDER = 'Randevu_Yedekleri'  # Google Drive'daki klasör adı
+    # .env'den al, yoksa 'rooftattoo' varsayılan (rclone remote adı)
+    RCLONE_REMOTE = os.getenv('RCLONE_REMOTE', 'rooftattoo')
+    GDRIVE_FOLDER = (os.getenv('RCLONE_FOLDER') or 'RoofTattoo_Yedekleri').strip()
     
     try:
         # Önce rclone'un kurulu olup olmadığını kontrol et (PATH'te olmayabilir)
@@ -6294,12 +6449,12 @@ def upload_to_google_drive(backup_path, backup_filename):
         file_size_mb = os.path.getsize(backup_path) / (1024 * 1024)
         logger.info(f"Backup dosyası boyutu: {file_size_mb:.2f} MB")
         
-        # Rclone remote'u kontrol et (tam path ile)
+        # Rclone remote'u kontrol et (ilk Google çağrısı token yenilemede 30s'yi aşabiliyor)
         remote_check = subprocess.run(
             [rclone_path, 'lsd', f'{RCLONE_REMOTE}:'],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=120
         )
         
         if remote_check.returncode != 0:
@@ -6319,7 +6474,7 @@ def upload_to_google_drive(backup_path, backup_filename):
             [rclone_path, 'lsd', f'{RCLONE_REMOTE}:{GDRIVE_FOLDER}'],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=120
         )
         
         if folder_check.returncode != 0:
@@ -6328,7 +6483,7 @@ def upload_to_google_drive(backup_path, backup_filename):
                 [rclone_path, 'mkdir', f'{RCLONE_REMOTE}:{GDRIVE_FOLDER}'],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=120
             )
             if mkdir_result.returncode != 0:
                 logger.warning(f"Klasör oluşturulamadı (zaten var olabilir): {mkdir_result.stderr}")
@@ -6373,8 +6528,14 @@ def upload_to_google_drive(backup_path, backup_filename):
             )
             return False
             
-    except subprocess.TimeoutExpired:
-        log_error(logger, E_BKP_001, "Google Drive yedek yukleme timeout (10 dakika)")
+    except subprocess.TimeoutExpired as timeout_err:
+        log_error(
+            logger,
+            E_BKP_001,
+            "Google Drive rclone komutu timeout",
+            timeout_sec=getattr(timeout_err, 'timeout', None),
+            cmd=(timeout_err.cmd[1] if getattr(timeout_err, 'cmd', None) else None),
+        )
         return False
     except FileNotFoundError:
         logger.warning(f"Rclone bulunamadı, Google Drive'a yükleme atlandı")
@@ -6390,11 +6551,12 @@ def cleanup_old_database_backups(backup_dir, keep_days):
     import glob
     
     cutoff_date = datetime.now() - timedelta(days=keep_days)
-    backup_pattern = os.path.join(backup_dir, 'backup_*.sql')
+    backup_files = glob.glob(os.path.join(backup_dir, 'roof_tattoo_backup_*.sql'))
+    backup_files += glob.glob(os.path.join(backup_dir, 'backup_*.sql'))
     
     deleted_count = 0
     
-    for backup_file in glob.glob(backup_pattern):
+    for backup_file in backup_files:
         file_time = datetime.fromtimestamp(os.path.getmtime(backup_file))
         
         if file_time < cutoff_date:
@@ -6673,19 +6835,13 @@ def get_staff_time_off(staff_id):
         
         time_offs = []
         for row in rows:
-            time_offs.append({
-                'id': row[0],
-                'date': row[1].strftime('%d.%m.%Y'),
-                'start_time': str(row[2])[:5] if row[2] else None,
-                'end_time': str(row[3])[:5] if row[3] else None,
-                'is_full_day': row[2] is None,
-                'reason': row[4] or ''
-            })
+            item = _serialize_time_off_row(row)
+            time_offs.append(item)
         
         return jsonify({'success': True, 'time_offs': time_offs})
     except Exception as e:
         logger.error(f"get_staff_time_off hatası: {e}")
-        return jsonify({'success': False, 'message': 'İzinler alınamadı'}), 500
+        return jsonify({'success': False, 'message': 'Off Day listesi alınamadı'}), 500
     finally:
         release_db_connection(conn)
 
@@ -6708,27 +6864,35 @@ def add_staff_time_off(staff_id):
     
     conn = None
     try:
+        hours, hour_err = _normalize_time_off_hours(start_time, end_time)
+        if hour_err:
+            return jsonify({'success': False, 'message': hour_err}), 400
+        start_time, end_time = hours
+
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
-            INSERT INTO time_off (staff_id, off_date, start_time, end_time, reason)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id
-        """, (staff_id, off_date, start_time, end_time, reason))
+        new_id, overlap = _insert_time_off(
+            cursor, staff_id, off_date, start_time, end_time, reason
+        )
         
-        new_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
+        kick_gcal_queue()
         
-        logger.info(f"Personel izni eklendi: staff_id={staff_id}, date={off_date}")
-        
-        return jsonify({'success': True, 'message': 'İzin eklendi', 'id': new_id})
+        logger.info(f"Personel Off Day eklendi: staff_id={staff_id}, date={off_date}")
+        message = 'Off Day eklendi'
+        if overlap:
+            message = (
+                f'Off Day eklendi. Bu aralıkta {overlap} mevcut randevu var; '
+                'randevular iptal edilmedi.'
+            )
+        return jsonify({'success': True, 'message': message, 'id': new_id, 'overlap_count': overlap})
     except Exception as e:
         if conn:
             conn.rollback()
         logger.error(f"add_staff_time_off hatası: {e}")
-        return jsonify({'success': False, 'message': 'İzin eklenemedi'}), 500
+        return jsonify({'success': False, 'message': 'Off Day eklenemedi'}), 500
     finally:
         release_db_connection(conn)
 
@@ -6746,29 +6910,34 @@ def delete_staff_time_off(staff_id, time_off_id):
         cursor = conn.cursor()
         
         # Verify time-off belongs to this staff
-        cursor.execute("SELECT staff_id FROM time_off WHERE id = %s", (time_off_id,))
+        cursor.execute(
+            "SELECT staff_id, google_event_id FROM time_off WHERE id = %s",
+            (time_off_id,),
+        )
         row = cursor.fetchone()
         
         if not row:
             cursor.close()
-            return jsonify({'success': False, 'message': 'İzin bulunamadı'}), 404
+            return jsonify({'success': False, 'message': 'Off Day bulunamadı'}), 404
         
         if row[0] != staff_id:
             cursor.close()
-            return jsonify({'success': False, 'message': 'Bu izin bu personele ait değil'}), 400
+            return jsonify({'success': False, 'message': 'Bu Off Day bu personele ait değil'}), 400
         
+        enqueue_event_delete(cursor, row[1])
         cursor.execute("DELETE FROM time_off WHERE id = %s", (time_off_id,))
         conn.commit()
         cursor.close()
+        kick_gcal_queue()
         
-        logger.info(f"Personel izni silindi: staff_id={staff_id}, time_off_id={time_off_id}")
+        logger.info(f"Personel Off Day silindi: staff_id={staff_id}, time_off_id={time_off_id}")
         
-        return jsonify({'success': True, 'message': 'İzin silindi'})
+        return jsonify({'success': True, 'message': 'Off Day silindi'})
     except Exception as e:
         if conn:
             conn.rollback()
         logger.error(f"delete_staff_time_off hatası: {e}")
-        return jsonify({'success': False, 'message': 'İzin silinemedi'}), 500
+        return jsonify({'success': False, 'message': 'Off Day silinemedi'}), 500
     finally:
         release_db_connection(conn)
 

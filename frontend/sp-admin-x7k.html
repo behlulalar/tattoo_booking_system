@@ -499,14 +499,14 @@
                             class="fas fa-save"></i> Kaydet</button>
                 </div>
 
-                <!-- İzin Günleri -->
+                <!-- Off Day -->
                 <div class="schedule-block" style="margin-top: 24px;">
                     <div class="schedule-header">
-                        <h3><i class="fas fa-calendar-times"></i> İzin Günleri</h3>
-                        <button id="add-time-off-btn" class="add-btn"><i class="fas fa-plus"></i> İzin Ekle</button>
+                        <h3><i class="fas fa-calendar-times"></i> Off Day</h3>
+                        <button id="add-time-off-btn" class="add-btn"><i class="fas fa-plus"></i> Off Day Ekle</button>
                     </div>
                     <div id="time-off-list" class="time-off-container">
-                        <p class="empty-message">İzin günü yok</p>
+                        <p class="empty-message">Off Day yok</p>
                     </div>
                 </div>
             </section>
@@ -1101,7 +1101,7 @@
     <div id="time-off-modal-overlay" class="modal-overlay" style="display: none;">
         <div class="service-modal">
             <div class="modal-header">
-                <h2><i class="fas fa-calendar-times"></i> İzin Ekle</h2>
+                <h2><i class="fas fa-calendar-times"></i> Off Day Ekle</h2>
                 <button id="close-time-off-modal-btn" class="close-btn">&times;</button>
             </div>
             <div class="modal-body">
@@ -1113,7 +1113,7 @@
                     <div class="form-group">
                         <label>
                             <input type="checkbox" id="time-off-full-day" checked>
-                            Tüm gün izin
+                            Tüm gün Off Day
                         </label>
                     </div>
                     <div id="time-off-hours" style="display: none;">
@@ -1130,7 +1130,7 @@
                     </div>
                     <div class="form-group">
                         <label for="time-off-reason">Açıklama (Opsiyonel)</label>
-                        <input type="text" id="time-off-reason" placeholder="Örn: Doktor randevusu">
+                        <input type="text" id="time-off-reason" placeholder="Örn: Diş, düğün, toplantı">
                     </div>
                     <div id="time-off-error" class="error-message"></div>
                     <button type="submit" class="save-btn"><i class="fas fa-save"></i> Kaydet</button>
@@ -1162,15 +1162,15 @@
                     </button>
                 </div>
 
-                <!-- İzin Günleri -->
+                <!-- Off Day -->
                 <div class="schedule-block" style="margin-top: 24px;">
                     <div class="schedule-header">
-                        <h3><i class="fas fa-calendar-times"></i> İzin Günleri</h3>
-                        <button id="add-staff-time-off-btn" class="add-btn"><i class="fas fa-plus"></i> İzin
+                        <h3><i class="fas fa-calendar-times"></i> Off Day</h3>
+                        <button id="add-staff-time-off-btn" class="add-btn"><i class="fas fa-plus"></i> Off Day
                             Ekle</button>
                     </div>
                     <div id="staff-time-off-list" class="time-off-container">
-                        <p class="empty-message">İzin günü yok</p>
+                        <p class="empty-message">Off Day yok</p>
                     </div>
                 </div>
             </div>
@@ -1449,31 +1449,31 @@
     <div id="time-off-form-overlay" class="modal-overlay" style="display:none;">
         <div class="profile-modal" style="max-width:440px;">
             <div class="modal-header">
-                <h2>İzin Ekle</h2>
+                <h2>Off Day Ekle</h2>
                 <button class="close-btn" onclick="closeTimeOffFormModal()"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <div style="margin-bottom:16px;">
-                    <label style="display:block;margin-bottom:6px;font-size:0.85rem;color:var(--text-secondary);">İzin Tarihi</label>
+                    <label style="display:block;margin-bottom:6px;font-size:0.85rem;color:var(--text-secondary);">Tarih</label>
                     <input type="date" id="tof-date" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:0.95rem;font-family:inherit;" />
                 </div>
                 <div style="margin-bottom:16px;display:flex;align-items:center;gap:10px;">
                     <input type="checkbox" id="tof-fullday" checked style="width:18px;height:18px;cursor:pointer;" />
-                    <label for="tof-fullday" style="color:var(--text-secondary);font-size:0.9rem;cursor:pointer;">Tüm gün izin</label>
+                    <label for="tof-fullday" style="color:var(--text-secondary);font-size:0.9rem;cursor:pointer;">Tüm gün Off Day</label>
                 </div>
                 <div id="tof-time-range" style="display:none;gap:12px;margin-bottom:16px;">
                     <div style="flex:1;">
                         <label style="display:block;margin-bottom:6px;font-size:0.85rem;color:var(--text-secondary);">Başlangıç</label>
-                        <input type="time" id="tof-start" value="10:00" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:0.95rem;font-family:inherit;" />
+                        <input type="time" id="tof-start" value="14:00" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:0.95rem;font-family:inherit;" />
                     </div>
                     <div style="flex:1;">
                         <label style="display:block;margin-bottom:6px;font-size:0.85rem;color:var(--text-secondary);">Bitiş</label>
-                        <input type="time" id="tof-end" value="12:00" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:0.95rem;font-family:inherit;" />
+                        <input type="time" id="tof-end" value="16:00" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:0.95rem;font-family:inherit;" />
                     </div>
                 </div>
                 <div style="margin-bottom:20px;">
                     <label style="display:block;margin-bottom:6px;font-size:0.85rem;color:var(--text-secondary);">Açıklama (opsiyonel)</label>
-                    <input type="text" id="tof-reason" placeholder="Örn: Kişisel izin" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:0.95rem;font-family:inherit;" />
+                    <input type="text" id="tof-reason" placeholder="Örn: Diş, düğün, toplantı" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;font-size:0.95rem;font-family:inherit;" />
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end;">
                     <button onclick="closeTimeOffFormModal()" style="padding:10px 20px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">İptal</button>

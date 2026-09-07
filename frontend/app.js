@@ -70,7 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  // Match sefa_web LoadingScreen timings (reveal ends ~2.8s) + short hold + fade out
+  // Splash timings (reveal ends ~2.8s) + short hold + fade out
   requestAnimationFrame(() => splash.classList.add('show'));
   const isMobile = window.matchMedia('(max-width: 768px)').matches;
   setTimeout(reveal, isMobile ? 1750 : 2300);

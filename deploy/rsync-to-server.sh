@@ -2,7 +2,7 @@
 # Production deploy: proje dosyalarını sunucuya gönder (.env dahil)
 set -euo pipefail
 
-SERVER="${DEPLOY_SERVER:-root@45.141.150.48}"
+SERVER="${DEPLOY_SERVER:-root@<SUNUCU_IP>}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-/opt/roof_tattoo}"
 EXPECTED_DIR="/opt/roof_tattoo"
 EXPECTED_TITLE="Roof Tattoo Gallery"

@@ -6,7 +6,7 @@ echo.
 
 REM Eski backend process'lerini kapat
 echo [1/3] Eski backend kapatiliyor...
-powershell -Command "Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.Path -like '*sefa_randevu*backend*'} | Stop-Process -Force"
+powershell -Command "Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.Path -like '*roof_tattoo*backend*'} | Stop-Process -Force"
 timeout /t 2 /nobreak > nul
 
 REM Backend'i baslat

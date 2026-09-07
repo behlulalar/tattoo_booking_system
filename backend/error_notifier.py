@@ -1,6 +1,6 @@
 """
 Kritik Hata E-posta Bildirim Modülü
-Sefa Pertev Hair Studio - Randevu Sistemi
+Roof Tattoo Gallery - Randevu Sistemi
 
 Bu modül kritik hatalarda e-posta bildirimi gönderir.
 Rate limiting ile spam önlenir (aynı hata için saatte 1 e-posta).
@@ -120,7 +120,7 @@ def send_error_notification(error_type, error_message, details=None):
                 
                 <div class="footer">
                     <p>Bu otomatik bir bildirimdir. Lütfen sistemi kontrol edin.</p>
-                    <p>Sefa Pertev Hair Studio - Randevu Sistemi</p>
+                    <p>Roof Tattoo Gallery - Randevu Sistemi</p>
                 </div>
             </div>
         </body>

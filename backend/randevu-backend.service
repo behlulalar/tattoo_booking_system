@@ -1,5 +1,9 @@
+# LEGACY — production'da bu unit'i kurma.
+# Kurulu servis: roof-tattoo-backend
+# Kaynak: backend/tattoo-randevu-backend.service.example
+
 [Unit]
-Description=Randevu Backend Service (Gunicorn)
+Description=Roof Tattoo Gallery Backend (Gunicorn) — legacy port bind, kullanma
 After=network.target postgresql.service
 Wants=postgresql.service
 
@@ -9,16 +13,16 @@ User=root
 Group=root
 
 # WorkingDirectory: Projenin tam yolu
-WorkingDirectory=/opt/randevu/backend
+WorkingDirectory=/opt/roof_tattoo/backend
 
 # Environment: Virtual environment path
-Environment="PATH=/opt/randevu/venv/bin"
-Environment="PYTHONPATH=/opt/randevu/backend"
+Environment="PATH=/opt/roof_tattoo/venv/bin"
+Environment="PYTHONPATH=/opt/roof_tattoo/backend"
 
 # ExecStart: Gunicorn komutu
 # --preload: App'i önce yükle (verification_codes memory paylaşımı için gerekli)
 # Her worker'ın kendi DB pool'u olacak (pool başlatması app yüklendikten sonra)
-ExecStart=/opt/randevu/venv/bin/gunicorn \
+ExecStart=/opt/roof_tattoo/venv/bin/gunicorn \
     -w 4 \
     --threads 2 \
     --bind 0.0.0.0:3000 \
@@ -26,10 +30,10 @@ ExecStart=/opt/randevu/venv/bin/gunicorn \
     --max-requests 1000 \
     --max-requests-jitter 50 \
     --preload \
-    --access-logfile /opt/randevu/backend/gunicorn_access.log \
-    --error-logfile /opt/randevu/backend/gunicorn_error.log \
+    --access-logfile /opt/roof_tattoo/backend/gunicorn_access.log \
+    --error-logfile /opt/roof_tattoo/backend/gunicorn_error.log \
     --log-level info \
-    --pid /opt/randevu/backend/gunicorn.pid \
+    --pid /opt/roof_tattoo/backend/gunicorn.pid \
     app:app
 
 # Graceful reload

@@ -133,10 +133,17 @@ CREATE TABLE IF NOT EXISTS time_off (
   end_time     TIME,
   reason       VARCHAR(100),
   created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  google_event_id VARCHAR(255),
+  google_etag VARCHAR(255),
+  google_calendar_id VARCHAR(255),
+  google_updated_at TIMESTAMPTZ,
   UNIQUE(staff_id, off_date, start_time)
 );
 CREATE INDEX IF NOT EXISTS idx_time_off_staff ON time_off(staff_id);
 CREATE INDEX IF NOT EXISTS idx_time_off_date ON time_off(off_date);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_time_off_google_event_id
+    ON time_off (google_event_id)
+    WHERE google_event_id IS NOT NULL;
 
 -- Webhook cooldown (multi-worker safety)
 CREATE TABLE IF NOT EXISTS webhook_cooldown (

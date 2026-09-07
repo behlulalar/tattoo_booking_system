@@ -30,7 +30,7 @@ echo "=========================================="
 
 # 2. Veritabanı bağlantısını test et
 echo "[2] Veritabanı bağlantı testi:"
-cd /opt/randevu/backend
+cd /opt/roof_tattoo/backend
 source ../venv/bin/activate
 
 # .env dosyasından veritabanı bilgilerini al
@@ -64,14 +64,14 @@ echo "=========================================="
 
 # 3. Backend'i yeniden başlat (connection pool'u temizlemek için)
 echo "[3] Backend servisi yeniden başlatılıyor..."
-sudo systemctl restart randevu-backend
+sudo systemctl restart roof-tattoo-backend
 sleep 3
 
-if systemctl is-active --quiet randevu-backend; then
+if systemctl is-active --quiet roof-tattoo-backend; then
     echo "✅ Backend yeniden başlatıldı"
 else
     echo "❌ Backend başlatılamadı!"
-    sudo systemctl status randevu-backend --no-pager -l | tail -20
+    sudo systemctl status roof-tattoo-backend --no-pager -l | tail -20
 fi
 
 echo ""
