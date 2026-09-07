@@ -1248,6 +1248,17 @@ strong, b, th {
     background: rgba(60, 60, 60, 0.9);
 }
 
+.gcal-event--offday {
+    background: rgba(90, 90, 110, 0.92);
+    border-left-color: #a8a8c0;
+    border-style: dashed;
+}
+
+.source-badge.source-off_day {
+    background: rgba(90, 90, 110, 0.35);
+    color: #c8c8dc;
+}
+
 .gcal-now-line {
     position: absolute;
     left: 0;

@@ -477,8 +477,8 @@ function submitTimeOffForm() {
   const result = {
     date,
     off_date: date,
-    start_time: fullDay ? null : ($('tof-start').value || '10:00'),
-    end_time: fullDay ? null : ($('tof-end').value || '12:00'),
+    start_time: fullDay ? null : ($('tof-start').value || '14:00'),
+    end_time: fullDay ? null : ($('tof-end').value || '16:00'),
     reason: $('tof-reason').value || '',
   };
   $('time-off-form-overlay').style.display = 'none';
@@ -987,7 +987,7 @@ function statusText(status) {
 
 function appointmentSourceKey(source) {
   const key = String(source || 'admin').toLowerCase();
-  return ['customer', 'admin', 'google'].includes(key) ? key : 'admin';
+  return ['customer', 'admin', 'google', 'off_day'].includes(key) ? key : 'admin';
 }
 
 function appointmentSourceText(source) {
@@ -995,6 +995,7 @@ function appointmentSourceText(source) {
     customer: 'Müşteri',
     admin: 'Admin',
     google: 'Google',
+    off_day: 'Off Day',
   };
   return map[appointmentSourceKey(source)];
 }
@@ -2682,10 +2683,14 @@ async function loadAppointments() {
     return;
   }
   _appointmentsData = data.appointments || [];
+  _appointmentsOffDays = data.time_offs || [];
   renderAppointmentsGrouped('all-appointments', _appointmentsData);
 
   // Tabloyu liste ile senkronla: randevuların olduğu haftaya konumlan
-  setWeekStart('all-appointments-table', pickRelevantWeekStart(_appointmentsData));
+  setWeekStart('all-appointments-table', pickRelevantWeekStart([
+    ..._appointmentsData,
+    ..._appointmentsOffDays,
+  ]));
 
   // Tablo görünümü aktifse onu da güncelle
   const tableView = $('appointments-table-view');
@@ -2880,6 +2885,8 @@ function isDayClosedForSchedule(workingHours, dateObj) {
 
 let _appointmentsData    = [];   // Randevular section
 let _allAppointmentsData = [];   // Tüm Randevular section
+let _appointmentsOffDays = [];
+let _allAppointmentsOffDays = [];
 const _tableWeekStartByContainer = {};
 
 function normalizeDateOnly(d) {
@@ -2995,6 +3002,38 @@ function formatGcalMonthYear(dateObj) {
   return raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
+function mapTimeOffsToGridItems(timeOffs, gridStart, lastSlotStart) {
+  const startFallback = gridStart || '10:00';
+  const endMinsFallback = timeToMinutes(lastSlotStart || '19:00') + 60;
+  return (timeOffs || []).map((t) => {
+    const isFull = !!(t.is_full_day || !t.start_time);
+    const start = isFull ? startFallback : t.start_time;
+    const startMins = timeToMinutes(start);
+    const endMins = isFull
+      ? endMinsFallback
+      : timeToMinutes(t.end_time || start);
+    const duration = Math.max(endMins - startMins, 30);
+    const label = t.reason ? `Off Day · ${t.reason}` : 'Off Day';
+    return {
+      id: `off-${t.id}`,
+      kind: 'off_day',
+      date: t.date,
+      time: start,
+      duration_minutes: duration,
+      status: 'off_day',
+      source: 'off_day',
+      customer: { full_name: label },
+      staff: t.staff || {},
+    };
+  });
+}
+
+function offDaysForTable(tableContainerId) {
+  return tableContainerId === 'all-appointments-table-container'
+    ? _allAppointmentsOffDays
+    : _appointmentsOffDays;
+}
+
 function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   const a = ev.apt;
   const startMins = ev.start;
@@ -3010,11 +3049,14 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
     completed: 'gcal-event--completed',
     cancelled: 'gcal-event--cancelled',
     no_show: 'gcal-event--noshow',
+    off_day: 'gcal-event--offday',
   };
   const statusClass = statusColors[a.status] || 'gcal-event--default';
 
-  const customer = a.customer?.full_name || (formatPhoneDisplay(a.customer?.phone) || 'Müşteri');
-  const phone = formatPhoneDisplay(a.customer?.phone);
+  const customer = a.kind === 'off_day'
+    ? (a.customer?.full_name || 'Off Day')
+    : (a.customer?.full_name || (formatPhoneDisplay(a.customer?.phone) || 'Müşteri'));
+  const phone = a.kind === 'off_day' ? '' : formatPhoneDisplay(a.customer?.phone);
   const tr = a.tattoo_request || {};
   const detailParts = [tr.description, tr.body_area, tr.size].filter(Boolean);
   const detailLine = detailParts.join(' · ');
@@ -3048,6 +3090,12 @@ async function renderAppointmentsTable(itemsRaw, tableContainerId) {
   const staffIdForHours = getTableStaffIdForHours(tableContainerId);
   const workingHours = await fetchScheduleWorkingHours(staffIdForHours);
   let times = await fetchScheduleGridTimes(staffIdForHours);
+  let offs = offDaysForTable(tableContainerId);
+  if (staffIdForHours) {
+    offs = offs.filter((t) => !t.staff?.id || Number(t.staff.id) === Number(staffIdForHours));
+  }
+  const offItems = mapTimeOffsToGridItems(offs, times[0], times[times.length - 1]);
+  items = items.concat(offItems.filter((a) => a.date && weekDateSet.has(a.date)));
   times = ensureAppointmentTimesInGrid(times, items);
 
   if (!times.length) times = buildScheduleTimeSlots();
@@ -3197,10 +3245,14 @@ async function loadAllAppointments() {
     return;
   }
   _allAppointmentsData = data.appointments || [];
+  _allAppointmentsOffDays = data.time_offs || [];
   renderAppointmentsGrouped('all-appointments-container', _allAppointmentsData);
 
   // Tabloyu liste ile senkronla: randevuların olduğu haftaya konumlan
-  setWeekStart('all-appointments-table-container', pickRelevantWeekStart(_allAppointmentsData));
+  setWeekStart('all-appointments-table-container', pickRelevantWeekStart([
+    ..._allAppointmentsData,
+    ..._allAppointmentsOffDays,
+  ]));
 
   const tableView = $('all-appointments-table-view');
   if (tableView && tableView.style.display !== 'none') {
@@ -3427,7 +3479,7 @@ function renderTimeOff(items, { containerId = 'time-off-list', deleteUrlFor } = 
   const container = $(containerId);
   if (!container) return;
   if (!items || items.length === 0) {
-    container.innerHTML = '<p class="empty-message">İzin günü yok</p>';
+    container.innerHTML = '<p class="empty-message">Off Day yok</p>';
     return;
   }
   container.innerHTML = items
@@ -4098,7 +4150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       showToast(data.message || 'Eklenemedi', 'error');
       return;
     }
-    showToast('İzin eklendi', 'success');
+    showToast(data.message || 'Off Day eklendi', 'success');
     await loadStaffSchedule();
   });
 
@@ -4174,7 +4226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       showToast(data.message || 'Eklenemedi', 'error');
       return;
     }
-    showToast('İzin eklendi', 'success');
+    showToast(data.message || 'Off Day eklendi', 'success');
     await loadSchedule();
   });
 

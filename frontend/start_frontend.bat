@@ -18,7 +18,7 @@ echo.
 echo ========================================
 echo   Frontend baslatildi!
 echo   Port: 3000
-echo   URL: http://45.141.150.48:3000
+echo   URL: https://tattoo.roof.behlulalar.online
 echo ========================================
 echo.
 pause

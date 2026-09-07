@@ -1,5 +1,5 @@
 # Sadece tattoo.roof.behlulalar.online → /opt/roof_tattoo (Roof Tattoo Gallery)
-# tattoo.behlulalar.online → ayrı config: ../Dövme_Randevu_Sistemi/deploy/nginx-tattoo-randevu.conf.example
+# Host: 109.122.6.59
 
 server {
     listen 80;

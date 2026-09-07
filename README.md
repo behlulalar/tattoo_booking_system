@@ -121,6 +121,8 @@ curl http://127.0.0.1:3000/api/health/whatsapp
 
 Sunucuya güvenli kurulum: [`DEPLOY_SERVER_GUIDE.md`](DEPLOY_SERVER_GUIDE.md)
 
+Canlı: [tattoo.roof.behlulalar.online](https://tattoo.roof.behlulalar.online) (`109.122.6.59`), kod `/opt/roof_tattoo`.
+
 Özet: kod `rsync` → `deploy/fix-roof-only-on-server.sh` → systemd (`roof-tattoo-backend`) + nginx.
 
 **Asla repoya commit etmeyin:** `backend/.env`, `credentials/google-calendar.json`, `evolution_settings.json` (`.gitignore` ile hariç tutulur).

@@ -1,11 +1,14 @@
 ## Sunucuya Çakışmasız Deployment (Ubuntu + Nginx + Systemd)
 
+Canlı kurulum: `109.122.6.59` — `https://tattoo.roof.behlulalar.online`  
+Kod: `/opt/roof_tattoo` · servis: `roof-tattoo-backend`
+
 Bu rehber, aynı sunucuda başka sistemler varken güvenli deployment içindir.
 
 ### 1) Sunucuya bağlan
 
 ```bash
-ssh root@45.141.150.48
+ssh root@109.122.6.59
 ```
 
 ### 2) Çakışma ön kontrolü
@@ -46,7 +49,7 @@ chmod +x deploy/rsync-to-server.sh
 Manuel rsync (**mutlaka `venv/` hariç tut** — aksi halde sunucudaki Gunicorn silinir):
 
 ```bash
-rsync -avz --delete "/Users/muhammedbehlulalar/Desktop/Dövme_Randevu_Sistemi/" root@45.141.150.48:/opt/roof_tattoo/ \
+rsync -avz --delete ./ root@109.122.6.59:/opt/roof_tattoo/ \
   --exclude 'venv/' --exclude 'backend/.venv' --exclude 'backend/backups' --exclude 'backend/.env.local' --exclude 'backend/*.log'
 ```
 
@@ -104,7 +107,7 @@ psql -h <DB_HOST> -U <DB_USER> -d <DB_NAME> -f /opt/roof_tattoo/backend/migratio
 ### 8) Systemd service kur
 
 ```bash
-cp /opt/roof_tattoo/backend/roof-tattoo-backend.service.example /etc/systemd/system/roof-tattoo-backend.service
+cp /opt/roof_tattoo/backend/tattoo-randevu-backend.service.example /etc/systemd/system/roof-tattoo-backend.service
 nano /etc/systemd/system/roof-tattoo-backend.service
 ```
 

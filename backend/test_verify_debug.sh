@@ -17,7 +17,7 @@ echo ""
 
 # 2. Backend loglarında kod kaydını kontrol et
 echo "[2] Son backend logları (kod gönderimi)..."
-sudo journalctl -u randevu-backend -n 20 --no-pager | grep -i "doğrulama\|verification\|5359708001" | tail -10
+sudo journalctl -u roof-tattoo-backend -n 20 --no-pager | grep -i "doğrulama\|verification\|5359708001" | tail -10
 echo ""
 
 # 3. Bekle (2 saniye)

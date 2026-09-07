@@ -1,6 +1,6 @@
 """
 PostgreSQL Veritabanı Yedekleme Scripti
-Sefa Pertev Hair Studio - Randevu Sistemi
+Roof Tattoo Gallery - Randevu Sistemi
 
 Kullanım: python backup_database.py
 Windows Task Scheduler ile günlük çalıştırılabilir.
@@ -35,9 +35,9 @@ def create_backup():
         os.makedirs(BACKUP_DIR)
         print(f"📁 Backup klasörü oluşturuldu: {BACKUP_DIR}")
     
-    # Dosya adı: backup_2024-12-28_03-00-00.sql
+    # Dosya adı: roof_tattoo_backup_2024-12-28_03-00-00.sql
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    backup_filename = f"backup_{timestamp}.sql"
+    backup_filename = f"roof_tattoo_backup_{timestamp}.sql"
     backup_path = os.path.join(BACKUP_DIR, backup_filename)
     
     # pg_dump komutu
@@ -88,11 +88,12 @@ def cleanup_old_backups():
     """Eski yedekleri temizler"""
     
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=KEEP_DAYS)
-    backup_pattern = os.path.join(BACKUP_DIR, 'backup_*.sql')
+    backup_files = glob.glob(os.path.join(BACKUP_DIR, 'roof_tattoo_backup_*.sql'))
+    backup_files += glob.glob(os.path.join(BACKUP_DIR, 'backup_*.sql'))
     
     deleted_count = 0
     
-    for backup_file in glob.glob(backup_pattern):
+    for backup_file in backup_files:
         file_time = datetime.datetime.fromtimestamp(os.path.getmtime(backup_file))
         
         if file_time < cutoff_date:
@@ -112,8 +113,11 @@ def cleanup_old_backups():
 def list_backups():
     """Mevcut yedekleri listeler"""
     
-    backup_pattern = os.path.join(BACKUP_DIR, 'backup_*.sql')
-    backups = sorted(glob.glob(backup_pattern), reverse=True)
+    backups = sorted(
+        glob.glob(os.path.join(BACKUP_DIR, 'roof_tattoo_backup_*.sql'))
+        + glob.glob(os.path.join(BACKUP_DIR, 'backup_*.sql')),
+        reverse=True,
+    )
     
     if not backups:
         print("📭 Henüz yedek yok")

@@ -7,7 +7,7 @@ echo "  Virtual Environment ve Gunicorn Düzeltme"
 echo "=========================================="
 echo ""
 
-cd /opt/randevu
+cd /opt/roof_tattoo
 
 # Virtual environment'i kontrol et
 if [ ! -d "venv" ]; then
@@ -34,8 +34,8 @@ echo "[4/4] Bağımlılıklar yükleniyor (requirements.txt)..."
 REQ_FILE=""
 if [ -f "backend/requirements.txt" ]; then
     REQ_FILE="backend/requirements.txt"
-elif [ -f "/opt/randevu/backend/requirements.txt" ]; then
-    REQ_FILE="/opt/randevu/backend/requirements.txt"
+elif [ -f "/opt/roof_tattoo/backend/requirements.txt" ]; then
+    REQ_FILE="/opt/roof_tattoo/backend/requirements.txt"
 elif [ -f "requirements.txt" ]; then
     REQ_FILE="requirements.txt"
 fi
@@ -46,7 +46,7 @@ if [ -n "$REQ_FILE" ]; then
 else
     echo "⚠️  requirements.txt bulunamadı, manuel yükleme yapılıyor..."
     echo "💡 Dosya konumlarını kontrol ediyorum..."
-    echo "   - /opt/randevu/backend/requirements.txt: $([ -f /opt/randevu/backend/requirements.txt ] && echo '✅' || echo '❌')"
+    echo "   - /opt/roof_tattoo/backend/requirements.txt: $([ -f /opt/roof_tattoo/backend/requirements.txt ] && echo '✅' || echo '❌')"
     echo "   - $(pwd)/backend/requirements.txt: $([ -f backend/requirements.txt ] && echo '✅' || echo '❌')"
     echo ""
     echo "📦 Gerekli paketler manuel olarak yükleniyor..."
@@ -74,6 +74,6 @@ echo ""
 echo "✅ Virtual environment ve Gunicorn hazır!"
 echo ""
 echo "Test etmek için:"
-echo "  source /opt/randevu/venv/bin/activate"
+echo "  source /opt/roof_tattoo/venv/bin/activate"
 echo "  gunicorn --version"
 

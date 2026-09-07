@@ -75,6 +75,28 @@ def main():
             )
             is not None,
         )
+        check(
+            'queue.time_off_id kolonu',
+            _one(
+                conn,
+                """
+                SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'google_calendar_queue' AND column_name = 'time_off_id'
+                """,
+            )
+            is not None,
+        )
+        check(
+            'time_off.google_event_id kolonu',
+            _one(
+                conn,
+                """
+                SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'time_off' AND column_name = 'google_event_id'
+                """,
+            )
+            is not None,
+        )
 
         print()
         print('2) Olmayan randevu icin upsert -> is dusurulmeli (sonsuz denenmemeli)')

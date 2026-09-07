@@ -23,8 +23,7 @@ Gunicorn ile 4 worker kullanıldığında:
 
 ```bash
 # Local'de proje klasöründe çalıştırın
-cd /Users/muhammedbehlulalar/Desktop/randevu
-./sync_to_server.sh
+./deploy/rsync-to-server.sh
 ```
 
 Bu script şunları yapar:
@@ -38,10 +37,10 @@ Bu script şunları yapar:
 
 ```bash
 # Sunucuya bağlan
-ssh root@88.209.248.141
+ssh root@109.122.6.59
 
 # Veritabanına bağlan ve migration'ı çalıştır
-cd /opt/randevu/backend
+cd /opt/roof_tattoo/backend
 
 # .env dosyasını yorumları filtreleyerek yükle
 set -a
@@ -56,7 +55,7 @@ psql -h $DATABASE_HOST -p $DATABASE_PORT -U $DATABASE_USER -d $DATABASE_NAME -f 
 Eğer yukarıdaki yöntem çalışmazsa, değişkenleri manuel olarak ayarlayın:
 
 ```bash
-cd /opt/randevu/backend
+cd /opt/roof_tattoo/backend
 
 # .env dosyasından değerleri oku (yorumları atlayarak)
 DATABASE_HOST=$(grep DATABASE_HOST .env | cut -d '=' -f2 | tr -d ' ')
@@ -74,7 +73,7 @@ psql -h $DATABASE_HOST -p $DATABASE_PORT -U $DATABASE_USER -d $DATABASE_NAME -f 
 
 **Alternatif (interactive):**
 ```bash
-cd /opt/randevu/backend
+cd /opt/roof_tattoo/backend
 export $(cat .env | xargs)
 psql -h $DATABASE_HOST -p $DATABASE_PORT -U $DATABASE_USER -d $DATABASE_NAME
 
@@ -90,8 +89,8 @@ SELECT * FROM webhook_cooldown LIMIT 5;
 Migration uygulandıktan sonra backend'i restart edin:
 
 ```bash
-systemctl restart randevu-backend
-systemctl status randevu-backend
+systemctl restart roof-tattoo-backend
+systemctl status roof-tattoo-backend
 ```
 
 ## Değişiklikler
@@ -121,12 +120,12 @@ Migration'dan sonra:
 
 1. **Backend'i yeniden başlat**:
 ```bash
-systemctl restart randevu-backend
+systemctl restart roof-tattoo-backend
 ```
 
 2. **Log'ları kontrol et**:
 ```bash
-tail -f /opt/randevu/backend/app.log
+tail -f /opt/roof_tattoo/backend/app.log
 # "✅ Scheduler başlatıldı" mesajını kontrol et
 ```
 

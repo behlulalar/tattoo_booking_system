@@ -2,7 +2,7 @@
 # Migration uygulama script'i
 # Webhook cooldown ve verification codes tablolarını oluşturur
 
-cd /opt/randevu/backend
+cd /opt/roof_tattoo/backend
 
 # .env dosyasından sadece database değişkenlerini güvenli şekilde al
 export DATABASE_HOST=$(grep '^DATABASE_HOST=' .env 2>/dev/null | cut -d '=' -f2 | tr -d ' ' | tr -d '"' | tr -d "'" | head -1)

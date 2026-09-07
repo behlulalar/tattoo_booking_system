@@ -1,8 +1,10 @@
 """
 PostgreSQL randevulari paylaşılan Google Calendar ile senkronlar.
 
-Sistem randevusu -> Google (kuyruk). Elle Google etkinliği -> source=google
-randevu. origin=roof taşı/sil inbound. Tüm-gün randevu/meşguliyet olmaz.
+Sistem randevusu -> Google (kuyruk). Off Day (time_off) -> Google (kuyruk).
+Elle Google etkinliği: telefon varsa source=google randevu; sanatçı + telefonsuz
+veya Off Day anahtar kelimesi -> time_off. origin=roof taşı/sil inbound.
+origin=roof_off Off Day taşı/sil. Tüm-gün randevu olmaz; tüm-gün Off Day olur.
 Yinelenen master randevu olmaz; meşgul zaman olarak kalabilir.
 Google kaynaklı hatırlatma/bakım WhatsApp'ı app.py job'larında (telefon varsa).
 """
@@ -45,25 +47,23 @@ _CLAIM_LEASE_SECONDS = 300
 _GCAL_ADVISORY_NAMESPACE = 0x6743
 
 GCAL_EVENT_ORIGIN = 'roof'
+GCAL_EVENT_ORIGIN_OFF = 'roof_off'
+_GCAL_ADVISORY_NAMESPACE_OFF = 0x6744
 _BUSY_LOOKBACK_DAYS = 90
 _BUSY_LOOKAHEAD_DAYS = 90
 _GCAL_PHONE_RE = re.compile(r'(?<!\d)(0?5\d{9})(?!\d)')
+_OFF_DAY_KEYWORD_RE = re.compile(r'\b(off[\s\-]?day|offday|izin)\b')
 _MIN_ARTIST_KEY_LEN = 3
 _unmatched_artist_logged = set()
 _UNMATCHED_LOG_CAP = 400
 
-GCAL_STAFF_COLOR_IDS = (
-    '7',   # Peacock (mavi)
-    '6',   # Tangerine (turuncu)
-    '10',  # Basil (yeşil)
-    '9',   # Blueberry (lacivert)
-    '4',   # Flamingo (pembe)
-    '11',  # Tomato (kırmızı)
-    '3',   # Grape (mor)
-    '5',   # Banana (sarı)
-    '2',   # Sage (açık yeşil)
-    '1',   # Lavender
-)
+# Google Calendar etkinlik renkleri (colorId 1–11)
+# https://developers.google.com/workspace/calendar/api/v3/reference/colors
+GCAL_COLOR_TOMATO = '11'      # Domates
+GCAL_COLOR_SAGE = '2'         # Adaçayı
+GCAL_COLOR_TANGERINE = '6'    # Mandalina
+GCAL_COLOR_BANANA = '5'       # Muz
+GCAL_COLOR_GRAPHITE = '8'
 
 GCAL_COLOR_NAMES = {
     '1': 'Lavender',
@@ -79,16 +79,56 @@ GCAL_COLOR_NAMES = {
     '11': 'Tomato',
 }
 
+# İsim (katlanmış ilk kelime) — stüdyo paleti
+GCAL_STAFF_COLOR_BY_NAME = {
+    'tuncer': GCAL_COLOR_TOMATO,
+    'mert': GCAL_COLOR_SAGE,
+    'berke': GCAL_COLOR_TANGERINE,
+    'ibrahim': GCAL_COLOR_BANANA,
+}
 
-def _color_id_for_staff(staff_id):
-    """Her sanatçıya Google Calendar colorId (1-11) — sabit, birbirinden ayrı."""
-    if not staff_id:
-        return '8'
-    return GCAL_STAFF_COLOR_IDS[(max(int(staff_id), 1) - 1) % len(GCAL_STAFF_COLOR_IDS)]
+# staff_id yedek eşleme (Roof production)
+GCAL_STAFF_COLOR_BY_ID = {
+    1: GCAL_COLOR_TANGERINE,  # Berke — Mandalina
+    2: GCAL_COLOR_TOMATO,     # Tuncer — Domates
+    3: GCAL_COLOR_BANANA,     # İbrahim — Muz
+    4: GCAL_COLOR_SAGE,       # Mert — Adaçayı
+}
+
+# Bilinmeyen sanatçı için dönüşümlü palet
+GCAL_STAFF_COLOR_IDS = (
+    GCAL_COLOR_TANGERINE,
+    GCAL_COLOR_TOMATO,
+    GCAL_COLOR_BANANA,
+    GCAL_COLOR_SAGE,
+    '7',
+    '10',
+    '9',
+    '4',
+    '3',
+    '1',
+)
 
 
-def _staff_color_label(staff_id):
-    color_id = _color_id_for_staff(staff_id)
+def _color_id_for_staff(staff_id, staff_name=None):
+    """Sanatçıya sabit Google Calendar colorId (1-11)."""
+    if staff_name:
+        first = _fold_tr(str(staff_name).split()[0] if str(staff_name).split() else '')
+        if first in GCAL_STAFF_COLOR_BY_NAME:
+            return GCAL_STAFF_COLOR_BY_NAME[first]
+    try:
+        sid = int(staff_id) if staff_id else None
+    except (TypeError, ValueError):
+        sid = None
+    if sid in GCAL_STAFF_COLOR_BY_ID:
+        return GCAL_STAFF_COLOR_BY_ID[sid]
+    if not sid:
+        return GCAL_COLOR_GRAPHITE
+    return GCAL_STAFF_COLOR_IDS[(max(sid, 1) - 1) % len(GCAL_STAFF_COLOR_IDS)]
+
+
+def _staff_color_label(staff_id, staff_name=None):
+    color_id = _color_id_for_staff(staff_id, staff_name)
     return GCAL_COLOR_NAMES.get(color_id, color_id)
 
 
@@ -358,6 +398,15 @@ def _extended_properties(appointment_id, content_hash):
     }
 
 
+def _off_day_extended_properties(time_off_id):
+    return {
+        'private': {
+            'origin': GCAL_EVENT_ORIGIN_OFF,
+            'time_off_id': str(int(time_off_id)),
+        }
+    }
+
+
 def _event_private(event):
     props = (event or {}).get('extendedProperties') or {}
     private = props.get('private') or {}
@@ -366,10 +415,20 @@ def _event_private(event):
 
 def _is_our_event(event):
     private = _event_private(event)
-    if (private.get('origin') or '').strip() == GCAL_EVENT_ORIGIN:
+    origin = (private.get('origin') or '').strip()
+    if origin in (GCAL_EVENT_ORIGIN, GCAL_EVENT_ORIGIN_OFF):
         return True
     description = (event or {}).get('description') or ''
-    return 'Randevu ID:' in description
+    return 'Randevu ID:' in description or 'Off Day ID:' in description
+
+
+def _is_off_day_origin(event):
+    private = _event_private(event)
+    origin = (private.get('origin') or '').strip()
+    if origin == GCAL_EVENT_ORIGIN_OFF:
+        return True
+    description = (event or {}).get('description') or ''
+    return 'Off Day ID:' in description
 
 
 def _our_appointment_id_from_event(event):
@@ -379,6 +438,47 @@ def _our_appointment_id_from_event(event):
         return int(raw)
     match = re.search(r'Randevu ID:\s*(\d+)', (event or {}).get('description') or '')
     return int(match.group(1)) if match else None
+
+
+def _our_time_off_id_from_event(event):
+    private = _event_private(event)
+    raw = (private.get('time_off_id') or '').strip()
+    if raw.isdigit():
+        return int(raw)
+    match = re.search(r'Off Day ID:\s*(\d+)', (event or {}).get('description') or '')
+    return int(match.group(1)) if match else None
+
+
+def _title_has_off_day_keyword(summary):
+    folded = _fold_tr(_normalize_title_text(summary))
+    return bool(_OFF_DAY_KEYWORD_RE.search(folded))
+
+
+def _strip_off_day_keywords(title):
+    remaining = _normalize_title_text(title)
+    remaining = re.sub(r'(?i)off[\s\-]?day|offday|izin', ' ', remaining)
+    return _normalize_title_text(remaining)
+
+
+def _parse_off_day_from_title(summary, artist_rows):
+    """Başlıktan Off Day sinyali: sanatçı, anahtar kelime, telefon, açıklama."""
+    title = (summary or '').strip()
+    phone = None
+    match = _GCAL_PHONE_RE.search(title)
+    if match:
+        phone = _normalize_customer_phone(match.group(1))
+        title_wo_phone = (title[:match.start()] + ' ' + title[match.end():]).strip()
+    else:
+        title_wo_phone = title
+
+    has_keyword = _title_has_off_day_keyword(title)
+    staff_id, staff_name, matched_key = _resolve_staff_from_title(title_wo_phone, artist_rows)
+    remaining = title_wo_phone
+    if staff_id:
+        remaining = _strip_matched_artist(remaining, staff_name, matched_key)
+    remaining = _strip_off_day_keywords(remaining)
+    reason = remaining[:100] if remaining else ''
+    return staff_id, staff_name, has_keyword, phone, reason
 
 
 def _fold_tr(value):
@@ -774,6 +874,51 @@ def _appointment_window(appointment_date, appointment_time, duration_minutes):
     return start_iso, end_iso, tz_name
 
 
+def _time_off_minutes(start_time, end_time):
+    if start_time is None:
+        return None, None
+    start_m = _time_str_to_minutes_local(str(start_time)[:5])
+    end_str = str(end_time)[:5] if end_time else '00:00'
+    end_m = 24 * 60 if end_str in ('00:00', '24:00') else _time_str_to_minutes_local(end_str)
+    if end_m <= start_m:
+        end_m = 24 * 60
+    return start_m, end_m
+
+
+def _time_str_to_minutes_local(value):
+    parts = str(value or '00:00').split(':')
+    return int(parts[0]) * 60 + int(parts[1])
+
+
+def _time_off_window(off_date, start_time, end_time):
+    """Off Day Google start/end. all_day ise date; değilse dateTime."""
+    tz_name = get_google_calendar_config().get('timezone', 'Europe/Istanbul')
+    day = _as_date(off_date)
+    if start_time is None:
+        nxt = day + timedelta(days=1)
+        return {
+            'all_day': True,
+            'start': {'date': day.isoformat()},
+            'end': {'date': nxt.isoformat()},
+            'tz': tz_name,
+        }
+    start_m, end_m = _time_off_minutes(start_time, end_time)
+    start_local = datetime.combine(day, dt_time(start_m // 60, start_m % 60))
+    end_local = datetime.combine(day, dt_time(0, 0)) + timedelta(minutes=end_m)
+    return {
+        'all_day': False,
+        'start': {
+            'dateTime': start_local.strftime('%Y-%m-%dT%H:%M:%S'),
+            'timeZone': tz_name,
+        },
+        'end': {
+            'dateTime': end_local.strftime('%Y-%m-%dT%H:%M:%S'),
+            'timeZone': tz_name,
+        },
+        'tz': tz_name,
+    }
+
+
 def _phone_display(phone):
     if not phone:
         return '-'
@@ -832,8 +977,8 @@ def _build_event_body(row):
     time_label = _time_to_str(appointment_time)
     duration = int(duration_minutes or 30)
     artist = (staff_name or 'Sanatçı').strip()
-    color_id = _color_id_for_staff(staff_id)
-    color_label = _staff_color_label(staff_id)
+    color_id = _color_id_for_staff(staff_id, artist)
+    color_label = _staff_color_label(staff_id, artist)
 
     summary_parts = [f'[{artist}]', customer]
     if phone != '-':
@@ -901,7 +1046,77 @@ def _build_event_body(row):
     return body
 
 
-def _fetch_appointment_row(cursor, appointment_id):
+def _build_time_off_event_body(row):
+    (
+        time_off_id,
+        staff_id,
+        staff_name,
+        off_date,
+        start_time,
+        end_time,
+        reason,
+        google_event_id,
+    ) = row
+    artist = (staff_name or 'Sanatçı').strip()
+    color_id = _color_id_for_staff(staff_id, artist)
+    color_label = _staff_color_label(staff_id, artist)
+    reason_text = (reason or '').strip()
+    summary_parts = [f'[{artist}]', 'Off Day']
+    if reason_text:
+        summary_parts.append(reason_text)
+    summary = ' · '.join(summary_parts)
+    day = _as_date(off_date)
+    if start_time is None:
+        when_line = f"📅 Tarih: {day.strftime('%d.%m.%Y')}  (tüm gün)"
+    else:
+        when_line = (
+            f"📅 Tarih: {day.strftime('%d.%m.%Y')}  "
+            f"⏰ {_time_to_str(start_time)}–{_time_to_str(end_time)}"
+        )
+    lines = [
+        when_line,
+        f"Sanatçı: {artist} (takvim rengi: {color_label})",
+        f"Açıklama: {reason_text or '-'}",
+        '',
+        f"Off Day ID: {time_off_id}",
+        SITE_CONFIG.get('business_name', ''),
+    ]
+    window = _time_off_window(off_date, start_time, end_time)
+    body = {
+        'summary': summary[:200],
+        'description': '\n'.join(lines)[:5000],
+        'start': window['start'],
+        'end': window['end'],
+        'colorId': color_id,
+        'transparency': 'opaque',
+        'extendedProperties': _off_day_extended_properties(time_off_id),
+        'existing_event_id': google_event_id,
+    }
+    address = (SITE_CONFIG.get('business_address') or '').strip()
+    if address:
+        body['location'] = address[:500]
+    return body
+
+
+def _fetch_time_off_row(cursor, time_off_id):
+    cursor.execute(
+        """
+        SELECT
+            t.id,
+            t.staff_id,
+            s.name,
+            t.off_date,
+            t.start_time,
+            t.end_time,
+            t.reason,
+            t.google_event_id
+        FROM time_off t
+        JOIN artists s ON s.id = t.staff_id
+        WHERE t.id = %s
+        """,
+        (time_off_id,),
+    )
+    return cursor.fetchone()
     cursor.execute(
         """
         SELECT
@@ -1063,6 +1278,120 @@ def _perform_appointment_sync(appointment_id):
         _disconnect(conn)
 
 
+def _perform_time_off_sync(time_off_id):
+    """Off Day satırını takvime yaz/güncelle. Donus: (durum, event_id)."""
+    if not is_google_calendar_enabled():
+        return 'disabled', None
+
+    conn = None
+    try:
+        conn = _connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT pg_try_advisory_xact_lock(%s, %s)',
+            (_GCAL_ADVISORY_NAMESPACE_OFF, int(time_off_id)),
+        )
+        if not cursor.fetchone()[0]:
+            conn.rollback()
+            return 'busy', None
+
+        row = _fetch_time_off_row(cursor, time_off_id)
+        if not row:
+            conn.rollback()
+            logger.info('Google Calendar: Off Day #%s yok, senkron atlandi', time_off_id)
+            return 'gone', None
+
+        payload = _build_time_off_event_body(row)
+        existing_id = payload.pop('existing_event_id', None)
+        calendar_id = get_google_calendar_config()['calendar_id']
+        service = _get_calendar_service()
+        body = {
+            key: payload[key]
+            for key in (
+                'summary', 'description', 'start', 'end', 'location',
+                'colorId', 'extendedProperties', 'transparency',
+            )
+            if key in payload
+        }
+
+        event_id = None
+        etag = None
+        if existing_id:
+            try:
+                event = (
+                    service.events()
+                    .update(calendarId=calendar_id, eventId=existing_id, body=body)
+                    .execute()
+                )
+                event_id = event.get('id') or existing_id
+                etag = event.get('etag')
+                logger.info(
+                    'Google Calendar Off Day guncellendi: #%s event %s',
+                    time_off_id, event_id,
+                )
+            except Exception as exc:
+                if not _is_missing_event_error(exc):
+                    raise
+                logger.warning(
+                    'Google Off Day etkinligi yok, yeniden olusturuluyor | id=%s event=%s',
+                    time_off_id, existing_id,
+                )
+                cursor.execute(
+                    'UPDATE time_off SET google_event_id = NULL WHERE id = %s',
+                    (time_off_id,),
+                )
+                existing_id = None
+
+        if not existing_id:
+            event = service.events().insert(calendarId=calendar_id, body=body).execute()
+            event_id = event.get('id')
+            etag = event.get('etag')
+            logger.info(
+                'Google Calendar Off Day olusturuldu: #%s event %s',
+                time_off_id, event_id,
+            )
+
+        if event_id:
+            cursor.execute(
+                """
+                UPDATE time_off
+                   SET google_event_id = %s,
+                       google_etag = %s,
+                       google_calendar_id = %s,
+                       google_updated_at = NOW()
+                 WHERE id = %s
+                RETURNING id
+                """,
+                (event_id, etag, calendar_id, time_off_id),
+            )
+            if not cursor.fetchone():
+                conn.rollback()
+                try:
+                    service.events().delete(
+                        calendarId=calendar_id, eventId=event_id
+                    ).execute()
+                except Exception:
+                    pass
+                logger.info(
+                    'Google Calendar: Off Day #%s yazilirken silindi, etkinlik geri alindi',
+                    time_off_id,
+                )
+                return 'gone', None
+
+        conn.commit()
+        cursor.close()
+        return 'ok', event_id
+    except Exception:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        _disconnect(conn)
+
+
 def _perform_event_delete(google_event_id):
     """Takvimden etkinligi sil. Zaten yoksa basarili sayar."""
     if not is_google_calendar_enabled():
@@ -1131,6 +1460,7 @@ _QUEUE_DDL = (
         operation VARCHAR(16) NOT NULL,
         appointment_id INTEGER,
         google_event_id VARCHAR(255),
+        time_off_id INTEGER,
         attempts INTEGER NOT NULL DEFAULT 0,
         last_error TEXT,
         next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1149,6 +1479,11 @@ _QUEUE_DDL = (
         WHERE dead_at IS NULL AND operation = 'upsert'
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_gcq_time_off
+        ON google_calendar_queue (time_off_id)
+        WHERE dead_at IS NULL AND operation = 'upsert'
+    """,
+    """
     CREATE INDEX IF NOT EXISTS idx_gcq_dead
         ON google_calendar_queue (dead_at)
         WHERE dead_at IS NOT NULL
@@ -1162,6 +1497,49 @@ _QUEUE_DDL = (
     "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_updated_at TIMESTAMPTZ",
     "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_calendar_id VARCHAR(255)",
     "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP",
+    "ALTER TABLE google_calendar_queue ADD COLUMN IF NOT EXISTS time_off_id INTEGER",
+    """
+    ALTER TABLE time_off
+        ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)
+    """,
+    "ALTER TABLE time_off ADD COLUMN IF NOT EXISTS google_etag VARCHAR(255)",
+    "ALTER TABLE time_off ADD COLUMN IF NOT EXISTS google_calendar_id VARCHAR(255)",
+    "ALTER TABLE time_off ADD COLUMN IF NOT EXISTS google_updated_at TIMESTAMPTZ",
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_time_off_google_event_id
+        ON time_off (google_event_id)
+        WHERE google_event_id IS NOT NULL
+    """,
+    "ALTER TABLE google_calendar_queue DROP CONSTRAINT IF EXISTS gcq_payload_check",
+    """
+    ALTER TABLE google_calendar_queue DROP CONSTRAINT IF EXISTS google_calendar_queue_gcq_payload_check
+    """,
+    """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'gcq_payload_check'
+        ) THEN
+            ALTER TABLE google_calendar_queue
+                ADD CONSTRAINT gcq_payload_check CHECK (
+                    (
+                        operation = 'upsert'
+                        AND appointment_id IS NOT NULL
+                        AND time_off_id IS NULL
+                    )
+                    OR (
+                        operation = 'upsert'
+                        AND time_off_id IS NOT NULL
+                        AND appointment_id IS NULL
+                    )
+                    OR (
+                        operation = 'delete'
+                        AND google_event_id IS NOT NULL
+                    )
+                );
+        END IF;
+    END $$;
+    """,
     """
     CREATE TABLE IF NOT EXISTS google_external_busy (
         id BIGSERIAL PRIMARY KEY,
@@ -1273,7 +1651,7 @@ def _ensure_artist_calendar_aliases(conn):
         cursor.close()
 
 
-def _enqueue(cursor, operation, appointment_id=None, google_event_id=None):
+def _enqueue(cursor, operation, appointment_id=None, google_event_id=None, time_off_id=None):
     """Cagiranin transaction'i icinde kuyruga is ekler.
 
     SAVEPOINT kullanilir: kuyruk yazimi basarisiz olsa bile cagiranin
@@ -1287,10 +1665,11 @@ def _enqueue(cursor, operation, appointment_id=None, google_event_id=None):
     try:
         cursor.execute(
             """
-            INSERT INTO google_calendar_queue (operation, appointment_id, google_event_id)
-            VALUES (%s, %s, %s)
+            INSERT INTO google_calendar_queue
+                (operation, appointment_id, google_event_id, time_off_id)
+            VALUES (%s, %s, %s, %s)
             """,
-            (operation, appointment_id, google_event_id),
+            (operation, appointment_id, google_event_id, time_off_id),
         )
         cursor.execute('RELEASE SAVEPOINT gcal_enqueue')
         return True
@@ -1307,6 +1686,7 @@ def _enqueue(cursor, operation, appointment_id=None, google_event_id=None):
             operation=operation,
             appointment_id=appointment_id,
             google_event_id=google_event_id,
+            time_off_id=time_off_id,
         )
         return False
 
@@ -1324,6 +1704,21 @@ def enqueue_appointment_sync(cursor, appointment_id):
         logger.warning(
             'Takvim kuyrugu randevu akisini kesmedi appointment_id=%s: %s',
             appointment_id,
+            str(e).strip()[:200],
+        )
+        return False
+
+
+def enqueue_time_off_sync(cursor, time_off_id):
+    """Off Day olustu/degisti -> takvime yazilacak (commit ile ayni transaction)."""
+    try:
+        if not time_off_id or not is_google_calendar_enabled():
+            return False
+        return _enqueue(cursor, 'upsert', time_off_id=int(time_off_id))
+    except Exception as e:
+        logger.warning(
+            'Takvim kuyrugu Off Day akisini kesmedi time_off_id=%s: %s',
+            time_off_id,
             str(e).strip()[:200],
         )
         return False
@@ -1379,7 +1774,7 @@ def _claim_next_item(conn):
                    next_attempt_at = NOW() + %s * INTERVAL '1 second'
               FROM claimed c
              WHERE q.id = c.id
-            RETURNING q.id, q.operation, q.appointment_id, q.google_event_id, q.attempts
+            RETURNING q.id, q.operation, q.appointment_id, q.google_event_id, q.attempts, q.time_off_id
             """,
             (_CLAIM_LEASE_SECONDS,),
         )
@@ -1390,13 +1785,11 @@ def _claim_next_item(conn):
         cursor.close()
 
 
-def _finish_item(conn, item_id, operation, appointment_id):
+def _finish_item(conn, item_id, operation, appointment_id, time_off_id=None):
     """Basarili isi kuyruktan dusur."""
     cursor = conn.cursor()
     try:
         if operation == 'upsert' and appointment_id:
-            # Ayni randevu icin biriken diger upsert isleri gereksiz: senkron
-            # her zaman guncel DB durumunu yazar.
             cursor.execute(
                 """
                 DELETE FROM google_calendar_queue
@@ -1405,6 +1798,16 @@ def _finish_item(conn, item_id, operation, appointment_id):
                    AND dead_at IS NULL
                 """,
                 (appointment_id,),
+            )
+        elif operation == 'upsert' and time_off_id:
+            cursor.execute(
+                """
+                DELETE FROM google_calendar_queue
+                 WHERE operation = 'upsert'
+                   AND time_off_id = %s
+                   AND dead_at IS NULL
+                """,
+                (time_off_id,),
             )
         else:
             cursor.execute('DELETE FROM google_calendar_queue WHERE id = %s', (item_id,))
@@ -1521,17 +1924,20 @@ def drain_queue(max_items=25):
             item = _claim_next_item(conn)
             if not item:
                 break
-            item_id, operation, appointment_id, event_id, attempts = item
+            item_id, operation, appointment_id, event_id, attempts, time_off_id = item
             try:
                 if operation == 'upsert':
-                    status, _event = _perform_appointment_sync(appointment_id)
+                    if time_off_id:
+                        status, _event = _perform_time_off_sync(time_off_id)
+                    else:
+                        status, _event = _perform_appointment_sync(appointment_id)
                     if status == 'busy':
                         summary['busy'] += 1
                         _reschedule_item(conn, item_id, attempts, None, soon=True)
                         continue
                 else:
                     _perform_event_delete(event_id)
-                _finish_item(conn, item_id, operation, appointment_id)
+                _finish_item(conn, item_id, operation, appointment_id, time_off_id)
                 summary['processed'] += 1
             except Exception as exc:
                 if _is_rate_limit_error(exc):
@@ -1963,6 +2369,12 @@ def refresh_external_busy():
                 )
                 if cursor.fetchone():
                     continue
+                cursor.execute(
+                    'SELECT 1 FROM time_off WHERE google_event_id = %s',
+                    (event_id,),
+                )
+                if cursor.fetchone():
+                    continue
             start_dt, end_dt, all_day = _parse_event_datetimes(event)
             if not start_dt or not end_dt or end_dt <= start_dt:
                 continue
@@ -2257,8 +2669,9 @@ def refresh_google_event_colors(limit=400):
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT a.id, a.staff_id, a.google_event_id
+            SELECT a.id, a.staff_id, a.google_event_id, ar.name
               FROM appointments a
+              JOIN artists ar ON ar.id = a.staff_id
              WHERE a.google_event_id IS NOT NULL
                AND a.status IS DISTINCT FROM 'cancelled'
              ORDER BY a.appointment_date DESC, a.id DESC
@@ -2269,12 +2682,12 @@ def refresh_google_event_colors(limit=400):
         rows = cursor.fetchall() or []
         cursor.close()
         service = _get_calendar_service()
-        for apt_id, staff_id, event_id in rows:
+        for apt_id, staff_id, event_id, staff_name in rows:
             try:
                 service.events().patch(
                     calendarId=calendar_id,
                     eventId=event_id,
-                    body={'colorId': _color_id_for_staff(staff_id)},
+                    body={'colorId': _color_id_for_staff(staff_id, staff_name)},
                 ).execute()
                 updated += 1
             except Exception as exc:
@@ -2294,7 +2707,7 @@ def refresh_google_event_colors(limit=400):
 
 
 def _import_manual_google_event(cursor, event, calendar_id):
-    """Elle Google etkinligini source=google randevuya cevirir. WhatsApp yok."""
+    """Elle Google etkinliği: Off Day veya (telefon varsa) source=google randevu."""
     if (event.get('status') or '') == 'cancelled':
         return 'skip'
     if (event.get('transparency') or '') == 'transparent':
@@ -2305,7 +2718,26 @@ def _import_manual_google_event(cursor, event, calendar_id):
     if not event_id:
         return 'skip'
 
+    artists = _load_bookable_artists(cursor)
+    if not artists:
+        logger.warning('Google manuel import: kitaplanabilir sanatci yok')
+        return 'skip'
+
+    summary = event.get('summary') or ''
+    staff_id, staff_name, has_keyword, phone, reason = _parse_off_day_from_title(
+        summary, artists
+    )
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
+
+    is_off_day = bool(has_keyword or (staff_id and not phone))
+    if is_off_day:
+        if not staff_id:
+            _log_unmatched_artist(event_id, summary)
+            return 'unmatched'
+        return _import_off_day_event(
+            cursor, event, calendar_id, staff_id, staff_name, reason,
+        )
+
     if all_day or not start_dt or not end_dt:
         return 'skip'
 
@@ -2313,23 +2745,18 @@ def _import_manual_google_event(cursor, event, calendar_id):
     local_date = start_dt.date()
     local_time = start_dt.strftime('%H:%M') + ':00'
 
-    artists = _load_bookable_artists(cursor)
-    if not artists:
-        logger.warning('Google manuel randevu: kitaplanabilir sanatci yok')
-        return 'skip'
-
-    staff_id, _staff_name, cust_name, cust_surname, phone = _parse_manual_event_title(
-        event.get('summary') or '', artists
+    parsed_staff, _staff_name, cust_name, cust_surname, parsed_phone = _parse_manual_event_title(
+        summary, artists
     )
+    staff_id = staff_id or parsed_staff
+    phone = phone or parsed_phone
     if not staff_id:
-        _log_unmatched_artist(event_id, event.get('summary') or '')
+        _log_unmatched_artist(event_id, summary)
         return 'unmatched'
-    if _is_placeholder_person(cust_name, cust_surname) and not phone:
-        logger.warning(
-            'Google etkinliginde musteri yok, randevu yazilmadi | event=%s title=%s',
-            event_id, (event.get('summary') or '')[:120],
+    if not phone:
+        return _import_off_day_event(
+            cursor, event, calendar_id, staff_id, staff_name or _staff_name, reason,
         )
-        return 'unmatched'
 
     cursor.execute(
         'SELECT id FROM appointments WHERE google_event_id = %s',
@@ -2394,7 +2821,267 @@ def _import_manual_google_event(cursor, event, calendar_id):
     return 'imported'
 
 
+def _off_day_times_from_event(event):
+    start_dt, end_dt, all_day = _parse_event_datetimes(event)
+    if not start_dt or not end_dt or end_dt <= start_dt:
+        return None
+    if all_day:
+        return {
+            'all_day': True,
+            'off_date': start_dt.date(),
+            'start_time': None,
+            'end_time': None,
+        }
+    start_m = start_dt.hour * 60 + start_dt.minute
+    end_m = end_dt.hour * 60 + end_dt.minute
+    if end_dt.date() > start_dt.date():
+        end_m = 24 * 60
+    if end_m <= start_m:
+        end_m = 24 * 60
+    start_hh = f'{start_m // 60:02d}:{start_m % 60:02d}'
+    if end_m >= 24 * 60:
+        end_hh = '00:00'
+    else:
+        end_hh = f'{end_m // 60:02d}:{end_m % 60:02d}'
+    return {
+        'all_day': False,
+        'off_date': start_dt.date(),
+        'start_time': start_hh,
+        'end_time': end_hh,
+    }
+
+
+def _count_overlapping_appointments(cursor, staff_id, off_date, start_time, end_time):
+    cursor.execute(
+        """
+        SELECT appointment_time, duration_minutes
+          FROM appointments
+         WHERE staff_id = %s AND appointment_date = %s AND status != 'cancelled'
+        """,
+        (staff_id, off_date),
+    )
+    rows = cursor.fetchall() or []
+    if start_time is None:
+        return len(rows)
+    off_s, off_e = _time_off_minutes(start_time, end_time)
+    count = 0
+    for appt_time, dur in rows:
+        apt_s = _time_str_to_minutes_local(str(appt_time)[:5])
+        apt_e = apt_s + int(dur or 60)
+        if apt_s < off_e and off_s < apt_e:
+            count += 1
+    return count
+
+
+def _stamp_origin_on_off_day_event(calendar_id, event_id, time_off_id, staff_id, staff_name=None):
+    if not event_id or not time_off_id:
+        return
+    try:
+        service = _get_calendar_service()
+        body = {
+            'extendedProperties': _off_day_extended_properties(time_off_id),
+            'transparency': 'opaque',
+        }
+        if staff_id:
+            body['colorId'] = _color_id_for_staff(staff_id, staff_name)
+        service.events().patch(
+            calendarId=calendar_id,
+            eventId=event_id,
+            body=body,
+        ).execute()
+    except Exception as exc:
+        logger.warning(
+            'Google Off Day origin yazilamadi | event=%s id=%s hata=%s',
+            event_id, time_off_id, str(exc)[:160],
+        )
+
+
+def _import_off_day_event(cursor, event, calendar_id, staff_id, staff_name, reason):
+    """Elle Google etkinliğini time_off yapar. WhatsApp yok."""
+    if (event.get('status') or '') == 'cancelled':
+        return 'skip'
+    if (event.get('transparency') or '') == 'transparent':
+        return 'skip'
+    if event.get('recurringEventId'):
+        return 'skip'
+    event_id = (event.get('id') or '').strip()
+    if not event_id or not staff_id:
+        return 'skip'
+
+    times = _off_day_times_from_event(event)
+    if not times:
+        return 'skip'
+
+    cursor.execute(
+        'SELECT id FROM time_off WHERE google_event_id = %s',
+        (event_id,),
+    )
+    if cursor.fetchone():
+        return 'skip'
+
+    cursor.execute(
+        'DELETE FROM google_external_busy WHERE google_event_id = %s',
+        (event_id,),
+    )
+
+    overlap = _count_overlapping_appointments(
+        cursor, staff_id, times['off_date'], times['start_time'], times['end_time'],
+    )
+    if overlap:
+        logger.warning(
+            'Off Day mevcut randevuyla cakisiyor (randevu iptal edilmedi) | '
+            'event=%s staff=%s date=%s overlap=%s',
+            event_id, staff_id, times['off_date'], overlap,
+        )
+
+    try:
+        cursor.execute('SAVEPOINT gcal_off_import')
+        cursor.execute(
+            """
+            INSERT INTO time_off (
+                staff_id, off_date, start_time, end_time, reason,
+                google_event_id, google_etag, google_calendar_id, google_updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            RETURNING id
+            """,
+            (
+                staff_id,
+                times['off_date'],
+                times['start_time'],
+                times['end_time'],
+                (reason or '')[:100],
+                event_id,
+                event.get('etag'),
+                calendar_id,
+            ),
+        )
+        time_off_id = cursor.fetchone()[0]
+        cursor.execute('RELEASE SAVEPOINT gcal_off_import')
+    except Exception as exc:
+        try:
+            cursor.execute('ROLLBACK TO SAVEPOINT gcal_off_import')
+        except Exception:
+            pass
+        logger.warning(
+            'Google Off Day yazilamadi | event=%s hata=%s',
+            event_id, str(exc).strip()[:200],
+        )
+        return 'skip'
+
+    _stamp_origin_on_off_day_event(
+        calendar_id, event_id, time_off_id, staff_id, staff_name,
+    )
+    enqueue_time_off_sync(cursor, time_off_id)
+    logger.info(
+        'Google etkinlik Off Day oldu (WhatsApp yok) time_off #%s event=%s staff=%s %s %s-%s',
+        time_off_id, event_id, staff_id, times['off_date'],
+        times['start_time'] or 'tum-gun', times['end_time'] or '',
+    )
+    return 'imported'
+
+
+def _handle_inbound_time_off(cursor, event, calendar_id, time_off_id):
+    deleted = (event.get('status') or '') == 'cancelled'
+    cursor.execute(
+        """
+        SELECT id, staff_id, off_date, start_time, end_time, google_etag
+          FROM time_off
+         WHERE id = %s
+        """,
+        (time_off_id,),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return 'skip'
+
+    _id, staff_id, off_date, start_time, end_time, stored_etag = row
+    if deleted:
+        cursor.execute('DELETE FROM time_off WHERE id = %s', (time_off_id,))
+        logger.info('Google Off Day silme -> time_off silindi #%s (WhatsApp yok)', time_off_id)
+        return 'cancel'
+
+    times = _off_day_times_from_event(event)
+    if not times:
+        return 'skip'
+
+    same_day = _as_date(off_date) == times['off_date']
+    same_start = (start_time is None and times['start_time'] is None) or (
+        start_time is not None
+        and times['start_time'] is not None
+        and str(start_time)[:5] == times['start_time']
+    )
+    same_end = (end_time is None and times['end_time'] is None) or (
+        end_time is not None
+        and times['end_time'] is not None
+        and str(end_time)[:5] == times['end_time']
+    )
+    if same_day and same_start and same_end:
+        if event.get('etag') and event.get('etag') != stored_etag:
+            cursor.execute(
+                """
+                UPDATE time_off
+                   SET google_etag = %s, google_updated_at = NOW(), google_calendar_id = %s
+                 WHERE id = %s
+                """,
+                (event.get('etag'), calendar_id, time_off_id),
+            )
+        return 'echo'
+
+    overlap = _count_overlapping_appointments(
+        cursor, staff_id, times['off_date'], times['start_time'], times['end_time'],
+    )
+    if overlap:
+        logger.warning(
+            'Google Off Day tasima mevcut randevuyla cakisiyor (randevu duruyor) | '
+            'id=%s overlap=%s',
+            time_off_id, overlap,
+        )
+
+    cursor.execute(
+        """
+        UPDATE time_off
+           SET off_date = %s,
+               start_time = %s,
+               end_time = %s,
+               google_etag = %s,
+               google_calendar_id = %s,
+               google_updated_at = NOW()
+         WHERE id = %s
+        """,
+        (
+            times['off_date'],
+            times['start_time'],
+            times['end_time'],
+            event.get('etag'),
+            calendar_id,
+            time_off_id,
+        ),
+    )
+    logger.info(
+        'Google Off Day tasima uygulandi #%s %s %s-%s (WhatsApp yok)',
+        time_off_id, times['off_date'],
+        times['start_time'] or 'tum-gun', times['end_time'] or '',
+    )
+    return 'moved'
+
+
 def _handle_inbound_event(cursor, event, calendar_id):
+    if _is_off_day_origin(event):
+        time_off_id = _our_time_off_id_from_event(event)
+        if not time_off_id:
+            event_id = (event.get('id') or '').strip()
+            if event_id:
+                cursor.execute(
+                    'SELECT id FROM time_off WHERE google_event_id = %s',
+                    (event_id,),
+                )
+                found = cursor.fetchone()
+                time_off_id = found[0] if found else None
+        if time_off_id:
+            return _handle_inbound_time_off(cursor, event, calendar_id, time_off_id)
+        return _import_manual_google_event(cursor, event, calendar_id)
+
     appointment_id = _our_appointment_id_from_event(event)
     if not appointment_id:
         event_id = (event.get('id') or '').strip()
@@ -2406,6 +3093,18 @@ def _handle_inbound_event(cursor, event, calendar_id):
             found = cursor.fetchone()
             appointment_id = found[0] if found else None
     if not appointment_id:
+        time_off_id = _our_time_off_id_from_event(event)
+        if not time_off_id:
+            event_id = (event.get('id') or '').strip()
+            if event_id:
+                cursor.execute(
+                    'SELECT id FROM time_off WHERE google_event_id = %s',
+                    (event_id,),
+                )
+                found = cursor.fetchone()
+                time_off_id = found[0] if found else None
+        if time_off_id:
+            return _handle_inbound_time_off(cursor, event, calendar_id, time_off_id)
         return _import_manual_google_event(cursor, event, calendar_id)
 
     deleted = (event.get('status') or '') == 'cancelled'
@@ -2490,7 +3189,9 @@ def _handle_inbound_event(cursor, event, calendar_id):
 
 def poll_inbound_changes():
     """syncToken ile değişen etkinlikleri işler: origin=roof taşı/sil/geri al;
-    elle saatli etkinliği source=google randevu yapar. Tüm-gün randevu üretmez.
+    origin=roof_off Off Day taşı/sil. Elle saatli etkinlik: telefon varsa
+    source=google randevu, yoksa veya Off Day anahtar kelimesi varsa time_off.
+    Tüm-gün randevu üretmez; tüm-gün Off Day olur.
     """
     if not is_google_calendar_enabled():
         return {'ok': False, 'reason': 'disabled'}
