@@ -8,6 +8,7 @@ Rate limiting ile spam önlenir (aynı hata için saatte 1 e-posta).
 
 import os
 import smtplib
+import socket
 import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -18,6 +19,8 @@ import logging
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+_SERVER_LABEL = os.getenv('RANDEVU_URL') or socket.gethostname()
 
 # E-posta yapılandırması (.env'den)
 SMTP_HOST = os.getenv('EMAIL_SMTP_HOST', 'smtp.gmail.com')
@@ -113,7 +116,7 @@ def send_error_notification(error_type, error_message, details=None):
                 </div>
                 
                 <div class="detail-row">
-                    <span class="label">Sunucu:</span> localhost (Local Development)
+                    <span class="label">Sunucu:</span> {_SERVER_LABEL}
                 </div>
                 
                 {"<div class='error-box'><pre>" + str(details) + "</pre></div>" if details else ""}

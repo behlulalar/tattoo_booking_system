@@ -125,6 +125,7 @@ from psycopg2 import pool
 import hashlib
 import hmac
 import secrets
+from decimal import Decimal
 import bcrypt
 import jwt
 import logging
@@ -330,8 +331,16 @@ class SendCodeSchema(Schema):
 # DATABASE CONNECTION POOL
 # =============================================
 # Connection pool ayarları (100+ eşzamanlı kullanıcı için optimize edildi)
-DB_POOL_MIN_CONN = int(os.getenv('DB_POOL_MIN_CONN', '10'))  # Minimum bağlantı sayısı
-DB_POOL_MAX_CONN = int(os.getenv('DB_POOL_MAX_CONN', '50'))  # Maksimum bağlantı sayısı (20'den 50'ye çıkarıldı)
+# ÖNEMLİ: Bu, TEK bir gunicorn worker'ının havuzu — her worker kendi pool'unu
+# oluşturur (bkz. init_db_pool). Gerçek toplam bağlantı sayısı yaklaşık
+# (worker sayısı × DB_POOL_MAX_CONN)'dur. Varsayılan gunicorn worker sayısı
+# cpu_count()*2+1 olduğundan, eski varsayılanlar (10/50) 4 CPU'lu bir
+# sunucuda 9 worker × 50 = 450 bağlantıya kadar çıkabiliyordu — PostgreSQL'in
+# tipik max_connections=100 sınırını fazlasıyla aşıp tüm veritabanını
+# kilitleyebilirdi. Küçük/orta ölçekli bir stüdyo için düşük varsayılanlar
+# yeterli; yüksek trafikte .env üzerinden worker sayısına göre ayarlayın.
+DB_POOL_MIN_CONN = int(os.getenv('DB_POOL_MIN_CONN', '2'))   # Minimum bağlantı sayısı (worker başına)
+DB_POOL_MAX_CONN = int(os.getenv('DB_POOL_MAX_CONN', '8'))   # Maksimum bağlantı sayısı (worker başına)
 DB_CONNECTION_TIMEOUT = int(os.getenv('DB_CONNECTION_TIMEOUT', '10'))  # Bağlantı alma timeout (saniye)
 
 # Connection pool - her worker process başladığında oluşturulacak
@@ -855,9 +864,157 @@ def get_phone_from_lid(lid_number):
     return None
 
 
-def send_wapio_message(phone, message, retry_count=0, **kwargs):
-    """Giden WhatsApp mesajı — aktif sağlayıcıya yönlendirilir (Evolution)."""
-    return send_whatsapp_message(phone, message, retry_count, **kwargs)
+def ensure_whatsapp_queue_table():
+    """Kalici WhatsApp retry kuyrugu icin tabloyu olusturur (yoksa).
+
+    Evolution API anlik olarak kapaliysa/hata donuyorsa send_wapio_message
+    tek seferlik denemeyle basarisiz oluyordu ve mesaj kalici olarak
+    kayboluyordu (teklif linki, randevu onayi, iptal bildirimi gibi tekrar
+    denenmeyen tum mesajlar icin). Bu tablo basarisiz mesajlari kuyruklar,
+    drain_whatsapp_queue (2 dk'da bir) ustel geri cekilmeyle tekrar dener.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS whatsapp_message_queue (
+                id SERIAL PRIMARY KEY,
+                phone VARCHAR(40) NOT NULL,
+                message TEXT NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 6,
+                next_attempt_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                last_error TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                sent_at TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_whatsapp_queue_pending
+            ON whatsapp_message_queue (next_attempt_at)
+            WHERE status = 'pending'
+            """
+        )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_whatsapp_queue_table: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
+def _enqueue_whatsapp_retry(phone, message, error=None):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO whatsapp_message_queue (phone, message, last_error)
+            VALUES (%s, %s, %s)
+            """,
+            (phone, message, (str(error)[:300] if error else None)),
+        )
+        conn.commit()
+        cursor.close()
+        logger.info("WhatsApp mesaji retry kuyruguna eklendi | phone=%s", phone)
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"WhatsApp retry kuyruguna eklenemedi: {e}")
+    finally:
+        release_db_connection(conn)
+
+
+def drain_whatsapp_queue():
+    """Basarisiz WhatsApp mesajlarini ustel geri cekilmeyle tekrar dener.
+
+    max_attempts'e ulasan mesajlar 'failed' isaretlenir ve log_error ile
+    loglanir — bu, error_notifier'a baglandigi icin (bkz. logging_setup)
+    kalici basarisizliklar artik e-posta ile de bildirilir.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        conn.autocommit = False
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, phone, message, attempts, max_attempts
+            FROM whatsapp_message_queue
+            WHERE status = 'pending' AND next_attempt_at <= NOW()
+            ORDER BY next_attempt_at
+            LIMIT 20
+            FOR UPDATE SKIP LOCKED
+            """
+        )
+        rows = cursor.fetchall()
+        for row_id, phone, message, attempts, max_attempts in rows:
+            try:
+                ok = send_whatsapp_message(phone, message)
+            except Exception as send_err:
+                ok = False
+                logger.warning(f"whatsapp queue gonderim hatasi: {send_err}")
+
+            if ok:
+                cursor.execute(
+                    "UPDATE whatsapp_message_queue SET status = 'sent', sent_at = NOW() WHERE id = %s",
+                    (row_id,),
+                )
+                continue
+
+            attempts += 1
+            if attempts >= max_attempts:
+                cursor.execute(
+                    "UPDATE whatsapp_message_queue SET status = 'failed', attempts = %s WHERE id = %s",
+                    (attempts, row_id),
+                )
+                log_error(
+                    logger, E_WA_004,
+                    "WhatsApp mesaji tum tekrar denemelerine ragmen gonderilemedi",
+                    phone=phone, attempts=attempts, queue_id=row_id,
+                )
+            else:
+                backoff_minutes = min(60, 5 * attempts)
+                cursor.execute(
+                    """
+                    UPDATE whatsapp_message_queue
+                    SET attempts = %s, next_attempt_at = NOW() + (%s || ' minutes')::interval
+                    WHERE id = %s
+                    """,
+                    (attempts, backoff_minutes, row_id),
+                )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"drain_whatsapp_queue hatasi: {e}")
+    finally:
+        if conn:
+            conn.autocommit = True
+        release_db_connection(conn)
+
+
+def send_wapio_message(phone, message, retry_count=0, queue_on_failure=True, **kwargs):
+    """Giden WhatsApp mesajı — aktif sağlayıcıya yönlendirilir (Evolution).
+
+    Basarisizlikta (queue_on_failure=True, varsayilan) mesaj retry kuyruguna
+    eklenir — Evolution gecici olarak kapaliysa/hata veriyorsa mesaj kalici
+    olarak kaybolmaz. OTP gibi zaman-hassas veya kendi retry mekanizmasi
+    olan (randevu hatirlatmalari) cagrilar queue_on_failure=False gecmeli.
+    """
+    ok = send_whatsapp_message(phone, message, retry_count, **kwargs)
+    if not ok and queue_on_failure:
+        _enqueue_whatsapp_retry(phone, message)
+    return ok
 
 
 # =============================================
@@ -913,20 +1070,41 @@ def token_required(f):
         token = request.headers.get('Authorization')
         if not token:
             return jsonify({'success': False, 'message': 'Token gerekli'}), 401
-        
+
         try:
             # Remove 'Bearer ' prefix if present
             if token.startswith('Bearer '):
                 token = token[7:]
-            
+
             data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            request.staff_id = data['staff_id']
-            request.staff_role = data['role']
+            staff_id = data['staff_id']
         except jwt.ExpiredSignatureError:
             return jsonify({'success': False, 'message': 'Token süresi dolmuş'}), 401
         except jwt.InvalidTokenError:
             return jsonify({'success': False, 'message': 'Geçersiz token'}), 401
-        
+
+        # Personel silinmiş/rolü değişmişse eski token'ın süresi dolana kadar
+        # (remember_me ile 30 güne kadar) çalışmaya devam etmesin — role her
+        # istekte DB'den taze okunur, token içindeki değer güvenilmez.
+        conn = None
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT role FROM artists WHERE id = %s', (staff_id,))
+            row = cursor.fetchone()
+            cursor.close()
+        except Exception as e:
+            logger.warning(f"token_required rol dogrulama basarisiz: {e}")
+            return jsonify({'success': False, 'message': 'Bir problem oluştu'}), 500
+        finally:
+            release_db_connection(conn)
+
+        if not row:
+            return jsonify({'success': False, 'message': 'Hesap bulunamadı, tekrar giriş yapın'}), 401
+
+        request.staff_id = staff_id
+        request.staff_role = row[0]
+
         return f(*args, **kwargs)
     return decorated
 
@@ -1823,7 +2001,9 @@ def send_whatsapp_code(phone):
         log_warning(logger, E_WA_003, "Evolution yapilandirmasi eksik, kod terminale yazildi", phone=original_phone)
         print(f"\n{'='*50}\nDOGRULAMA KODU (TEST MODU)\nTelefon: {original_phone}\nKod: {code}\n{'='*50}\n")
     else:
-        message_sent = send_wapio_message(original_phone, message)
+        # OTP 2 dk gecerli — bir kac dakika sonra retry kuyrugundan tekrar
+        # gonderilmesinin anlami yok, kuyruklama devre disi.
+        message_sent = send_wapio_message(original_phone, message, queue_on_failure=False)
 
     if message_sent:
         logger.info("Dogrulama kodu WhatsApp ile gonderildi | phone=%s", original_phone)
@@ -2146,6 +2326,38 @@ def ensure_artist_instagram_column():
         release_db_connection(conn)
 
 
+def ensure_artist_is_active_column():
+    """Mevcut kurulumlarda artists.is_active kolonunu oluşturur.
+
+    Personel silme artık gecmis randevusu olan bir hesabi hard-delete etmek
+    yerine bu bayragi FALSE yapiyor (bkz. delete_staff) — gecmis gelir
+    raporlari ve randevu kayitlari bozulmasin diye.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'artists'
+              AND column_name = 'is_active'
+            """
+        )
+        if not cursor.fetchone():
+            cursor.execute('ALTER TABLE artists ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE')
+            conn.commit()
+            logger.info('artists.is_active kolonu eklendi')
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_artist_is_active_column: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
 @app.route('/api/barbers', methods=['GET'])  # backward compatible
 @app.route('/api/artists', methods=['GET'])
 def get_artists():
@@ -2158,6 +2370,7 @@ def get_artists():
             SELECT id, name, profile_photo, phone, instagram_url
             FROM artists
             WHERE role IS DISTINCT FROM 'tech_support'
+              AND is_active IS DISTINCT FROM FALSE
             ORDER BY display_order ASC, id ASC
             """
         )
@@ -2867,7 +3080,24 @@ def admin_login():
         # Check password using verify_password (supports bcrypt and legacy)
         if not verify_password(password, stored_password):
             return jsonify({'success': False, 'message': 'Şifre yanlış'}), 401
-        
+
+        # Eski (SHA256/plaintext) hash ile giriş başarılıysa sessizce bcrypt'e
+        # yükselt — zayıf hash'in DB'de süresiz kalmasını önler.
+        if not stored_password.startswith('$2'):
+            try:
+                upgrade_conn = get_db_connection()
+                upgrade_cursor = upgrade_conn.cursor()
+                upgrade_cursor.execute(
+                    'UPDATE artists SET password = %s WHERE id = %s',
+                    (hash_password_bcrypt(password), staff[0]),
+                )
+                upgrade_conn.commit()
+                upgrade_cursor.close()
+                release_db_connection(upgrade_conn)
+                logger.info(f"Personel #{staff[0]} icin zayif parola hash'i bcrypt'e yukseltildi")
+            except Exception as upgrade_err:
+                logger.warning(f"Parola hash yukseltme basarisiz: {upgrade_err}")
+
         # Generate JWT token (remember_me: 30 gün, aksi halde 8 saat)
         remember_me = bool(data.get('remember_me'))
         token_hours = 24 * 30 if remember_me else 8
@@ -4271,14 +4501,14 @@ def get_staff_list():
 
         cursor.execute("""
             SELECT id, name, phone, role, profile_photo, COALESCE(display_order, 0) as display_order,
-                   instagram_url, COALESCE(calendar_aliases, '{}'::text[])
+                   instagram_url, COALESCE(calendar_aliases, '{}'::text[]), COALESCE(is_active, TRUE)
             FROM artists
             ORDER BY display_order ASC, name
         """)
-        
+
         rows = cursor.fetchall()
         cursor.close()
-        
+
         staff_list = []
         for row in rows:
             staff_list.append({
@@ -4290,6 +4520,7 @@ def get_staff_list():
                 'display_order': row[5],
                 'instagram_url': row[6] or '',
                 'calendar_aliases': list(row[7] or []),
+                'is_active': bool(row[8]),
             })
         
         return jsonify({'success': True, 'staff': staff_list})
@@ -4568,42 +4799,65 @@ def delete_staff(staff_id):
         if active_appointments > 0 and not force:
             cursor.close()
             return jsonify({
-                'success': False, 
+                'success': False,
                 'message': f'Bu personelin {active_appointments} aktif randevusu var. Yine de silmek için onay verin.',
                 'has_active_appointments': True,
                 'active_count': active_appointments
             }), 400
-        
-        # Tüm randevuları sil (force modunda veya sadece eski randevular).
-        # Silinen her randevunun takvim etkinliği de kuyruğa girer, aksi halde
-        # personelin gelecek randevuları takvimde hayalet olarak kalır.
+
+        # Gecmis (tamamlanmis dahil) randevusu var mi? Varsa hard-delete
+        # gelir raporlarini/randevu gecmisini geriye donuk bozar — bunun
+        # yerine personeli deaktive ediyoruz (is_active=FALSE), randevu
+        # satirlari ve gelir kayitlari OLDUGU GIBI kalir.
+        cursor.execute("SELECT COUNT(*) FROM appointments WHERE staff_id = %s", (staff_id,))
+        any_appointments = cursor.fetchone()[0] > 0
+
+        # Aktif (pending/confirmed) randevular varsa force ile devam
+        # edilirken bunlari SILMEK yerine iptal ediyoruz — kayit kalir,
+        # takvimden de kaldirilir.
         cursor.execute(
-            "DELETE FROM appointments WHERE staff_id = %s RETURNING google_event_id",
+            """
+            UPDATE appointments SET status = 'cancelled'
+            WHERE staff_id = %s AND status IN ('pending', 'confirmed')
+            RETURNING google_event_id
+            """,
             (staff_id,),
         )
         enqueue_event_deletes(cursor, [row[0] for row in cursor.fetchall() if row[0]])
-        
-        # Tattoo flow: staff_services removed
-        
-        # Working_hours kayıtlarını sil (foreign key constraint için)
+
+        # Working_hours / time_off: sadece planlama metadata'si, gelir
+        # raporlarini etkilemez — silinmesi güvenli.
         cursor.execute("DELETE FROM working_hours WHERE staff_id = %s", (staff_id,))
-        
+
         cursor.execute(
             "SELECT google_event_id FROM time_off WHERE staff_id = %s",
             (staff_id,),
         )
         enqueue_event_deletes(cursor, [row[0] for row in cursor.fetchall() if row[0]])
         cursor.execute("DELETE FROM time_off WHERE staff_id = %s", (staff_id,))
-        
-        # Personeli sil
+
+        if any_appointments:
+            cursor.execute("UPDATE artists SET is_active = FALSE WHERE id = %s", (staff_id,))
+            conn.commit()
+            cursor.close()
+            reset_gcal_artists_cache()
+            kick_gcal_queue()
+            logger.info(f"Personel deaktive edildi (gecmis randevusu var): id={staff_id}, force={force}")
+            return jsonify({
+                'success': True,
+                'message': 'Personelin geçmiş randevu/gelir kayıtları olduğu için hesap deaktive edildi (silinmedi). Artık yeni randevu alamaz.',
+                'deactivated': True,
+            })
+
+        # Hic randevusu olmamis personel: kaybedilecek veri yok, güvenle sil.
         cursor.execute("DELETE FROM artists WHERE id = %s", (staff_id,))
         conn.commit()
         cursor.close()
         reset_gcal_artists_cache()
         kick_gcal_queue()
-        
+
         logger.info(f"Personel silindi: id={staff_id}, force={force}")
-        
+
         return jsonify({'success': True, 'message': 'Personel silindi'})
     except Exception as e:
         if conn:
@@ -4928,12 +5182,12 @@ def delete_time_off(time_off_id):
         release_db_connection(conn)
 
 
-STAFF_COMMISSION_RATE = 0.50
+STAFF_COMMISSION_RATE = Decimal('0.50')
 
 
 def _staff_share_amount(full_price):
-    """Personelin net kazancı — yapılan işin %50'si."""
-    return round(float(full_price or 0) * STAFF_COMMISSION_RATE, 2)
+    """Personelin net kazancı — yapılan işin %50'si (Decimal, kuruş hassasiyetinde)."""
+    return Decimal(full_price or 0) * STAFF_COMMISSION_RATE
 
 
 @app.route('/api/admin/staff/<int:staff_id>/stats', methods=['GET'])
@@ -4987,7 +5241,7 @@ def get_staff_stats(staff_id):
         stats = cursor.fetchone()
         customer_count = int(stats[0] or 0)
         appointment_count = int(stats[1] or 0)
-        total_income = float(stats[2] or 0)
+        total_income = Decimal(stats[2] or 0)
         total_minutes = int(stats[3] or 0)
         staff_share_total = _staff_share_amount(total_income) if apply_commission else None
 
@@ -5012,16 +5266,16 @@ def get_staff_stats(staff_id):
         completed_revenue_items = []
         for row in cursor.fetchall():
             cust = f"{row[4]} {row[5]}".strip() or 'Müşteri'
-            full_amount = float(row[3] or 0)
+            full_amount = Decimal(row[3] or 0)
             item = {
                 'appointment_id': row[0],
                 'date': row[1].strftime('%d.%m.%Y'),
                 'time': str(row[2])[:5],
-                'amount': full_amount,
+                'amount': float(full_amount),
                 'customer_name': cust,
             }
             if apply_commission:
-                item['staff_share'] = _staff_share_amount(full_amount)
+                item['staff_share'] = float(_staff_share_amount(full_amount))
             completed_revenue_items.append(item)
         
         cursor.close()
@@ -5041,8 +5295,8 @@ def get_staff_stats(staff_id):
             'stats': {
                 'customer_count': customer_count,
                 'appointment_count': appointment_count,
-                'total_income': total_income,
-                'staff_share_total': staff_share_total,
+                'total_income': float(total_income),
+                'staff_share_total': float(staff_share_total) if staff_share_total is not None else None,
                 'commission_percent': int(STAFF_COMMISSION_RATE * 100) if apply_commission else 0,
                 'total_duration_minutes': total_minutes,
                 'completed_revenue_items': completed_revenue_items,
@@ -5054,279 +5308,6 @@ def get_staff_stats(staff_id):
     finally:
         release_db_connection(conn)
 
-
-# =============================================
-# HİZMET YÖNETİMİ
-# =============================================
-
-@app.route('/api/admin/services', methods=['GET'])
-@token_required
-def get_admin_services():
-    """Tüm hizmetleri listele (aktif ve pasif)"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, name, price, duration_min, is_active 
-            FROM services 
-            ORDER BY name
-        """)
-        
-        rows = cursor.fetchall()
-        cursor.close()
-        
-        services = []
-        for row in rows:
-            services.append({
-                'id': row[0],
-                'name': row[1],
-                'price': row[2],
-                'duration_min': row[3],
-                'is_active': row[4]
-            })
-        
-        return jsonify({'success': True, 'services': services})
-    except Exception as e:
-        logger.error(f"get_admin_services hatası: {e}")
-        return jsonify({'success': False, 'message': 'Hizmetler alınamadı'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/services/<int:service_id>/staff', methods=['GET'])
-@token_required
-def get_service_staff(service_id):
-    """Bir hizmetin atanmış personellerini getir"""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT staff_id FROM staff_services WHERE service_id = %s
-        """, (service_id,))
-        
-        rows = cursor.fetchall()
-        cursor.close()
-        
-        staff_ids = [row[0] for row in rows]
-        
-        return jsonify({'success': True, 'staff_ids': staff_ids})
-    except Exception as e:
-        logger.error(f"get_service_staff hatası: {e}")
-        return jsonify({'success': False, 'message': 'Personeller alınamadı'}), 500
-    finally:
-        release_db_connection(conn)
-
-@app.route('/api/admin/services', methods=['POST'])
-@token_required
-def add_service():
-    """Yeni hizmet ekle - SADECE SUPER_ADMIN"""
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-    
-    data = request.get_json()
-    name = data.get('name')
-    price = data.get('price')
-    duration_min = data.get('duration_min')
-    staff_ids = data.get('staff_ids', [])  # Seçilen personeller
-    
-    if not name or not price or not duration_min:
-        return jsonify({'success': False, 'message': 'Tüm alanlar gerekli'}), 400
-    
-    if not staff_ids or len(staff_ids) == 0:
-        return jsonify({'success': False, 'message': 'En az bir personel seçmelisiniz'}), 400
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            INSERT INTO services (name, price, duration_min, is_active)
-            VALUES (%s, %s, %s, TRUE)
-            RETURNING id
-        """, (name, int(price), int(duration_min)))
-        
-        new_id = cursor.fetchone()[0]
-        
-        # Sadece SEÇİLEN personellere hizmeti ata
-        for staff_id in staff_ids:
-            cursor.execute("""
-                INSERT INTO staff_services (staff_id, service_id, price)
-                VALUES (%s, %s, %s)
-            """, (int(staff_id), new_id, int(price)))
-        
-        conn.commit()
-        cursor.close()
-        
-        logger.info(f"Yeni hizmet eklendi: {name} (id={new_id}), personeller: {staff_ids}")
-        
-        return jsonify({
-            'success': True, 
-            'message': 'Hizmet eklendi',
-            'service_id': new_id
-        })
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"add_service hatası: {e}")
-        return jsonify({'success': False, 'message': 'Hizmet eklenemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/services/<int:service_id>', methods=['PUT'])
-@token_required
-def update_service(service_id):
-    """Hizmet güncelle (fiyat, isim, süre, aktiflik, personeller) - SADECE SUPER_ADMIN"""
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-    
-    data = request.get_json()
-    name = data.get('name')
-    price = data.get('price')
-    duration_min = data.get('duration_min')
-    is_active = data.get('is_active')
-    staff_ids = data.get('staff_ids')  # Yeni: Personel listesi
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Dinamik güncelleme
-        updates = []
-        params = []
-        
-        if name is not None:
-            updates.append("name = %s")
-            params.append(name)
-        if price is not None:
-            updates.append("price = %s")
-            params.append(int(price))
-        if duration_min is not None:
-            updates.append("duration_min = %s")
-            params.append(int(duration_min))
-        if is_active is not None:
-            updates.append("is_active = %s")
-            params.append(is_active)
-        
-        # Services tablosunu güncelle (eğer güncelleme varsa)
-        if updates:
-            params.append(service_id)
-            query = f"UPDATE services SET {', '.join(updates)} WHERE id = %s"
-            cursor.execute(query, params)
-        
-        # Personel ataması güncelle (staff_ids geldiyse)
-        if staff_ids is not None:
-            # Önce mevcut atamaları sil
-            cursor.execute("DELETE FROM staff_services WHERE service_id = %s", (service_id,))
-            
-            # Yeni personelleri ekle
-            # Fiyat: gönderilmişse onu kullan, yoksa mevcut services.price'ı al
-            service_price = int(price) if price else None
-            if service_price is None:
-                cursor.execute("SELECT price FROM services WHERE id = %s", (service_id,))
-                result = cursor.fetchone()
-                service_price = result[0] if result else 0
-            
-            for staff_id in staff_ids:
-                cursor.execute("""
-                    INSERT INTO staff_services (staff_id, service_id, price)
-                    VALUES (%s, %s, %s)
-                """, (int(staff_id), service_id, service_price))
-        
-        conn.commit()
-        cursor.close()
-        
-        logger.info(f"Hizmet güncellendi: id={service_id}, personeller={staff_ids}")
-        
-        return jsonify({'success': True, 'message': 'Hizmet güncellendi'})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"update_service hatası: {e}")
-        return jsonify({'success': False, 'message': 'Hizmet güncellenemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/services/<int:service_id>', methods=['DELETE'])
-@token_required
-def delete_service(service_id):
-    """Hizmeti kalıcı olarak sil (hard delete) - SADECE SUPER_ADMIN"""
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Önce bu hizmete bağlı randevuları sil (CASCADE)
-        cursor.execute("DELETE FROM appointments WHERE service_id = %s", (service_id,))
-        
-        # Sonra staff_services ilişkilerini sil
-        cursor.execute("DELETE FROM staff_services WHERE service_id = %s", (service_id,))
-        
-        # En son hizmeti kalıcı olarak sil
-        cursor.execute("DELETE FROM services WHERE id = %s", (service_id,))
-        conn.commit()
-        cursor.close()
-        
-        logger.info(f"Hizmet kalıcı olarak silindi: id={service_id}")
-        
-        return jsonify({'success': True, 'message': 'Hizmet kalıcı olarak silindi'})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"delete_service hatası: {e}")
-        return jsonify({'success': False, 'message': 'Hizmet silinemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/services/<int:service_id>/toggle-active', methods=['PATCH'])
-@token_required
-def toggle_service_active(service_id):
-    """Hizmetin aktif/pasif durumunu değiştir - SADECE SUPER_ADMIN"""
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Mevcut durumu al ve tersine çevir
-        cursor.execute("UPDATE services SET is_active = NOT is_active WHERE id = %s RETURNING is_active", (service_id,))
-        result = cursor.fetchone()
-        
-        if result is None:
-            return jsonify({'success': False, 'message': 'Hizmet bulunamadı'}), 404
-        
-        new_status = result[0]
-        conn.commit()
-        cursor.close()
-        
-        status_text = 'aktif' if new_status else 'pasif'
-        logger.info(f"Hizmet durumu değiştirildi: id={service_id}, is_active={new_status}")
-        
-        return jsonify({
-            'success': True, 
-            'message': f'Hizmet {status_text} yapıldı',
-            'is_active': new_status
-        })
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"toggle_service_active hatası: {e}")
-        return jsonify({'success': False, 'message': 'Durum değiştirilemedi'}), 500
-    finally:
-        release_db_connection(conn)
 
 
 @app.route('/api/admin/reports/income', methods=['GET'])
@@ -5376,7 +5357,12 @@ def get_income_reports():
         appointment_count, total_minutes, appointment_income = cursor.fetchone()
         appointment_count = int(appointment_count or 0)
         total_minutes = int(total_minutes or 0)
-        appointment_income = float(appointment_income or 0)
+        # appointments.price NUMERIC(10,2) oldugundan psycopg2 bunu zaten
+        # Decimal olarak dondurur — erken float()'a cevirip ardindan
+        # toplamlar uzerinde float aritmetigi yapmak (kucuk de olsa) yuvarlama
+        # sapmasi biriktirebilir. Decimal, yanit olusturulurken en sonda
+        # tek seferde float'a cevrilir.
+        appointment_income = Decimal(appointment_income or 0)
 
         service_breakdown = []
 
@@ -5399,7 +5385,7 @@ def get_income_reports():
             {
                 'date': r[0].strftime('%d.%m.%Y'),
                 'count': int(r[1] or 0),
-                'income': float(r[2] or 0),
+                'income': float(Decimal(r[2] or 0)),
                 'minutes': 0,
             }
             for r in rows
@@ -5438,7 +5424,7 @@ def get_income_reports():
 
         # Manuel ayarlamalar (Randevu # ile otomatik eklenenler hariç — çift sayım olmasın)
         manual_adjustments = []
-        manual_adjustments_total = 0
+        manual_adjustments_total = Decimal('0')
 
         if is_studio_admin():
             try:
@@ -5476,30 +5462,31 @@ def get_income_reports():
 
             for row in cursor.fetchall():
                 sign = 1 if (row[2] or 'income') == 'income' else -1
+                adjustment_amount = Decimal(row[1])
                 manual_adjustments.append({
                     'id': row[0],
-                    'amount': float(row[1]),
+                    'amount': float(adjustment_amount),
                     'type': row[2] or 'income',
                     'description': row[3],
                     'date': row[4].strftime('%d.%m.%Y'),
                     'created_by_name': row[5] or 'Bilinmiyor',
                 })
-                manual_adjustments_total += float(row[1]) * sign
+                manual_adjustments_total += adjustment_amount * sign
 
         cursor.close()
 
-        total_income = appointment_income + float(manual_adjustments_total)
-        
+        total_income = appointment_income + manual_adjustments_total
+
         logger.info(f"Gelir raporu alındı: {month}/{year}")
-        
+
         return jsonify({
             'success': True,
             'month': month,
             'year': year,
-            'total_income': total_income,
-            'appointment_income': appointment_income,
+            'total_income': float(total_income),
+            'appointment_income': float(appointment_income),
             'total_duration_minutes': total_minutes,
-            'manual_adjustments_total': manual_adjustments_total,
+            'manual_adjustments_total': float(manual_adjustments_total),
             'appointment_count': appointment_count,
             'total_minutes': total_minutes,
             'service_breakdown': service_breakdown,
@@ -5539,10 +5526,13 @@ def add_income_adjustment():
         return jsonify({'success': False, 'message': 'Tutar ve açıklama zorunlu'}), 400
     
     try:
-        amount = float(amount)
-    except (ValueError, TypeError):
+        # str() ara adimi: Decimal(float) ikili kayan nokta hatasini miras
+        # alir (orn. Decimal(150.1) -> 150.09999999999999431...); Decimal(str(...))
+        # kullanicinin yazdigi ondalik degeri aynen korur.
+        amount = Decimal(str(amount))
+    except Exception:
         return jsonify({'success': False, 'message': 'Geçersiz miktar'}), 400
-    
+
     if not description.strip():
         return jsonify({'success': False, 'message': 'Açıklama boş olamaz'}), 400
 
@@ -5632,19 +5622,20 @@ def get_income_adjustments():
         
         rows = cursor.fetchall()
         adjustments = []
-        total_adjustments = 0
-        
+        total_adjustments = Decimal('0')
+
         for row in rows:
+            row_amount = Decimal(row[1])
             adjustment = {
                 'id': row[0],
-                'amount': float(row[1]),
+                'amount': float(row_amount),
                 'description': row[2],
                 'adjustment_date': row[3].strftime('%d.%m.%Y'),
                 'created_by_name': row[4] or 'Bilinmiyor',
                 'created_at': row[5].isoformat()
             }
             adjustments.append(adjustment)
-            total_adjustments += float(row[1])
+            total_adjustments += row_amount
         
         cursor.close()
         
@@ -5653,7 +5644,7 @@ def get_income_adjustments():
         return jsonify({
             'success': True,
             'adjustments': adjustments,
-            'total_adjustments': total_adjustments,
+            'total_adjustments': float(total_adjustments),
             'month': month,
             'year': year
         })
@@ -6370,9 +6361,19 @@ def send_appointment_reminders():
                         hours_before=reminder_hours,
                     )
                     
-                    send_wapio_message(phone, message)
-                    sent_count += 1
-                    logger.info(f"Hatırlatma gönderildi: {phone} - {apt_date} {apt_time}")
+                    # Bu job zaten reminder_sent bayragiyla her 5 dk'da bir
+                    # kendi retry'ini yapiyor (bkz. asagidaki flag reset) —
+                    # ayrica kuyruga da eklemek cift gonderime yol acar.
+                    ok = send_wapio_message(phone, message, queue_on_failure=False)
+                    if not ok:
+                        # send_wapio_message basarisizlikta False doner, exception
+                        # firlatmaz — flag'i geri almazsak hatirlatma bir daha
+                        # asla denenmez ve musteri sessizce hic mesaj almaz.
+                        cursor.execute("UPDATE appointments SET reminder_sent = FALSE WHERE id = %s", (apt_id,))
+                        logger.warning(f"Hatirlatma gonderilemedi (tekrar denenecek): {phone} - {apt_date} {apt_time}")
+                    else:
+                        sent_count += 1
+                        logger.info(f"Hatırlatma gönderildi: {phone} - {apt_date} {apt_time}")
                 else:
                     # Başka bir worker zaten bu randevuyu işlemiş
                     logger.info(
@@ -6458,7 +6459,19 @@ def send_aftercare_cream_reminders():
                 customer_name = f"{name} {surname}".strip() or 'Müşterimiz'
                 message = build_aftercare_reminder_message(customer_name, staff_name)
 
-                send_wapio_message(phone, message)
+                # aftercare_reminder_sent bayragiyla kendi retry'i var, kuyruk gerekmez.
+                ok = send_wapio_message(phone, message, queue_on_failure=False)
+                if not ok:
+                    cursor.execute(
+                        "UPDATE appointments SET aftercare_reminder_sent = FALSE WHERE id = %s",
+                        (apt_id,),
+                    )
+                    logger.warning(
+                        "Krem bakim hatirlatmasi gonderilemedi (tekrar denenecek) | phone=%s appointment_id=%s",
+                        phone, apt_id,
+                    )
+                    continue
+
                 sent_count += 1
                 logger.info(
                     "Krem bakim hatirlatmasi gonderildi | phone=%s appointment_id=%s completed_at=%s",
@@ -6853,6 +6866,8 @@ def start_scheduler_if_master():
             scheduler.add_job(func=cleanup_expired_webhook_messages, trigger="interval", hours=1, id='cleanup_webhook_messages', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_old_cancelled_appointments, trigger="interval", days=7, id='cleanup_cancelled_appointments', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_expired_admin_tokens, trigger="interval", hours=24, id='cleanup_admin_tokens', replace_existing=True, max_instances=1)
+            # WhatsApp kuyruğu: Evolution gecici kapaliyken kaybolan mesajlari tekrar dener
+            scheduler.add_job(func=drain_whatsapp_queue, trigger="interval", minutes=2, id='whatsapp_queue_drain', replace_existing=True, max_instances=1)
             # Takvim kuyruğu: anlık tetikleme kaçırırsa/başarısız olursa telafi eder
             scheduler.add_job(func=drain_gcal_queue, trigger="interval", minutes=2, id='gcal_queue_drain', replace_existing=True, max_instances=1)
             scheduler.add_job(func=run_gcal_inbound_tick, trigger="interval", minutes=2, id='gcal_inbound_tick', replace_existing=True, max_instances=1)
@@ -6871,6 +6886,7 @@ def start_scheduler_if_master():
             logger.info("   - Webhook messages cleanup: her 1 saatte bir")
             logger.info("   - Cancelled appointments cleanup: her 7 günde bir")
             logger.info("   - Admin tokens cleanup: her 24 saatte bir")
+            logger.info("   - WhatsApp retry kuyrugu: her 2 dakikada bir")
             logger.info("   - UptimeRobot heartbeat: her 2 dakikada bir (URL varsa)")
             logger.info(f"   - Database backup: Her gün saat {backup_hour:02d}:{backup_minute:02d}'da (max_instances=1)")
             if is_google_calendar_enabled():
@@ -6936,9 +6952,12 @@ def start_scheduler_if_master():
                 pass
         return False
 
+ensure_whatsapp_queue_table()
+
 # Scheduler'ı başlat (sadece bir process başlatacak)
 start_scheduler_if_master()
 ensure_artist_instagram_column()
+ensure_artist_is_active_column()
 
 def _shutdown_scheduler_and_lock():
     if scheduler.running:
