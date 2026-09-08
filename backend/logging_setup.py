@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 from logging.handlers import TimedRotatingFileHandler
 
 from error_codes import CODE_HELP, E_UNK_001
@@ -160,6 +161,29 @@ def setup_logging(level: int | None = None) -> str:
     return LOG_FILE_PATH
 
 
+def _notify_async(code: str, message: str, ctx: dict) -> None:
+    """Kritik hatalari e-posta ile bildir (arka planda, log akisini bloklamadan).
+
+    error_notifier zaten (EMAIL_* .env'de yoksa no-op, varsa ayni hata icin
+    saatte 1) rate limiting yapiyor — burada sadece her log_error cagrisini
+    ona yonlendiriyoruz. Onceden bu tek bir yere (gcal dead-letter) elle
+    baglanmisti; digger tum hata yollari (DB, scheduler, WhatsApp, ...)
+    sessizce sadece dosyaya yaziliyordu.
+    """
+    try:
+        from error_notifier import send_error_notification
+    except Exception:
+        return
+
+    def _run():
+        try:
+            send_error_notification(code, message, ctx or None)
+        except Exception:
+            pass
+
+    threading.Thread(target=_run, name="error-notify", daemon=True).start()
+
+
 def log_error(logger: logging.Logger, code: str, message: str, exc: BaseException | None = None, **ctx) -> None:
     """Hata satırı: kod + net cümle + bağlam. Exception varsa traceback eklenir."""
     bits = [_strip_emoji(message)]
@@ -171,6 +195,7 @@ def log_error(logger: logging.Logger, code: str, message: str, exc: BaseExceptio
         logger.error(" | ".join(bits), extra=extra, exc_info=exc, stacklevel=2)
     else:
         logger.error(" | ".join(bits), extra=extra, stacklevel=2)
+    _notify_async(code, message, ctx)
 
 
 def log_warning(logger: logging.Logger, code: str, message: str, **ctx) -> None:

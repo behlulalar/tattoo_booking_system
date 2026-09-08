@@ -3097,13 +3097,30 @@ def _import_manual_google_event(cursor, event, calendar_id):
     )
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
 
-    is_off_day = bool(has_keyword or (staff_id and not phone))
+    # "sanatci eslesti + telefon yok" tek basina Off Day sayilmaz: elle
+    # yazilmis, telefonu unutulmus gercek bir randevu olabilir (musteri adi
+    # basliktan okunabiliyorsa). _resolve_or_create_gcal_customer boyle bir
+    # durumda isme gore eslestirme/synthetic telefon ile randevuyu yine de
+    # olusturabiliyor, o yuzden burada erken davranip yutmayalim. All-day
+    # etkinliklerde zamanli randevu kurulamayacagindan (saat araligi yok)
+    # bu ayrim uygulanmaz, dogrudan Off Day kabul edilir.
+    parsed_staff, _staff_name, cust_name, cust_surname, parsed_phone = _parse_manual_event_title(
+        summary, artists
+    )
+    staff_id = staff_id or parsed_staff
+    phone = phone or parsed_phone
+    has_real_customer_name = not _is_placeholder_person(cust_name, cust_surname)
+
+    is_off_day = bool(
+        has_keyword
+        or (staff_id and not phone and (all_day or not has_real_customer_name))
+    )
     if is_off_day:
         if not staff_id:
             _log_unmatched_artist(event_id, summary)
             return 'unmatched'
         return _import_off_day_event(
-            cursor, event, calendar_id, staff_id, staff_name, reason,
+            cursor, event, calendar_id, staff_id, staff_name or _staff_name, reason,
         )
 
     if all_day or not start_dt or not end_dt:
@@ -3113,18 +3130,9 @@ def _import_manual_google_event(cursor, event, calendar_id):
     local_date = start_dt.date()
     local_time = start_dt.strftime('%H:%M') + ':00'
 
-    parsed_staff, _staff_name, cust_name, cust_surname, parsed_phone = _parse_manual_event_title(
-        summary, artists
-    )
-    staff_id = staff_id or parsed_staff
-    phone = phone or parsed_phone
     if not staff_id:
         _log_unmatched_artist(event_id, summary)
         return 'unmatched'
-    if not phone:
-        return _import_off_day_event(
-            cursor, event, calendar_id, staff_id, staff_name or _staff_name, reason,
-        )
 
     cursor.execute(
         'SELECT id FROM appointments WHERE google_event_id = %s',
