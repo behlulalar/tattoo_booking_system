@@ -113,6 +113,14 @@ localStorage.setItem('API_BASE_URL', 'http://127.0.0.1:3000');
 ```bash
 curl http://127.0.0.1:3000/api/health
 curl http://127.0.0.1:3000/api/health/whatsapp
+curl http://127.0.0.1:3000/api/health/google-calendar
+curl http://127.0.0.1:3000/api/uptime
+```
+
+UptimeRobot: bu uçlar kopunca **503** döner. Dashboard’da HTTP monitör ekleyin (5 dk). Arka plan işleri için Heartbeat monitörü oluşturup `UPTIMEROBOT_HEARTBEAT_URL` yazın. API anahtarı varsa:
+
+```bash
+cd backend && ../venv/bin/python scripts/setup_uptimerobot.py
 ```
 
 ---

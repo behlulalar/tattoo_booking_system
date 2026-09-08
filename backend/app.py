@@ -42,6 +42,7 @@ from whatsapp_messages import (
     get_reminder_hours_before,
     get_webhook_cooldown_seconds,
     get_webhook_url,
+    get_webhook_secret,
 )
 from google_calendar_sync import (
     enqueue_appointment_sync,
@@ -66,6 +67,9 @@ from google_calendar_sync import (
     reset_inbound_state as reset_gcal_inbound_state,
     parse_calendar_aliases,
     merge_calendar_aliases,
+    reset_artists_cache as reset_gcal_artists_cache,
+    set_cancel_notifier as set_gcal_cancel_notifier,
+    is_real_customer_phone,
 )
 from whatsapp_provider import (
     WAPIO_INTEGRATION_ENABLED,
@@ -94,6 +98,13 @@ def _wapio_disabled_json():
         'message': 'Wapio devre dışı. Evolution API kullanılıyor.',
     }), 503
 
+from uptime_monitor import (
+    check_google_calendar_uptime,
+    http_status_for_probe,
+    monitor_payload,
+    ping_uptimerobot_heartbeat,
+    uptime_catalog,
+)
 from loyalty_points import (
     LoyaltyCodeError,
     apply_percent_discount,
@@ -112,6 +123,7 @@ import time
 import psycopg2
 from psycopg2 import pool
 import hashlib
+import hmac
 import secrets
 import bcrypt
 import jwt
@@ -209,8 +221,30 @@ limiter = Limiter(
 )
 logger.info("Rate limiter initialized") 
 
-# JWT Secret Key
-JWT_SECRET = os.getenv('JWT_SECRET', 'roof-tattoo-admin-secret-change-me')
+# JWT Secret Key — .env'de zorunlu; eksik/placeholder/kısa ise prod'da admin
+# token'ları sahtelenebilir hale gelir, bu yüzden başlangıçta sert şekilde durdurur.
+_JWT_SECRET_PLACEHOLDERS = {
+    '', 'change-me', 'changeme', 'change_me',
+    'change_me_to_a_long_random_secret', 'roof-tattoo-admin-secret-change-me',
+}
+JWT_SECRET = os.getenv('JWT_SECRET', '')
+_app_debug = os.getenv('APP_DEBUG', 'false').strip().lower() == 'true'
+if JWT_SECRET.strip().lower() in _JWT_SECRET_PLACEHOLDERS or len(JWT_SECRET.strip()) < 32:
+    if _app_debug:
+        JWT_SECRET = secrets.token_urlsafe(48)
+        logger.warning(
+            "JWT_SECRET eksik/zayıf — APP_DEBUG=true olduğu için geçici, "
+            "her yeniden başlatmada değişen bir secret üretildi. Bu secret ile "
+            "üretilmiş token'lar restart sonrası geçersiz olur. Production'da "
+            "JWT_SECRET'i .env'de 32+ karakterlik rastgele bir değerle mutlaka set edin."
+        )
+    else:
+        raise RuntimeError(
+            "JWT_SECRET .env dosyasında eksik, placeholder veya çok kısa (32+ "
+            "karakter gerekli). Bu haliyle admin JWT'leri sahtelenebilir. "
+            "Uygulamayı başlatmadan önce güçlü, rastgele bir JWT_SECRET tanımlayın "
+            "(örn: python3 -c \"import secrets; print(secrets.token_urlsafe(48))\")."
+        )
 
 # Bot Phone Number (webhook filtreleme için)
 BOT_PHONE_NUMBER = os.getenv('BOT_PHONE_NUMBER', '5359708001')
@@ -429,6 +463,7 @@ set_gcal_connection_provider(get_db_connection, release_db_connection)
 # HEALTH CHECK ENDPOINT (UptimeRobot için)
 # =============================================
 @app.route('/api/health', methods=['GET'])
+@limiter.exempt
 def health_check():
     """Sistem sağlık kontrolü - UptimeRobot için"""
     status = {
@@ -501,6 +536,7 @@ def health_check():
         logger.warning(f"Memory monitoring hatası: {e}")
         status['memory'] = {'error': 'Could not retrieve memory info'}
     
+    status['probe'] = 'up' if status['status'] == 'healthy' else 'down'
     http_status = 200 if status['status'] == 'healthy' else 503
     return jsonify(status), http_status
 
@@ -579,6 +615,7 @@ def health_check_whatsapp():
         result = check_whatsapp_health()
         healthy = bool(result.get('healthy'))
         response_data = {
+            'probe': 'up' if healthy else 'down',
             'status': 'healthy' if healthy else 'unhealthy',
             'timestamp': datetime.now().isoformat(),
             'provider': result.get('provider'),
@@ -593,10 +630,26 @@ def health_check_whatsapp():
     except Exception as e:
         logger.error(f"WhatsApp health check hatası: {e}")
         return jsonify({
+            'probe': 'down',
             'status': 'unhealthy',
             'reason': str(e),
             'timestamp': datetime.now().isoformat(),
         }), 503
+
+
+@app.route('/api/health/google-calendar', methods=['GET'])
+@limiter.exempt
+def health_check_google_calendar():
+    """Google Takvim ağı / kimlik — UptimeRobot. Senkron kapalıysa skip."""
+    probe, extra = check_google_calendar_uptime()
+    return jsonify(monitor_payload(probe, extra)), http_status_for_probe(probe)
+
+
+@app.route('/api/uptime', methods=['GET'])
+@limiter.exempt
+def uptime_monitor_catalog():
+    """UptimeRobot monitör listesi (URL’ler ve açıklamalar)."""
+    return jsonify(uptime_catalog()), 200
 
 
 @app.route('/api/health/wapio', methods=['GET'])
@@ -1146,6 +1199,12 @@ def _handle_whatsapp_welcome_inbound(
 def whatsapp_webhook():
     """WhatsApp gelen mesaj webhook — Evolution API (MESSAGES_UPSERT)."""
     try:
+        expected_secret = get_webhook_secret()
+        if expected_secret:
+            provided = (request.args.get('wtoken') or request.headers.get('X-Webhook-Secret') or '').strip()
+            if not provided or not hmac.compare_digest(provided, expected_secret):
+                logger.warning("WhatsApp webhook reddedildi: gecersiz/eksik wtoken")
+                return jsonify({'success': False, 'message': 'Unauthorized'}), 401
         if not request.is_json:
             return jsonify({'success': True, 'message': 'Evolution JSON webhook bekleniyor'}), 200
         data = request.get_json()
@@ -1264,6 +1323,57 @@ def find_customer_by_phone(cursor, phone):
 def _time_str_to_minutes(time_str):
     parts = str(time_str)[:5].split(':')
     return int(parts[0]) * 60 + int(parts[1])
+
+
+TR_DATE_ERROR = 'Tarih formatı: GG.AA.YYYY'
+
+
+def parse_tr_date(date_str):
+    """'16.12.2025' -> '2025-12-16'. Geçersizse None.
+
+    Ham split('.') yetmiyordu: hem üç parçaya bölünemeyen girdi ValueError ile
+    500'e düşüyordu, hem de '32.13.2025' gibi bölünebilen ama geçersiz tarihler
+    sorguya sızıp veritabanı hatası üretiyordu.
+    """
+    try:
+        return datetime.strptime((date_str or '').strip(), '%d.%m.%Y').date().isoformat()
+    except (ValueError, TypeError):
+        return None
+
+
+_STAFF_DAY_LOCK_NAMESPACE = 0x524F4F46  # 'ROOF'
+
+
+def _staff_day_lock_key(staff_id, formatted_date):
+    return f"{int(staff_id or 0)}:{formatted_date}"
+
+
+def lock_staff_day(cursor, staff_id, formatted_date):
+    """Bir sanatçının bir gününe randevu yazımını sıraya sok.
+
+    Uygunluk kontrolü ile INSERT arasında araya giren ikinci bir istek çakışan
+    randevu yaratabiliyordu. SELECT ... FOR UPDATE bunu kapatmıyor: yalnızca
+    var olan satırları kilitler, yeni INSERT'i engellemez. Unique index de
+    yalnızca birebir aynı (sanatçı, tarih, saat) çakışmasını yakalar; 120 dk'lık
+    bir randevunun ikinci saati korumasız kalır.
+
+    Kilit transaction sonunda düşer, bu yüzden çağıran commit/rollback'e kadar
+    aynı transaction'da kalmalıdır.
+    """
+    cursor.execute(
+        'SELECT pg_advisory_xact_lock(%s, hashtext(%s))',
+        (_STAFF_DAY_LOCK_NAMESPACE, _staff_day_lock_key(staff_id, formatted_date)),
+    )
+
+
+def try_lock_staff_day(cursor, staff_id, formatted_date):
+    """lock_staff_day'in bloklamayan hali. Alınamazsa False döner."""
+    cursor.execute(
+        'SELECT pg_try_advisory_xact_lock(%s, hashtext(%s))',
+        (_STAFF_DAY_LOCK_NAMESPACE, _staff_day_lock_key(staff_id, formatted_date)),
+    )
+    row = cursor.fetchone()
+    return bool(row and row[0])
 
 
 def appointment_slot_conflicts(cursor, staff_id, formatted_date, time_str, duration_minutes, exclude_appointment_id=None):
@@ -1477,6 +1587,82 @@ def _gcal_inbound_slot_allowed(
 
 
 set_gcal_slot_validator(_gcal_inbound_slot_allowed)
+
+
+def _gcal_notify_cancelled_from_google(appointment_ids):
+    """Google Takvim'den silinen randevular icin musteriye iptal WhatsApp'i.
+
+    poll_inbound_changes commit ettikten SONRA arka plan thread'inden cagrilir,
+    yani buradaki hata senkronu etkilemez. Elle olusturulan takvim
+    etkinliklerinden gelen randevularda musteri sentetik numarayla kaydedilmis
+    olabilir; o numaralara mesaj gonderilmez.
+    """
+    if not appointment_ids:
+        return
+
+    conn = None
+    rows = []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        # status='cancelled' tekrar kontrol edilir: bekleme suresi icinde admin
+        # panelden randevu geri alinmissa (yanlislikla silinen takvim event'i
+        # duzeltildiyse) musteriye artik yanlis iptal mesaji gitmez.
+        cursor.execute(
+            """
+            SELECT a.id, a.appointment_date, a.appointment_time,
+                   c.phone, COALESCE(c.name, ''), COALESCE(c.surname, '')
+              FROM appointments a
+              JOIN customers c ON c.id = a.customer_id
+             WHERE a.id = ANY(%s) AND a.status = 'cancelled'
+            """,
+            (list(appointment_ids),),
+        )
+        rows = cursor.fetchall() or []
+        cursor.close()
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.warning(f"Google iptal bildirimi icin randevu okunamadi: {e}")
+        return
+    finally:
+        release_db_connection(conn)
+
+    for apt_id, apt_date, apt_time, phone, name, surname in rows:
+        if not is_real_customer_phone(phone):
+            logger.info(
+                "Google iptal bildirimi atlandi (sentetik numara) | apt=%s", apt_id
+            )
+            continue
+        try:
+            date_str = apt_date.strftime('%d.%m.%Y')
+            time_str = str(apt_time)[:5]
+            customer_name = f"{name} {surname}".strip() or _phone_display_for_message(phone)
+            send_wapio_message(
+                phone,
+                build_appointment_cancelled_message(customer_name, date_str, time_str),
+            )
+            logger.info(
+                "Google iptal bildirimi gonderildi | apt=%s %s %s",
+                apt_id, date_str, time_str,
+            )
+        except Exception as send_err:
+            logger.warning(
+                f"Google iptal bildirimi gonderilemedi (randevu iptal kaldi) "
+                f"apt={apt_id}: {send_err}"
+            )
+
+
+def _phone_display_for_message(phone):
+    digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
+    return f"0{digits}" if len(digits) == 10 else (digits or 'Müşterimiz')
+
+
+set_gcal_cancel_notifier(_gcal_notify_cancelled_from_google)
 
 
 def _minutes_from_time_value(t):
@@ -2028,9 +2214,9 @@ def get_booked_times():
     if not staff_id or not date_str:
         return jsonify({"success": False, "message": "staff_id ve date gerekli"}), 400
     
-    # Tarih formatını dönüştür
-    day, month, year = date_str.split('.')
-    formatted_date = f"{year}-{month}-{day}"
+    formatted_date = parse_tr_date(date_str)
+    if not formatted_date:
+        return jsonify({"success": False, "message": TR_DATE_ERROR}), 400
     
     conn = None
     try:
@@ -2470,8 +2656,10 @@ def get_offer(token):
 
         # If a date is provided, return available start slots for that date
         if date_str:
-            day, month, year = date_str.split('.')
-            formatted_date = f"{year}-{month}-{day}"
+            formatted_date = parse_tr_date(date_str)
+            if not formatted_date:
+                cursor.close()
+                return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
 
             slot_details = compute_available_start_slots(
                 cursor, staff_id, formatted_date, duration_minutes,
@@ -2511,9 +2699,9 @@ def choose_offer_slot(token):
     if not token or not date_str or not time_str:
         return jsonify({'success': False, 'message': 'token, date, time gerekli'}), 400
 
-    # Normalize date
-    day, month, year = date_str.split('.')
-    formatted_date = f"{year}-{month}-{day}"
+    formatted_date = parse_tr_date(date_str)
+    if not formatted_date:
+        return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
 
     conn = None
     try:
@@ -2571,12 +2759,17 @@ def choose_offer_slot(token):
             cursor.close()
             return jsonify({'success': False, 'message': 'Bu linkin süresi dolmuş'}), 410
 
+        # Uygunluk kontrolü ile INSERT arası: aynı sanatçı/gün için ikinci bir
+        # müşteri araya girip çakışan saat alamasın.
+        lock_staff_day(cursor, staff_id, formatted_date)
+
         available_start_slots, _ = compute_available_start_slots(
             cursor, staff_id, formatted_date, duration_minutes,
         )
 
         if time_str not in available_start_slots:
             msg = 'Seçilen saat artık uygun değil. Lütfen saatleri yeniden yükleyip tekrar deneyin.'
+            conn.rollback()
             cursor.close()
             return jsonify({'success': False, 'message': msg}), 409
 
@@ -3253,9 +3446,10 @@ def get_admin_appointments():
             query += " AND a.status NOT IN ('completed', 'cancelled', 'no_show')"
         
         if date_filter:
-            # Convert "16.12.2025" to "2025-12-16"
-            day, month, year = date_filter.split('.')
-            formatted_date = f"{year}-{month}-{day}"
+            formatted_date = parse_tr_date(date_filter)
+            if not formatted_date:
+                cursor.close()
+                return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
             query += " AND a.appointment_date = %s"
             params.append(formatted_date)
         
@@ -3288,8 +3482,7 @@ def get_admin_appointments():
             to_query += " AND t.staff_id = %s"
             to_params.append(request.staff_id)
         if date_filter:
-            day, month, year = date_filter.split('.')
-            formatted_date = f"{year}-{month}-{day}"
+            # Yukarıda doğrulandı; aynı değer yeniden kullanılıyor.
             to_query += " AND t.off_date = %s"
             to_params.append(formatted_date)
         if start_date:
@@ -3364,11 +3557,9 @@ def admin_manual_appointment_available_slots():
     if not is_studio_admin() and int(staff_id) != int(request.staff_id):
         return jsonify({'success': False, 'message': 'Bu personel için yetkiniz yok'}), 403
 
-    try:
-        day, month, year = date_str.split('.')
-        formatted_date = f"{year}-{month}-{day}"
-    except ValueError:
-        return jsonify({'success': False, 'message': 'Tarih formatı: GG.AA.YYYY'}), 400
+    formatted_date = parse_tr_date(date_str)
+    if not formatted_date:
+        return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
 
     conn = None
     try:
@@ -3521,11 +3712,9 @@ def admin_create_manual_appointment():
         return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
     phone = parse_tr_mobile(phone_raw)
 
-    try:
-        day, month, year = date_str.split('.')
-        formatted_date = f"{year}-{month}-{day}"
-    except ValueError:
-        return jsonify({'success': False, 'message': 'Tarih formatı: GG.AA.YYYY'}), 400
+    formatted_date = parse_tr_date(date_str)
+    if not formatted_date:
+        return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
 
     if is_studio_admin() and staff_id_raw:
         staff_id = int(staff_id_raw)
@@ -3560,7 +3749,10 @@ def admin_create_manual_appointment():
                 'message': 'Seçilen saat takvimde uygun değil veya dolu. Lütfen listeden başka saat seçin.'
             }), 409
 
-        # Kayıt anında tekrar kilitle ve çakışma kontrolü (aynı takvim kuralları)
+        # Kayıt anında tekrar kilitle ve çakışma kontrolü (aynı takvim kuralları).
+        # FOR UPDATE tek başına yetmez: yalnızca var olan satırları kilitler,
+        # boş bir güne eşzamanlı iki INSERT'i engellemez.
+        lock_staff_day(cursor, staff_id, formatted_date)
         cursor.execute("""
             SELECT id FROM appointments
             WHERE staff_id = %s AND appointment_date = %s AND status != 'cancelled'
@@ -4200,6 +4392,7 @@ def add_staff():
         new_id = cursor.fetchone()[0]
         conn.commit()
         cursor.close()
+        reset_gcal_artists_cache()
         
         logger.info(f"Yeni personel eklendi: {name} (id={new_id})")
         
@@ -4322,6 +4515,7 @@ def update_staff(staff_id):
         cursor.execute(query, params)
         conn.commit()
         cursor.close()
+        reset_gcal_artists_cache()
         
         logger.info(f"Personel güncellendi: id={staff_id}")
         
@@ -4405,6 +4599,7 @@ def delete_staff(staff_id):
         cursor.execute("DELETE FROM artists WHERE id = %s", (staff_id,))
         conn.commit()
         cursor.close()
+        reset_gcal_artists_cache()
         kick_gcal_queue()
         
         logger.info(f"Personel silindi: id={staff_id}, force={force}")
@@ -6579,17 +6774,30 @@ scheduler = BackgroundScheduler()
 # Scheduler lock file path
 SCHEDULER_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.scheduler.lock')
 
+_scheduler_lock_conn = None  # dedicated, never-pooled connection holding the advisory lock
+
+
 def start_scheduler_if_master():
     """Scheduler'ı sadece bir process'te başlat (PostgreSQL advisory lock ile)
-    
-    PostgreSQL advisory lock kullanarak worker'lar arasında scheduler'ın 
-    sadece bir kez başlatılmasını garanti eder. File lock yerine database 
+
+    PostgreSQL advisory lock kullanarak worker'lar arasında scheduler'ın
+    sadece bir kez başlatılmasını garanti eder. File lock yerine database
     lock kullanılması daha güvenilirdir çünkü:
     - Worker'lar farklı process'lerde çalışır
     - Database lock tüm worker'lar için merkezi kontrol sağlar
+
+    ÖNEMLİ: pg_try_advisory_lock SESSION seviyesinde bir kilittir — yalnızca
+    onu alan bağlantı açık kaldığı sürece geçerlidir. Bu yüzden kilidi tutan
+    bağlantı asla connection pool'a iade edilmez/kapatılmaz (aksi halde pool
+    başka bir isteğe verir veya boşta kalınca kapatır, kilit sessizce düşer
+    ve bir sonraki worker restart'ında ikinci bir scheduler başlayıp
+    randevu hatırlatmalarının/temizlik job'larının duplike çalışmasına yol
+    açar). Bunun yerine pool dışında, process ömrü boyunca açık kalan ayrı
+    bir bağlantı kullanılır (bkz. _scheduler_lock_conn).
     """
     import fcntl
-    
+    global _scheduler_lock_conn
+
     # Önce file lock dene (hızlı kontrol için)
     file_lock_acquired = False
     lock_file = None
@@ -6606,22 +6814,23 @@ def start_scheduler_if_master():
                 lock_file.close()
             except:
                 pass
-    
-    # Database advisory lock ile kesin kontrol
+
+    # Database advisory lock ile kesin kontrol — pool DIŞINDA, kalıcı bağlantı
     conn = None
     advisory_lock_id = 123456  # Scheduler için unique lock ID
     db_lock_acquired = False
-    
+
     try:
-        conn = get_db_connection()
+        conn = psycopg2.connect(**DATABASE_CONFIG)
+        conn.autocommit = True
         cursor = conn.cursor()
-        
+
         # PostgreSQL advisory lock al (non-blocking)
         # pg_try_advisory_lock: lock alınamazsa False döner, beklemez
         cursor.execute("SELECT pg_try_advisory_lock(%s)", (advisory_lock_id,))
         db_lock_acquired = cursor.fetchone()[0]
         cursor.close()
-        
+
         if not db_lock_acquired:
             logger.info("Scheduler baska bir process tarafindan baslatilmis (database lock), atlaniyor")
             if lock_file and file_lock_acquired:
@@ -6630,8 +6839,12 @@ def start_scheduler_if_master():
                     lock_file.close()
                 except:
                     pass
+            try:
+                conn.close()
+            except Exception:
+                pass
             return False
-        
+
         # Lock alındı, scheduler'ı başlat
         if not scheduler.running:
             scheduler.add_job(func=send_appointment_reminders, trigger="interval", minutes=5, id='send_reminders', replace_existing=True, max_instances=1)
@@ -6643,6 +6856,7 @@ def start_scheduler_if_master():
             # Takvim kuyruğu: anlık tetikleme kaçırırsa/başarısız olursa telafi eder
             scheduler.add_job(func=drain_gcal_queue, trigger="interval", minutes=2, id='gcal_queue_drain', replace_existing=True, max_instances=1)
             scheduler.add_job(func=run_gcal_inbound_tick, trigger="interval", minutes=2, id='gcal_inbound_tick', replace_existing=True, max_instances=1)
+            scheduler.add_job(func=ping_uptimerobot_heartbeat, trigger="interval", minutes=2, id='uptimerobot_heartbeat', replace_existing=True, max_instances=1)
             # Günlük veritabanı yedekleme: Her gün saat 00:30'da
             backup_hour = 0
             backup_minute = 30
@@ -6657,6 +6871,7 @@ def start_scheduler_if_master():
             logger.info("   - Webhook messages cleanup: her 1 saatte bir")
             logger.info("   - Cancelled appointments cleanup: her 7 günde bir")
             logger.info("   - Admin tokens cleanup: her 24 saatte bir")
+            logger.info("   - UptimeRobot heartbeat: her 2 dakikada bir (URL varsa)")
             logger.info(f"   - Database backup: Her gün saat {backup_hour:02d}:{backup_minute:02d}'da (max_instances=1)")
             if is_google_calendar_enabled():
                 logger.info("   - Google Calendar: aktif (kuyruklu push + yerel meşguliyet + inbound)")
@@ -6677,15 +6892,22 @@ def start_scheduler_if_master():
             if lock_file and file_lock_acquired:
                 # Lock dosyasını açık bırak (process sonlanınca otomatik kapanır)
                 pass
-            
+
+            # Kilidi tutan bağlantıyı process ömrü boyunca açık tut — pool'a
+            # asla iade edilmez, aksi halde advisory lock sessizce düşer.
+            _scheduler_lock_conn = conn
             return True
         else:
             logger.info("Scheduler zaten calisiyor")
             # Lock'u bırak (scheduler zaten çalışıyorsa başka bir process başlatmıştır)
             if conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT pg_advisory_unlock(%s)", (advisory_lock_id,))
-                cursor.close()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT pg_advisory_unlock(%s)", (advisory_lock_id,))
+                    cursor.close()
+                    conn.close()
+                except Exception:
+                    pass
             if lock_file and file_lock_acquired:
                 try:
                     fcntl.flock(lock_file, fcntl.LOCK_UN)
@@ -6693,7 +6915,7 @@ def start_scheduler_if_master():
                 except:
                     pass
             return False
-            
+
     except Exception as e:
         log_error(logger, E_SCH_001, "Scheduler baslatilamadi", exc=e)
         # Lock'u bırak
@@ -6703,6 +6925,7 @@ def start_scheduler_if_master():
                     cursor = conn.cursor()
                     cursor.execute("SELECT pg_advisory_unlock(%s)", (advisory_lock_id,))
                     cursor.close()
+                conn.close()
             except:
                 pass
         if lock_file and file_lock_acquired:
@@ -6712,15 +6935,23 @@ def start_scheduler_if_master():
             except:
                 pass
         return False
-    finally:
-        release_db_connection(conn)
 
 # Scheduler'ı başlat (sadece bir process başlatacak)
 start_scheduler_if_master()
 ensure_artist_instagram_column()
 
-# Uygulama kapandığında scheduler'ı durdur
-atexit.register(lambda: scheduler.shutdown() if scheduler.running else None)
+def _shutdown_scheduler_and_lock():
+    if scheduler.running:
+        scheduler.shutdown()
+    if _scheduler_lock_conn is not None:
+        try:
+            _scheduler_lock_conn.close()
+        except Exception:
+            pass
+
+
+# Uygulama kapandığında scheduler'ı ve advisory lock bağlantısını kapat
+atexit.register(_shutdown_scheduler_and_lock)
 
 
 # =============================================

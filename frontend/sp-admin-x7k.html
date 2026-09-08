@@ -16,7 +16,7 @@
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20260831213500" />
+    <link rel="stylesheet" href="admin.css?v=20260907180000" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="vendor/flatpickr/flatpickr.min.css" />
     <script src="vendor/flatpickr/flatpickr.min.js"></script>
@@ -527,7 +527,7 @@
                         <div class="wapio-welcome-setting">
                             <div class="wapio-welcome-setting-text">
                                 <strong>Otomatik karşılama mesajı</strong>
-                                <p>Müşteri WhatsApp'tan yazdığında otomatik yanıt gönderilir.</p>
+                                <p>Müşteri WhatsApp’tan yazınca otomatik yanıt gider. Metni <a href="#" class="msg-page-link" data-go-page="message-settings">Mesaj Ayarları</a> sayfasından düzenlersiniz.</p>
                             </div>
                             <label class="service-toggle" title="Karşılama mesajını aç/kapat">
                                 <input type="checkbox" id="wapio-welcome-enabled" checked />
@@ -617,38 +617,75 @@
                     <h1><i class="fas fa-comment-dots"></i> Mesaj Ayarları</h1>
                 </div>
                 <div class="wapio-page">
-                    <div class="wapio-card">
-                        <h2 class="wapio-card-title">Karşılama mesajı</h2>
-                        <p class="gcal-help">
-                            Müşteri stüdyo WhatsApp’ına ilk yazdığında gönderilen mesaj. Kaydettiğiniz metin birebir gider;
-                            aşağıdaki etiketler gönderimde stüdyo bilgileriyle doldurulur.
-                        </p>
-                        <div class="form-group">
-                            <label for="welcome-message-editor">Mesaj metni</label>
-                            <textarea id="welcome-message-editor" class="message-settings-editor" rows="16" maxlength="4000" spellcheck="true"></textarea>
-                            <p class="gcal-field-hint" id="welcome-message-count">0 / 4000</p>
+                    <p class="msg-settings-intro">
+                        Müşteri stüdyo WhatsApp’ına ilk yazdığında giden karşılama metnini buradan yazarsınız.
+                        Randevu onay, iptal ve hatırlatma mesajları sistem tarafından ayrıca gönderilir.
+                    </p>
+
+                    <div class="wapio-card wapio-card--status">
+                        <div class="wapio-welcome-setting wapio-welcome-setting--flush">
+                            <div class="wapio-welcome-setting-text">
+                                <strong>Otomatik gönder</strong>
+                                <p>Kapalıysa müşteri yazınca yanıt gitmez. Açıkken aşağıdaki metin gönderilir.</p>
+                            </div>
+                            <label class="service-toggle" title="Karşılama mesajını aç/kapat">
+                                <input type="checkbox" id="msg-welcome-enabled" checked />
+                                <span class="toggle-slider"></span>
+                            </label>
                         </div>
-                        <p class="gcal-field-hint">
-                            Kullanabileceğiniz etiketler:
-                            <code>{business_name}</code>
-                            <code>{randevu_url}</code>
-                            <code>{phone}</code>
-                            <code>{address}</code>
-                            <code>{hours}</code>
-                        </p>
-                        <div class="form-group">
-                            <label>Gönderilecek hali</label>
-                            <pre id="welcome-message-preview" class="message-settings-preview"></pre>
+                    </div>
+
+                    <div class="wapio-card msg-editor-card">
+                        <div class="msg-editor-heading">
+                            <div>
+                                <h2 class="wapio-card-title">Karşılama mesajı</h2>
+                                <p class="msg-editor-subtitle">Solda siz yazın, sağda müşterinin göreceği hali durur.</p>
+                            </div>
+                            <span id="welcome-message-badge" class="msg-status-badge">Varsayılan</span>
                         </div>
-                        <div class="wapio-actions">
-                            <button type="button" id="welcome-message-reset-btn" class="filter-btn secondary">
-                                <i class="fas fa-undo"></i> Varsayılana dön
-                            </button>
-                            <button type="button" id="welcome-message-save-btn" class="save-btn" style="width:auto;margin-top:0;">
-                                <i class="fas fa-save"></i> Kaydet
-                            </button>
+
+                        <div class="msg-field-block">
+                            <p class="msg-field-legend">Stüdyo bilgisi ekle <span>Tıklayınca imlecin olduğu yere yazılır; gönderilirken otomatik dolar.</span></p>
+                            <div id="welcome-field-chips" class="msg-field-chips"></div>
                         </div>
-                        <p id="welcome-message-status" class="gcal-field-hint" style="margin-top:14px;"></p>
+
+                        <div class="msg-edit-grid">
+                            <div class="msg-edit-pane">
+                                <div class="msg-pane-label-row">
+                                    <label for="welcome-message-editor">Siz yazın</label>
+                                    <div class="msg-format-btns">
+                                        <button type="button" class="msg-format-btn" id="welcome-format-bold" title="Seçili metni kalın yap">Kalın</button>
+                                        <button type="button" class="msg-format-btn" id="welcome-format-italic" title="Seçili metni italik yap">İtalik</button>
+                                    </div>
+                                </div>
+                                <textarea id="welcome-message-editor" class="message-settings-editor" rows="14" maxlength="4000" spellcheck="true" placeholder="Karşılama metnini buraya yazın…"></textarea>
+                                <div class="msg-editor-meta">
+                                    <p class="gcal-field-hint">WhatsApp biçimi: *kalın* ve _italik_</p>
+                                    <p class="gcal-field-hint" id="welcome-message-count">0 / 4000</p>
+                                </div>
+                            </div>
+                            <div class="msg-preview-pane">
+                                <div class="msg-pane-label-row">
+                                    <span class="msg-pane-label">Müşteri bunu görür</span>
+                                </div>
+                                <div class="wa-preview">
+                                    <div class="wa-preview-head">WhatsApp önizleme</div>
+                                    <div id="welcome-message-preview" class="wa-bubble"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="msg-editor-footer">
+                            <p id="welcome-message-status" class="msg-save-status"></p>
+                            <div class="wapio-actions">
+                                <button type="button" id="welcome-message-reset-btn" class="filter-btn secondary">
+                                    <i class="fas fa-undo"></i> Varsayılana dön
+                                </button>
+                                <button type="button" id="welcome-message-save-btn" class="save-btn msg-save-btn">
+                                    <i class="fas fa-save"></i> Kaydet
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -1526,7 +1563,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260831213500"></script>
+    <script src="admin.js?v=20260907180000"></script>
 </body>
 
 </html>

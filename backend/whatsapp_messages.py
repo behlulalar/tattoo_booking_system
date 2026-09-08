@@ -25,7 +25,7 @@ def _biz() -> dict:
         'name': (SITE_CONFIG.get('business_name') or 'Roof Tattoo Gallery').strip(),
         'phone': (SITE_CONFIG.get('business_phone') or '').strip(),
         'address': (SITE_CONFIG.get('business_address') or '').strip(),
-        'hours': (SITE_CONFIG.get('working_hours') or 'Pazartesi - Cumartesi: 09:00 - 20:00').strip(),
+        'hours': (SITE_CONFIG.get('working_hours') or 'Pazartesi - Cumartesi: 12.30 - 20.30').strip(),
         'url': (SITE_CONFIG.get('randevu_url') or '').strip().rstrip('/'),
     }
 
@@ -564,6 +564,16 @@ _{b['name']}_"""
     return '\n'.join(lines)
 
 
+def get_webhook_secret() -> str:
+    """Inbound webhook'u doğrulamak için paylaşılan gizli anahtar.
+
+    Boşsa doğrulama devre dışı kalır (geriye dönük uyumluluk) — ancak bu
+    durumda webhook URL'sini bilen herkes sahte mesaj enjekte edebilir, bu
+    yüzden prod'da mutlaka set edilmeli.
+    """
+    return (os.getenv('WEBHOOK_SECRET') or os.getenv('EVOLUTION_WEBHOOK_SECRET') or '').strip()
+
+
 def get_webhook_url() -> str:
     explicit = (
         os.getenv('WHATSAPP_WEBHOOK_URL')
@@ -572,11 +582,18 @@ def get_webhook_url() -> str:
         or ''
     ).strip()
     if explicit:
-        return explicit.rstrip('/')
-    base = (SITE_CONFIG.get('randevu_url') or '').strip().rstrip('/')
-    if base:
-        return f'{base}/api/whatsapp/webhook'
-    return ''
+        url = explicit.rstrip('/')
+    else:
+        base = (SITE_CONFIG.get('randevu_url') or '').strip().rstrip('/')
+        if not base:
+            return ''
+        url = f'{base}/api/whatsapp/webhook'
+
+    secret = get_webhook_secret()
+    if secret and 'wtoken=' not in url:
+        separator = '&' if '?' in url else '?'
+        url = f'{url}{separator}wtoken={secret}'
+    return url
 
 
 def get_reminder_hours_before() -> float:
