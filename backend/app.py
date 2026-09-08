@@ -1282,36 +1282,6 @@ def _handle_whatsapp_welcome_inbound(
         logger.info(f"Çok kısa mesaj içeriği, karşılama mesajı gönderilmeyecek: {phone}")
         return jsonify({'success': True, 'message': 'Geçersiz mesaj, işlenmedi'}), 200
 
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT last_sent_at FROM webhook_cooldown WHERE phone_key = %s",
-            (cooldown_key,),
-        )
-        row = cursor.fetchone()
-        if row:
-            last_sent_at = row[0]
-            time_diff = (datetime.now() - last_sent_at).total_seconds()
-            if time_diff < WEBHOOK_COOLDOWN_SECONDS:
-                logger.info(
-                    f"Cooldown aktif ({time_diff:.1f}s < {WEBHOOK_COOLDOWN_SECONDS}s), mesaj gonderilmedi: {cooldown_key}"
-                )
-                cursor.close()
-                return jsonify({'success': True, 'message': 'Cooldown aktif'}), 200
-        cursor.close()
-    except Exception as e:
-        logger.error(f"Cooldown kontrolü hatası: {e}")
-        if conn:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-    finally:
-        if conn:
-            release_db_connection(conn)
-
     if message_id and message_id in webhook_processed_message_ids:
         logger.info(f"Bu mesaj zaten işlendi (ID: {message_id}), atlanıyor")
         return jsonify({'success': True, 'message': 'Already processed'}), 200
@@ -1320,9 +1290,55 @@ def _handle_whatsapp_welcome_inbound(
         logger.info("Otomatik karsilama mesaji kapali, gonderilmedi | phone=%s", phone)
         return jsonify({'success': True, 'message': 'Karşılama mesajı devre dışı'}), 200
 
+    # Cooldown penceresi ATOMIK olarak talep edilir (INSERT ... ON CONFLICT
+    # ... WHERE ... RETURNING): eski kod once SELECT ile kontrol edip mesaji
+    # gonderdikten SONRA yaziyordu — iki es zamanli webhook teslimati (Evolution
+    # retry, farkli gunicorn worker) ikisi de kontrolu gecip cift karsilama
+    # mesaji gonderebiliyordu. webhook_processed_message_ids sadece ayni
+    # worker icinde calisir, coklu worker'da bu race'i kapatmaz. DB'nin kendi
+    # UNIQUE constraint'i tum worker'lar icin gecerli tek dogru kilit.
+    conn = None
+    claimed = False
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO webhook_cooldown (phone_key, last_sent_at)
+            VALUES (%s, NOW())
+            ON CONFLICT (phone_key) DO UPDATE
+               SET last_sent_at = NOW()
+             WHERE webhook_cooldown.last_sent_at < NOW() - (%s || ' seconds')::interval
+            RETURNING phone_key
+            """,
+            (cooldown_key, WEBHOOK_COOLDOWN_SECONDS),
+        )
+        claimed = cursor.fetchone() is not None
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        logger.error(f"Cooldown claim hatası: {e}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return jsonify({'success': True, 'message': 'Webhook alındı'}), 200
+    finally:
+        if conn:
+            release_db_connection(conn)
+
+    if not claimed:
+        logger.info(f"Cooldown aktif, mesaj gonderilmedi: {cooldown_key}")
+        return jsonify({'success': True, 'message': 'Cooldown aktif'}), 200
+
     # Paralel webhook tekrarında aynı message_id ile çift gönderimi azalt
+    # (tek worker icinde ek/ucretsiz bir koruma katmani; asil korumayi
+    # yukaridaki atomik cooldown claim'i sagliyor)
     if message_id:
         webhook_processed_message_ids.add(message_id)
+        if len(webhook_processed_message_ids) > 1000:
+            webhook_processed_message_ids.clear()
 
     from evolution_client import normalize_phone_for_send
 
@@ -1333,29 +1349,33 @@ def _handle_whatsapp_welcome_inbound(
         karsilama_mesaji,
         remote_jid=remote_jid,
         remote_jid_alt=remote_jid_alt,
+        queue_on_failure=False,  # karsilama mesaji dusuk oncelikli, kuyruk gerekmez
     )
 
     if mesaj_gonderildi:
         logger.info(f"Karşılama mesajı gönderildi: {cooldown_key}")
-        if len(webhook_processed_message_ids) > 1000:
-            webhook_processed_message_ids.clear()
+    else:
+        # Gonderim basarisiz oldu ama cooldown zaten claim edildi — geri al ki
+        # musteri bir sonraki mesajinda tekrar denenebilsin.
+        logger.warning(f"Mesaj gönderilemedi: {cooldown_key} (cooldown geri alınıyor)")
+        if message_id:
+            webhook_processed_message_ids.discard(message_id)
         conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
                 """
-                INSERT INTO webhook_cooldown (phone_key, last_sent_at)
-                VALUES (%s, NOW())
-                ON CONFLICT (phone_key)
-                DO UPDATE SET last_sent_at = NOW()
+                UPDATE webhook_cooldown
+                SET last_sent_at = NOW() - (%s || ' seconds')::interval - INTERVAL '1 second'
+                WHERE phone_key = %s
                 """,
-                (cooldown_key,),
+                (WEBHOOK_COOLDOWN_SECONDS, cooldown_key),
             )
             conn.commit()
             cursor.close()
         except Exception as e:
-            logger.error(f"Cooldown kaydetme hatası: {e}")
+            logger.error(f"Cooldown geri alma hatası: {e}")
             if conn:
                 try:
                     conn.rollback()
@@ -1364,10 +1384,6 @@ def _handle_whatsapp_welcome_inbound(
         finally:
             if conn:
                 release_db_connection(conn)
-    else:
-        logger.warning(f"Mesaj gönderilemedi: {cooldown_key} (cooldown kaydedilmedi)")
-        if message_id:
-            webhook_processed_message_ids.discard(message_id)
 
     return jsonify({'success': True, 'message': 'Webhook alındı'}), 200
 
@@ -2780,6 +2796,7 @@ def create_tattoo_request():
 # =============================================
 
 @app.route('/api/offers/<token>', methods=['GET'])
+@limiter.limit("30 per minute")
 def get_offer(token):
     """Return offer metadata and, optionally, available start slots for a given date."""
     token = (token or '').strip()
@@ -3692,8 +3709,12 @@ def get_admin_appointments():
             query += " AND a.appointment_date <= %s"
             params.append(end_date)
         
-        query += " ORDER BY a.appointment_date DESC, a.appointment_time ASC"
-        
+        # Guvenlik siniri: tarih araligi verilmeden "Tum Randevular" scope'u
+        # yillar biriktikce sinirsiz buyuyebilirdi (sayfalama yok). Gercek
+        # kullanimda binlerce satira asla ulasilmaz, bu sadece kotu senaryoya
+        # karsi bir tavan.
+        query += " ORDER BY a.appointment_date DESC, a.appointment_time ASC LIMIT 3000"
+
         cursor.execute(query, params)
         rows = cursor.fetchall()
 
@@ -6292,6 +6313,18 @@ def test_google_calendar_settings():
 # RANDEVU HATIRLATMA SİSTEMİ
 # =============================================
 
+def _studio_now():
+    """Suanki zaman, İstanbul saatiyle (naive) — sunucunun OS TZ'sine
+    guvenmez. appointment_date/time DB'de naive İstanbul yerel saati olarak
+    tutuluyor, bu yuzden karsilastirma icin ayni saat diliminde, tzinfo'suz
+    bir datetime dondurulur."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo('Europe/Istanbul')).replace(tzinfo=None)
+    except Exception:
+        return datetime.now()
+
+
 def send_appointment_reminders():
     """1 saat içinde başlayacak randevulara hatırlatma mesajı gönder
     
@@ -6309,7 +6342,7 @@ def send_appointment_reminders():
         cursor = conn.cursor()
         
         reminder_hours = get_reminder_hours_before()
-        now = datetime.now()
+        now = _studio_now()
         reminder_until = now + timedelta(hours=reminder_hours)
         
         # Bugünün tarihi
@@ -6419,7 +6452,7 @@ def send_aftercare_cream_reminders():
         cursor = conn.cursor()
 
         delay_hours = max(0.5, AFTERCARE_REMINDER_HOURS)
-        cutoff = datetime.now() - timedelta(hours=delay_hours)
+        cutoff = _studio_now() - timedelta(hours=delay_hours)
 
         cursor.execute("""
             SELECT
@@ -6782,7 +6815,11 @@ def cleanup_old_database_backups(backup_dir, keep_days):
 # Scheduler'ı başlat (sadece master process'te)
 # --preload ile Gunicorn master process'te başlatılır
 # File lock ile birden fazla instance'ın scheduler'ı başlatmasını önle
-scheduler = BackgroundScheduler()
+# Timezone acikca pinlenir: sunucunun OS saat dilimine sessizce guvenmek
+# (varsayilan davranis) bir sonraki deploy'da farkli TZ'li bir sunucuya
+# tasinirsa gunluk yedekleme (CronTrigger, saat/dakika bazli) ve randevu
+# hatirlatmalari saatlerce kayabilir.
+scheduler = BackgroundScheduler(timezone=os.getenv('SCHEDULER_TIMEZONE', 'Europe/Istanbul'))
 
 # Scheduler lock file path
 SCHEDULER_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.scheduler.lock')
@@ -7037,9 +7074,12 @@ def update_staff_working_hours(staff_id):
         
         # Insert new working hours
         for wh in working_hours:
-            # Veritabanı NULL kabul etmiyor, kapalı günler için varsayılan değerler kullan
+            # Veritabanı NULL kabul etmiyor, kapalı günler için varsayılan değerler kullan.
+            # /api/admin/working-hours (eski route) ile AYNI varsayılanlar —
+            # farklı olursa aynı working_hours tablosu iki route'tan farklı
+            # dummy değerlerle güncellenip tutarsız görünüyordu.
             start_time = wh['start_time'] if wh['start_time'] else '09:00'
-            end_time = wh['end_time'] if wh['end_time'] else '18:00'
+            end_time = wh['end_time'] if wh['end_time'] else '20:00'
             
             cursor.execute("""
                 INSERT INTO working_hours (staff_id, day_of_week, start_time, end_time, is_available)

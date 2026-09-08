@@ -25,7 +25,7 @@ from datetime import date, datetime, timedelta, timezone, time as dt_time
 import psycopg2
 
 from config import DATABASE_CONFIG, SITE_CONFIG, get_google_calendar_config
-from error_codes import E_GCAL_001, E_GCAL_002, E_GCAL_003
+from error_codes import E_GCAL_001, E_GCAL_002, E_GCAL_003, E_GCAL_004
 from logging_setup import log_error
 
 logger = logging.getLogger(__name__)
@@ -3309,10 +3309,12 @@ def _import_off_day_event(cursor, event, calendar_id, staff_id, staff_name, reas
         cursor, staff_id, times['off_date'], times['start_time'], times['end_time'],
     )
     if overlap:
-        logger.warning(
-            'Off Day mevcut randevuyla cakisiyor (randevu iptal edilmedi) | '
-            'event=%s staff=%s date=%s overlap=%s',
-            event_id, staff_id, times['off_date'], overlap,
+        # Sadece log dosyasina degil e-postaya da dusun ki admin fark etsin —
+        # randevu otomatik iptal edilmiyor, elle kontrol gerekiyor.
+        log_error(
+            logger, E_GCAL_004,
+            'Off Day, mevcut onayli randevuyla cakisiyor (randevu iptal edilmedi)',
+            event_id=event_id, staff_id=staff_id, date=times['off_date'], overlap_count=overlap,
         )
 
     try:
@@ -3412,10 +3414,10 @@ def _handle_inbound_time_off(cursor, event, calendar_id, time_off_id):
         cursor, staff_id, times['off_date'], times['start_time'], times['end_time'],
     )
     if overlap:
-        logger.warning(
-            'Google Off Day tasima mevcut randevuyla cakisiyor (randevu duruyor) | '
-            'id=%s overlap=%s',
-            time_off_id, overlap,
+        log_error(
+            logger, E_GCAL_004,
+            'Google Off Day tasima mevcut onayli randevuyla cakisiyor (randevu iptal edilmedi)',
+            time_off_id=time_off_id, staff_id=staff_id, date=times['off_date'], overlap_count=overlap,
         )
 
     cursor.execute(
