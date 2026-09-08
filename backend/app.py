@@ -4304,7 +4304,7 @@ def update_appointment_status(appointment_id):
         # Update status (sadece durum değişiyorsa güncelle)
         if old_status != new_status:
             if new_status == 'cancelled':
-                # İptal edilen randevular hemen siliniyor.
+                # İptal edilen randevular silinmez, status='cancelled' ile korunur.
                 # Takvim silme işi satır gitmeden kuyruğa yazılmalı: aksi halde
                 # Google hata verirse event_id'yi bir daha bulamayız.
                 enqueue_event_delete(cursor, google_event_id)
@@ -4826,12 +4826,25 @@ def delete_staff(staff_id):
                 'active_count': active_appointments
             }), 400
 
-        # Gecmis (tamamlanmis dahil) randevusu var mi? Varsa hard-delete
-        # gelir raporlarini/randevu gecmisini geriye donuk bozar — bunun
-        # yerine personeli deaktive ediyoruz (is_active=FALSE), randevu
-        # satirlari ve gelir kayitlari OLDUGU GIBI kalir.
-        cursor.execute("SELECT COUNT(*) FROM appointments WHERE staff_id = %s", (staff_id,))
-        any_appointments = cursor.fetchone()[0] > 0
+        # Gecmis (tamamlanmis dahil) randevusu / dovme talebi / eklemis
+        # oldugu gelir ayarlamasi var mi? Varsa hard-delete gelir
+        # raporlarini/randevu gecmisini geriye donuk bozar — bunun yerine
+        # personeli deaktive ediyoruz (is_active=FALSE), tum kayitlar
+        # OLDUGU GIBI kalir.
+        # income_adjustments.created_by -> artists.id FK'i CASCADE DEGIL
+        # (NO ACTION): bu kontrol olmadan, hic randevusu olmayan ama daha
+        # once gelir ayarlamasi eklemis bir personeli silmeye calismak
+        # asagidaki DELETE FROM artists'i FK ihlaliyle patlatirdi.
+        cursor.execute(
+            """
+            SELECT
+                EXISTS(SELECT 1 FROM appointments WHERE staff_id = %s)
+                OR EXISTS(SELECT 1 FROM tattoo_requests WHERE staff_id = %s)
+                OR EXISTS(SELECT 1 FROM income_adjustments WHERE created_by = %s)
+            """,
+            (staff_id, staff_id, staff_id),
+        )
+        any_appointments = bool(cursor.fetchone()[0])
 
         # Aktif (pending/confirmed) randevular varsa force ile devam
         # edilirken bunlari SILMEK yerine iptal ediyoruz — kayit kalir,
