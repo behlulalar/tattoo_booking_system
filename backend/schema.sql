@@ -127,16 +127,14 @@ CREATE UNIQUE INDEX uq_time_off_google_event_id
 -- =============================================
 
 -- Süper Admin ekle - Şifre hash'lenmiş olmalı
--- INSERT INTO artists (name, phone, password, role) 
+-- INSERT INTO artists (name, phone, password, role)
 -- VALUES ('Roof Admin', '5551234567', 'HASHED_PASSWORD_HERE', 'super_admin');
 
--- Hizmetler ekle
--- INSERT INTO services (name, price, duration_min) VALUES
--- ('Saç Kesimi', 150, 30),
--- ('Sakal Kesimi', 100, 20),
--- ('Saç + Sakal', 200, 45),
--- ('Perma', 300, 60),
--- ('Keratin', 500, 90);
+-- NOT: services/staff_services tabloları güncel akışta kullanılmıyor —
+-- randevu fiyatı/süresi artık dövme talebi -> teklif akışında admin
+-- tarafından girilir (bkz. appointments.price, appointments.duration_minutes).
+-- Bu dosya (schema.sql) da güncel kurulum betiği değildir, bkz.
+-- migrations/bootstrap_tattoo_db.sql.
 
 -- =============================================
 -- 8. PAYMENT_METHODS (Ödeme Yöntemleri) Tablosu

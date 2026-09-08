@@ -2390,21 +2390,21 @@ def get_artists():
             ORDER BY display_order ASC, id ASC
             """
         )
-        barbers = cursor.fetchall()
+        rows = cursor.fetchall()
         cursor.close()
-        
-        barber_list = []
-        for satir in barbers:
-            berber = {
+
+        artist_list = []
+        for satir in rows:
+            artist = {
                 "id": satir[0],
                 "name": satir[1],
                 "profile_photo": satir[2],
                 "phone": satir[3],
                 "instagram_url": satir[4] or '',
             }
-            barber_list.append(berber)
+            artist_list.append(artist)
 
-        return jsonify(barber_list)
+        return jsonify(artist_list)
     except Exception as e:
         logger.error(f"get_artists hatası: {e}")
         return jsonify({"success": False, "message": "Bir problem oluştu"}), 500
@@ -3934,7 +3934,7 @@ def admin_lookup_customers():
 @limiter.exempt
 @token_required
 def admin_create_manual_appointment():
-    """Dükkan / telefon vb. için admin panelden manuel randevu oluştur."""
+    """Stüdyo / telefon vb. için admin panelden manuel randevu oluştur."""
     data = request.get_json() or {}
     phone_raw = (data.get('phone') or '').strip()
     name = format_person_name(data.get('name'))
