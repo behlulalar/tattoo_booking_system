@@ -5,6 +5,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _env_multiline(key: str, default: str) -> str:
+    raw = os.getenv(key)
+    if raw is None or not str(raw).strip():
+        return default
+    return str(raw).replace('\r\n', '\n').replace('\\n', '\n')
+
+
 def build_database_config():
     """PostgreSQL bağlantı ayarları (SSL / keepalive destekli)."""
     cfg = {
@@ -224,9 +231,15 @@ LOYALTY_CONFIG = {
 SITE_CONFIG = {
     'randevu_url': os.getenv('RANDEVU_URL', 'http://127.0.0.1:8000'),
     'business_name': os.getenv('BUSINESS_NAME', 'Roof Tattoo Gallery'),
-    'business_phone': os.getenv('BUSINESS_PHONE', ''),
-    'business_address': os.getenv('BUSINESS_ADDRESS', ''),
-    'working_hours': os.getenv('WORKING_HOURS', 'Pazartesi - Cumartesi: 09:00 - 20:00\nPazar: Kapalı'),
+    'business_phone': os.getenv('BUSINESS_PHONE', '+90 537 912 18 41'),
+    'business_address': os.getenv(
+        'BUSINESS_ADDRESS',
+        'Hüseyin Rahmi Sokak Cumhuriyet Mahallesi No:42, 54100 Adapazarı/Sakarya',
+    ),
+    'working_hours': _env_multiline(
+        'WORKING_HOURS',
+        'Pazartesi - Cumartesi: 12.30 - 20.30\nPazar: 12.30 - 20.00',
+    ),
 }
 
 # Evolution API — https://github.com/evolution-foundation/evolution-api

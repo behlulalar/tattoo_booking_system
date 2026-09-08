@@ -7,6 +7,8 @@ veya Off Day anahtar kelimesi -> time_off. origin=roof taşı/sil inbound.
 origin=roof_off Off Day taşı/sil. Tüm-gün randevu olmaz; tüm-gün Off Day olur.
 Yinelenen master randevu olmaz; meşgul zaman olarak kalabilir.
 Google kaynaklı hatırlatma/bakım WhatsApp'ı app.py job'larında (telefon varsa).
+Google'dan silinen randevu iptal edilir ve müşteriye iptal WhatsApp'ı gider
+(set_cancel_notifier ile, commit sonrası, gerçek numara varsa).
 """
 import hashlib
 import logging
@@ -41,6 +43,9 @@ GCAL_HTTP_TIMEOUT = int(os.getenv('GOOGLE_CALENDAR_HTTP_TIMEOUT', '45'))
 # Kuyruk isi kac denemeden sonra birakilir + denemeler arasi bekleme
 GCAL_MAX_ATTEMPTS = int(os.getenv('GOOGLE_CALENDAR_MAX_ATTEMPTS', '6'))
 _BACKOFF_SECONDS = (60, 300, 900, 3600, 10800, 21600)
+# Advisory kilit alinamadiginda is deneme hakki yakmadan ertelenir; bu da
+# ~1 saatlik bir tavanla sinirlidir (aksi halde sonsuza kadar donerdi).
+GCAL_MAX_BUSY_DEFERRALS = int(os.getenv('GOOGLE_CALENDAR_MAX_BUSY_DEFERRALS', '60'))
 # Bir is islenirken baska worker'in ayni isi almasini engelleyen kiralama suresi
 _CLAIM_LEASE_SECONDS = 300
 # Ayni randevunun iki paralel senkronunda mukerrer etkinlik olusmasini onler
@@ -51,6 +56,15 @@ GCAL_EVENT_ORIGIN_OFF = 'roof_off'
 _GCAL_ADVISORY_NAMESPACE_OFF = 0x6744
 _BUSY_LOOKBACK_DAYS = 90
 _BUSY_LOOKAHEAD_DAYS = 90
+# Tam ±90 gun listeleme her 2 dakikada yapilmasin; incremental inbound
+# eslesmeyen etkinlikleri busy tablosuna yazar. Tam yenileme emniyet agi.
+_BUSY_REFRESH_MIN_SECONDS = int(os.getenv('GOOGLE_CALENDAR_BUSY_REFRESH_SECONDS', '900'))
+# Studio slot izgarasi saatlik (app.py SLOT_STEP_MINUTES ile ayni). Randevu
+# olusturan iki uc nokta da duration_minutes % 60 == 0 sartini dayatiyor.
+SLOT_GRID_MINUTES = 60
+# Google client-supplied event id: ^[a-v0-9]{5,1024}$
+# Timeout sonrasi tekrar insert mukerrer etkinlik uretmesin diye sabit id.
+_STABLE_EVENT_ID_RE = re.compile(r'^[a-v0-9]{5,1024}$')
 _GCAL_PHONE_RE = re.compile(r'(?<!\d)(0?5\d{9})(?!\d)')
 _OFF_DAY_KEYWORD_RE = re.compile(r'\b(off[\s\-]?day|offday|izin)\b')
 _MIN_ARTIST_KEY_LEN = 3
@@ -63,7 +77,7 @@ GCAL_COLOR_TOMATO = '11'      # Domates
 GCAL_COLOR_SAGE = '2'         # Adaçayı
 GCAL_COLOR_TANGERINE = '6'    # Mandalina
 GCAL_COLOR_BANANA = '5'       # Muz
-GCAL_COLOR_GRAPHITE = '8'
+GCAL_COLOR_GRAPHITE = '8'      # Granit / Grafit
 
 GCAL_COLOR_NAMES = {
     '1': 'Lavender',
@@ -301,7 +315,12 @@ def reset_calendar_service():
 
 
 def _google_execute(make_request):
-    """Timeout olursa servisi yenileyip tekrar dener."""
+    """Timeout veya gecici 5xx olursa servisi yenileyip tekrar dener.
+
+    make_request her denemede taze Resource dondurmeli (_get_calendar_service
+    iceride cagrilsin); aksi halde reset sonrasi olu Http nesnesi kalir.
+    429 burada yenilenmez — cagiran kuyruk kotasini Retry-After ile yonetir.
+    """
     last = None
     for attempt in range(3):
         try:
@@ -315,6 +334,20 @@ def _google_execute(make_request):
             )
             reset_calendar_service()
             time.sleep(1.5 * (attempt + 1))
+        except Exception as exc:
+            status = _http_status(exc)
+            if status in (500, 502, 503) and attempt < 2:
+                last = exc
+                logger.warning(
+                    'Google API %s deneme %s/3: %s',
+                    status,
+                    attempt + 1,
+                    str(exc).strip()[:160],
+                )
+                reset_calendar_service()
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
     raise last
 
 
@@ -349,6 +382,84 @@ def _is_rate_limit_error(exc):
         return False
     text = str(exc).lower()
     return any(token in text for token in ('rate', 'quota', 'limit', 'userRateLimitExceeded'))
+
+
+def _is_conflict_error(exc):
+    """Ayni id ile etkinlik zaten var (bizim sabit id insert'i)."""
+    status = _http_status(exc)
+    if status == 409:
+        return True
+    if status is not None:
+        return False
+    text = str(exc).lower()
+    return '409' in text or 'already exists' in text
+
+
+def _stable_appointment_event_id(appointment_id):
+    """Google'in izin verdigi karakterlerle randevuya sabit etkinlik kimligi."""
+    return f'rtsa{int(appointment_id):010d}'
+
+
+def _stable_time_off_event_id(time_off_id):
+    return f'rtso{int(time_off_id):010d}'
+
+
+def _upsert_calendar_event(calendar_id, body, existing_id, stable_id):
+    """Etkinligi guncelle veya olustur. Timeout sonrasi mukerrer insert olmaz.
+
+    Donus: (event_id, etag). stable_id Google kurallarina uymuyorsa gonderilmez.
+    """
+    if existing_id:
+        try:
+            event = _google_execute(
+                lambda: _get_calendar_service().events().update(
+                    calendarId=calendar_id, eventId=existing_id, body=body
+                )
+            )
+            return event.get('id') or existing_id, event.get('etag')
+        except Exception as exc:
+            if not _is_missing_event_error(exc):
+                raise
+            logger.warning(
+                'Google Calendar etkinligi yok, yeniden olusturuluyor | event=%s',
+                existing_id,
+            )
+
+    insert_body = dict(body)
+    if stable_id and _STABLE_EVENT_ID_RE.match(stable_id):
+        insert_body['id'] = stable_id
+    try:
+        event = _google_execute(
+            lambda: _get_calendar_service().events().insert(
+                calendarId=calendar_id, body=insert_body
+            )
+        )
+        return event.get('id') or stable_id, event.get('etag')
+    except Exception as exc:
+        if stable_id and _is_conflict_error(exc):
+            event = _google_execute(
+                lambda: _get_calendar_service().events().update(
+                    calendarId=calendar_id, eventId=stable_id, body=body
+                )
+            )
+            return event.get('id') or stable_id, event.get('etag')
+        raise
+
+
+def _delete_calendar_event(calendar_id, event_id):
+    """Takvimden sil. Yoksa sessizce basarili sayar."""
+    if not event_id:
+        return
+    try:
+        _google_execute(
+            lambda: _get_calendar_service().events().delete(
+                calendarId=calendar_id, eventId=event_id
+            )
+        )
+    except Exception as exc:
+        if _is_missing_event_error(exc):
+            return
+        raise
 
 
 def _retry_after_seconds(exc):
@@ -553,6 +664,11 @@ def _customer_full_folded(name, surname):
     return _fold_tr(' '.join(
         p for p in ((name or '').strip(), (surname or '').strip()) if p
     ))
+
+
+def is_real_customer_phone(phone):
+    """Gercek bir TR cep numarasi mi (sentetik gcal numarasi degil)."""
+    return _is_real_customer_phone(phone)
 
 
 def _is_real_customer_phone(phone):
@@ -1058,8 +1174,8 @@ def _build_time_off_event_body(row):
         google_event_id,
     ) = row
     artist = (staff_name or 'Sanatçı').strip()
-    color_id = _color_id_for_staff(staff_id, artist)
-    color_label = _staff_color_label(staff_id, artist)
+    color_id = GCAL_COLOR_GRAPHITE
+    color_label = GCAL_COLOR_NAMES.get(color_id, 'Graphite')
     reason_text = (reason or '').strip()
     summary_parts = [f'[{artist}]', 'Off Day']
     if reason_text:
@@ -1075,7 +1191,8 @@ def _build_time_off_event_body(row):
         )
     lines = [
         when_line,
-        f"Sanatçı: {artist} (takvim rengi: {color_label})",
+        f"Sanatçı: {artist}",
+        f"Takvim rengi: Granit ({color_label})",
         f"Açıklama: {reason_text or '-'}",
         '',
         f"Off Day ID: {time_off_id}",
@@ -1117,6 +1234,9 @@ def _fetch_time_off_row(cursor, time_off_id):
         (time_off_id,),
     )
     return cursor.fetchone()
+
+
+def _fetch_appointment_row(cursor, appointment_id):
     cursor.execute(
         """
         SELECT
@@ -1189,7 +1309,6 @@ def _perform_appointment_sync(appointment_id):
         payload = _build_event_body(row)
         existing_id = payload.pop('existing_event_id', None)
         calendar_id = get_google_calendar_config()['calendar_id']
-        service = _get_calendar_service()
         body = {
             key: payload[key]
             for key in (
@@ -1199,40 +1318,17 @@ def _perform_appointment_sync(appointment_id):
             if key in payload
         }
 
-        event_id = None
-        etag = None
-        if existing_id:
-            try:
-                event = (
-                    service.events()
-                    .update(calendarId=calendar_id, eventId=existing_id, body=body)
-                    .execute()
-                )
-                event_id = event.get('id') or existing_id
-                etag = event.get('etag')
-                logger.info(
-                    'Google Calendar guncellendi: apt #%s event %s', appointment_id, event_id
-                )
-            except Exception as exc:
-                if not _is_missing_event_error(exc):
-                    raise
-                # Etkinlik Google tarafinda elle silinmis. Bayat id temizlenmezse
-                # bu randevu bir daha asla takvime dusmez.
-                logger.warning(
-                    'Google Calendar etkinligi yok, yeniden olusturuluyor | apt=%s event=%s',
-                    appointment_id,
-                    existing_id,
-                )
-                cursor.execute(
-                    'UPDATE appointments SET google_event_id = NULL WHERE id = %s',
-                    (appointment_id,),
-                )
-                existing_id = None
-
-        if not existing_id:
-            event = service.events().insert(calendarId=calendar_id, body=body).execute()
-            event_id = event.get('id')
-            etag = event.get('etag')
+        event_id, etag = _upsert_calendar_event(
+            calendar_id,
+            body,
+            existing_id,
+            _stable_appointment_event_id(appointment_id),
+        )
+        if existing_id and event_id == existing_id:
+            logger.info(
+                'Google Calendar guncellendi: apt #%s event %s', appointment_id, event_id
+            )
+        else:
             logger.info(
                 'Google Calendar olusturuldu: apt #%s event %s', appointment_id, event_id
             )
@@ -1253,9 +1349,7 @@ def _perform_appointment_sync(appointment_id):
             if not cursor.fetchone():
                 conn.rollback()
                 try:
-                    service.events().delete(
-                        calendarId=calendar_id, eventId=event_id
-                    ).execute()
+                    _delete_calendar_event(calendar_id, event_id)
                 except Exception:
                     pass
                 logger.info(
@@ -1304,7 +1398,6 @@ def _perform_time_off_sync(time_off_id):
         payload = _build_time_off_event_body(row)
         existing_id = payload.pop('existing_event_id', None)
         calendar_id = get_google_calendar_config()['calendar_id']
-        service = _get_calendar_service()
         body = {
             key: payload[key]
             for key in (
@@ -1314,38 +1407,18 @@ def _perform_time_off_sync(time_off_id):
             if key in payload
         }
 
-        event_id = None
-        etag = None
-        if existing_id:
-            try:
-                event = (
-                    service.events()
-                    .update(calendarId=calendar_id, eventId=existing_id, body=body)
-                    .execute()
-                )
-                event_id = event.get('id') or existing_id
-                etag = event.get('etag')
-                logger.info(
-                    'Google Calendar Off Day guncellendi: #%s event %s',
-                    time_off_id, event_id,
-                )
-            except Exception as exc:
-                if not _is_missing_event_error(exc):
-                    raise
-                logger.warning(
-                    'Google Off Day etkinligi yok, yeniden olusturuluyor | id=%s event=%s',
-                    time_off_id, existing_id,
-                )
-                cursor.execute(
-                    'UPDATE time_off SET google_event_id = NULL WHERE id = %s',
-                    (time_off_id,),
-                )
-                existing_id = None
-
-        if not existing_id:
-            event = service.events().insert(calendarId=calendar_id, body=body).execute()
-            event_id = event.get('id')
-            etag = event.get('etag')
+        event_id, etag = _upsert_calendar_event(
+            calendar_id,
+            body,
+            existing_id,
+            _stable_time_off_event_id(time_off_id),
+        )
+        if existing_id and event_id == existing_id:
+            logger.info(
+                'Google Calendar Off Day guncellendi: #%s event %s',
+                time_off_id, event_id,
+            )
+        else:
             logger.info(
                 'Google Calendar Off Day olusturuldu: #%s event %s',
                 time_off_id, event_id,
@@ -1367,9 +1440,7 @@ def _perform_time_off_sync(time_off_id):
             if not cursor.fetchone():
                 conn.rollback()
                 try:
-                    service.events().delete(
-                        calendarId=calendar_id, eventId=event_id
-                    ).execute()
+                    _delete_calendar_event(calendar_id, event_id)
                 except Exception:
                     pass
                 logger.info(
@@ -1399,12 +1470,9 @@ def _perform_event_delete(google_event_id):
     if not google_event_id:
         return 'ok'
 
-    service = _get_calendar_service()
+    calendar_id = get_google_calendar_config()['calendar_id']
     try:
-        service.events().delete(
-            calendarId=get_google_calendar_config()['calendar_id'],
-            eventId=google_event_id,
-        ).execute()
+        _delete_calendar_event(calendar_id, google_event_id)
         logger.info('Google Calendar etkinlik silindi: %s', google_event_id)
         return 'ok'
     except Exception as exc:
@@ -1498,6 +1566,10 @@ _QUEUE_DDL = (
     "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_calendar_id VARCHAR(255)",
     "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMP",
     "ALTER TABLE google_calendar_queue ADD COLUMN IF NOT EXISTS time_off_id INTEGER",
+    """
+    ALTER TABLE google_calendar_queue
+        ADD COLUMN IF NOT EXISTS busy_deferrals INTEGER NOT NULL DEFAULT 0
+    """,
     """
     ALTER TABLE time_off
         ADD COLUMN IF NOT EXISTS google_event_id VARCHAR(255)
@@ -1786,7 +1858,12 @@ def _claim_next_item(conn):
 
 
 def _finish_item(conn, item_id, operation, appointment_id, time_off_id=None):
-    """Basarili isi kuyruktan dusur."""
+    """Basarili isi kuyruktan dusur.
+
+    Ayni kayit icin biriken eski isler de dusurulur (coalescing), ama YALNIZCA
+    isledigimiz isten eski olanlar. Google cagrisi surerken kayit tekrar
+    degisip yeni is eklenmis olabilir; onu silersek takvimde bayat veri kalir.
+    """
     cursor = conn.cursor()
     try:
         if operation == 'upsert' and appointment_id:
@@ -1796,8 +1873,9 @@ def _finish_item(conn, item_id, operation, appointment_id, time_off_id=None):
                  WHERE operation = 'upsert'
                    AND appointment_id = %s
                    AND dead_at IS NULL
+                   AND id <= %s
                 """,
-                (appointment_id,),
+                (appointment_id, item_id),
             )
         elif operation == 'upsert' and time_off_id:
             cursor.execute(
@@ -1806,8 +1884,9 @@ def _finish_item(conn, item_id, operation, appointment_id, time_off_id=None):
                  WHERE operation = 'upsert'
                    AND time_off_id = %s
                    AND dead_at IS NULL
+                   AND id <= %s
                 """,
-                (time_off_id,),
+                (time_off_id, item_id),
             )
         else:
             cursor.execute('DELETE FROM google_calendar_queue WHERE id = %s', (item_id,))
@@ -1822,17 +1901,35 @@ def _reschedule_item(conn, item_id, attempts, error_text, soon=False):
     try:
         if soon:
             # Gecici cakisma (baska senkron devam ediyor) — deneme hakki yakmaz.
+            # Ayri bir sayac tutulur: kilit kalici olarak alinamazsa is sonsuza
+            # kadar her 60 saniyede yeniden denenmesin.
             cursor.execute(
                 """
                 UPDATE google_calendar_queue
                    SET attempts = GREATEST(attempts - 1, 0),
+                       busy_deferrals = busy_deferrals + 1,
                        next_attempt_at = NOW() + INTERVAL '60 seconds'
                  WHERE id = %s
+                RETURNING busy_deferrals
                 """,
                 (item_id,),
             )
+            row = cursor.fetchone()
+            deferrals = int(row[0]) if row else 0
+            if deferrals < GCAL_MAX_BUSY_DEFERRALS:
+                conn.commit()
+                return False
+            cursor.execute(
+                """
+                UPDATE google_calendar_queue
+                   SET dead_at = NOW(),
+                       last_error = %s
+                 WHERE id = %s
+                """,
+                (f'busy: kilit {deferrals} denemede alinamadi', item_id),
+            )
             conn.commit()
-            return False
+            return True
 
         if attempts >= GCAL_MAX_ATTEMPTS:
             cursor.execute(
@@ -1932,8 +2029,17 @@ def drain_queue(max_items=25):
                     else:
                         status, _event = _perform_appointment_sync(appointment_id)
                     if status == 'busy':
-                        summary['busy'] += 1
-                        _reschedule_item(conn, item_id, attempts, None, soon=True)
+                        if _reschedule_item(conn, item_id, attempts, None, soon=True):
+                            summary['dead'] += 1
+                            _notify_dead_item(
+                                item_id, operation, appointment_id, event_id,
+                                RuntimeError(
+                                    'Google senkron kilidi surekli mesgul '
+                                    '(takilmis transaction olabilir)'
+                                ),
+                            )
+                        else:
+                            summary['busy'] += 1
                         continue
                 else:
                     _perform_event_delete(event_id)
@@ -2127,12 +2233,66 @@ def inbound_sync_health(calendar_id=None):
 # =============================================
 
 _slot_validator = None
+_cancel_notifier = None
 
 
 def set_slot_validator(fn):
     """app.py compute_available_start_slots sarmalayicisi (dongusel import yok)."""
     global _slot_validator
     _slot_validator = fn
+
+
+def set_cancel_notifier(fn):
+    """Google'dan silinen randevu icin musteri bildirimi (dongusel import yok).
+
+    fn(appointment_ids) transaction COMMIT edildikten sonra, arka plan
+    thread'inden cagrilir. Bildirim hatasi inbound senkronu asla dusurmez.
+    """
+    global _cancel_notifier
+    _cancel_notifier = fn
+
+
+def _cancel_notify_grace_seconds():
+    """Takvimden yanlislikla silinen bir etkinligin musteriye 'iptal edildi'
+    mesaji gitmeden once duzeltilebilecegi bekleme suresi.
+
+    Sanatci/personel takvimde yanlis event'i silerse, bu sure icinde admin
+    panelden randevuyu tekrar 'confirmed' yaparsa musteri hicbir zaman yanlis
+    iptal mesaji almaz (bkz. _gcal_notify_cancelled_from_google: gonderim
+    aninda durum tekrar kontrol edilir).
+    """
+    try:
+        return max(0, int(os.getenv('GCAL_CANCEL_NOTIFY_GRACE_SECONDS', '600')))
+    except (TypeError, ValueError):
+        return 600
+
+
+def _dispatch_cancel_notifications(appointment_ids):
+    """Iptal bildirimlerini commit sonrasi arka planda, bir bekleme suresinin
+    ardindan gonder (bkz. _cancel_notify_grace_seconds).
+
+    Scheduler turunu WhatsApp cagrilariyla (mesaj basina 25 sn'ye kadar)
+    bloklamamak icin ayri thread kullanilir.
+    """
+    ids = [int(i) for i in (appointment_ids or [])]
+    notifier = _cancel_notifier
+    if not ids or notifier is None:
+        return
+
+    grace = _cancel_notify_grace_seconds()
+
+    def _run():
+        if grace:
+            time.sleep(grace)
+        try:
+            notifier(ids)
+        except Exception as exc:
+            logger.warning(
+                'Google iptal bildirimi gonderilemedi | ids=%s hata=%s',
+                ids, str(exc).strip()[:200],
+            )
+
+    threading.Thread(target=_run, name='gcal-cancel-notify', daemon=True).start()
 
 
 def _parse_event_datetimes(event):
@@ -2184,12 +2344,39 @@ def _parse_event_datetimes(event):
     return start_dt, end_dt, False
 
 
+# app.py'deki lock_staff_day ile AYNI namespace/key formatı — aynı sanatçı/gün
+# için hem müşteri/admin yazım yolu hem Google inbound import aynı advisory
+# lock üzerinde sıraya girer, aksi halde ikisi arasında double-booking olabilir.
+_STAFF_DAY_LOCK_NAMESPACE = 0x524F4F46  # 'ROOF'
+
+
+def _lock_staff_day(cursor, staff_id, formatted_date):
+    cursor.execute(
+        'SELECT pg_advisory_xact_lock(%s, hashtext(%s))',
+        (_STAFF_DAY_LOCK_NAMESPACE, f"{int(staff_id or 0)}:{formatted_date}"),
+    )
+
+
 def _round_duration_minutes(start_dt, end_dt):
+    """Google etkinlik suresini studio izgarasina (60 dk) YUKARI yuvarla.
+
+    30 dk'ya yuvarlamak _studio_slot_grid_ok ile celisiyordu: 90 dakikalik elle
+    olusturulan etkinlik hicbir zaman iceri alinamiyordu. Yukari yuvarlama en
+    fazla bir saat fazla bloklar; asagi yuvarlamak randevunun uzerine slot
+    acardi.
+    """
     seconds = max(0, int((end_dt - start_dt).total_seconds()))
-    minutes = max(30, int(round(seconds / 60.0)))
-    if minutes % 30:
-        minutes = ((minutes // 30) + 1) * 30
+    minutes = max(SLOT_GRID_MINUTES, int(round(seconds / 60.0)))
+    if minutes % SLOT_GRID_MINUTES:
+        minutes = ((minutes // SLOT_GRID_MINUTES) + 1) * SLOT_GRID_MINUTES
     return minutes
+
+
+def _exact_duration_minutes(start_dt, end_dt):
+    """Etkinligin yuvarlanmamis suresi (yanki tespitinde kullanilir)."""
+    if not start_dt or not end_dt:
+        return 0
+    return max(0, int(round((end_dt - start_dt).total_seconds() / 60.0)))
 
 
 def _studio_slot_grid_ok(start_dt, duration_minutes):
@@ -2201,7 +2388,7 @@ def _studio_slot_grid_ok(start_dt, duration_minutes):
     if int(getattr(start_dt, 'second', 0) or 0) != 0:
         return False
     dur = int(duration_minutes or 0)
-    return dur >= 60 and dur % 60 == 0
+    return dur >= SLOT_GRID_MINUTES and dur % SLOT_GRID_MINUTES == 0
 
 
 def _inbound_slot_allowed(
@@ -2315,19 +2502,95 @@ def _list_events_window(service, calendar_id, time_min, time_max):
     return events
 
 
-def refresh_external_busy():
+def _apply_inbound_busy_side_effect(cursor, calendar_id, event, action):
+    """Incremental poll: eslesmeyen etkinlik slotlari 15 dk beklemeden kilitlesin.
+
+    Iceri alinan / bizim olan / silinen etkinlik busy tablosundan dusulur.
+    """
+    event_id = (event.get('id') or '').strip()
+    if not event_id:
+        return
+    drop = action in ('imported', 'moved', 'echo', 'revert', 'cancel')
+    if (
+        drop
+        or (event.get('status') or '') == 'cancelled'
+        or (event.get('transparency') or '') == 'transparent'
+        or _is_our_event(event)
+    ):
+        cursor.execute(
+            'DELETE FROM google_external_busy WHERE google_event_id = %s',
+            (event_id,),
+        )
+        return
+    start_dt, end_dt, all_day = _parse_event_datetimes(event)
+    if all_day or not start_dt or not end_dt or end_dt <= start_dt:
+        return
+    cursor.execute(
+        'DELETE FROM google_external_busy WHERE google_event_id = %s',
+        (event_id,),
+    )
+    cursor.execute(
+        """
+        INSERT INTO google_external_busy
+            (calendar_id, start_at, end_at, google_event_id, synced_at)
+        VALUES (%s, %s, %s, %s, NOW())
+        """,
+        (calendar_id, start_dt, end_dt, event_id),
+    )
+
+
+def refresh_external_busy(force=False):
     """Elle/yabancı etkinlikleri yerel tabloya yazar. Booking yolu Google çağırmaz."""
     if not is_google_calendar_enabled():
         return {'ok': False, 'reason': 'disabled'}
     calendar_id = get_google_calendar_config()['calendar_id']
     tz = _studio_tz()
-    now = datetime.now(tz) if tz else datetime.utcnow()
-    time_min = (now - timedelta(days=_BUSY_LOOKBACK_DAYS)).isoformat()
-    time_max = (now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)).isoformat()
+    # Naive utcnow().isoformat() offset'siz string uretir; Google RFC3339
+    # bekledigi icin 400 doner.
+    now = datetime.now(tz) if tz else datetime.now(timezone.utc)
+
     conn = None
     try:
-        service = _get_calendar_service()
-        events = _list_events_window(service, calendar_id, time_min, time_max)
+        conn = _connect()
+        cursor = conn.cursor()
+        if not force:
+            cursor.execute(
+                """
+                SELECT last_busy_at FROM google_calendar_sync_state
+                 WHERE calendar_id = %s
+                """,
+                (calendar_id,),
+            )
+            row = cursor.fetchone()
+            last_busy = _aware_utc(row[0]) if row and row[0] else None
+            if last_busy is not None:
+                age = int((datetime.now(timezone.utc) - last_busy).total_seconds())
+                if age < _BUSY_REFRESH_MIN_SECONDS:
+                    cursor.close()
+                    conn.commit()
+                    return {
+                        'ok': True,
+                        'skipped': True,
+                        'age_seconds': max(0, age),
+                        'count': None,
+                    }
+        cursor.close()
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.warning('Dis mesguliyet yenileme kontrolu atlandi: %s', str(e)[:160])
+    finally:
+        _disconnect(conn)
+        conn = None
+
+    time_min = (now - timedelta(days=_BUSY_LOOKBACK_DAYS)).isoformat()
+    time_max = (now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)).isoformat()
+    try:
+        events = _list_events_window(_get_calendar_service(), calendar_id, time_min, time_max)
         conn = _connect()
         cursor = conn.cursor()
         imported = 0
@@ -2349,6 +2612,21 @@ def refresh_external_busy():
                     str(exc).strip()[:200],
                 )
 
+        # Etkinlik basina iki sorgu yerine iki toplu sorgu: yuzlerce etkinlikte
+        # N+1 gidip geliyordu.
+        cursor.execute(
+            """
+            SELECT google_event_id FROM appointments
+             WHERE google_event_id IS NOT NULL
+               AND status IS DISTINCT FROM 'cancelled'
+            """
+        )
+        linked_ids = {r[0] for r in cursor.fetchall() or [] if r[0]}
+        cursor.execute(
+            'SELECT google_event_id FROM time_off WHERE google_event_id IS NOT NULL'
+        )
+        linked_ids.update(r[0] for r in cursor.fetchall() or [] if r[0])
+
         rows = []
         for event in events:
             if (event.get('status') or '') == 'cancelled':
@@ -2358,23 +2636,8 @@ def refresh_external_busy():
             if _is_our_event(event):
                 continue
             event_id = (event.get('id') or '').strip()
-            if event_id:
-                cursor.execute(
-                    """
-                    SELECT 1 FROM appointments
-                     WHERE google_event_id = %s
-                       AND status IS DISTINCT FROM 'cancelled'
-                    """,
-                    (event_id,),
-                )
-                if cursor.fetchone():
-                    continue
-                cursor.execute(
-                    'SELECT 1 FROM time_off WHERE google_event_id = %s',
-                    (event_id,),
-                )
-                if cursor.fetchone():
-                    continue
+            if event_id and event_id in linked_ids:
+                continue
             start_dt, end_dt, all_day = _parse_event_datetimes(event)
             if not start_dt or not end_dt or end_dt <= start_dt:
                 continue
@@ -2385,19 +2648,46 @@ def refresh_external_busy():
             # o aralık stüdyo geneli kilitlenir — sitede boş görünmesin.
             rows.append((calendar_id, start_dt, end_dt, event.get('id')))
 
+        # Eskiden her turda (2 dk) tablo silinip satir satir yeniden yaziliyordu:
+        # gunde yuz binlerce gereksiz yazma ve olu tuple. Artik once karsilastirilir,
+        # gercekten degistiyse tek seferde toplu yazilir.
         cursor.execute(
-            'DELETE FROM google_external_busy WHERE calendar_id = %s',
+            """
+            SELECT start_at, end_at, google_event_id
+              FROM google_external_busy
+             WHERE calendar_id = %s
+            """,
             (calendar_id,),
         )
-        for row in rows:
+        existing = {
+            (_aware_utc(s), _aware_utc(e), gid)
+            for s, e, gid in (cursor.fetchall() or [])
+        }
+        desired = {
+            (_aware_utc(start_at), _aware_utc(end_at), gid)
+            for _cal, start_at, end_at, gid in rows
+        }
+        if existing != desired:
             cursor.execute(
-                """
-                INSERT INTO google_external_busy
-                    (calendar_id, start_at, end_at, google_event_id, synced_at)
-                VALUES (%s, %s, %s, %s, NOW())
-                """,
-                row,
+                'DELETE FROM google_external_busy WHERE calendar_id = %s',
+                (calendar_id,),
             )
+            chunk = 500
+            for offset in range(0, len(rows), chunk):
+                batch = rows[offset:offset + chunk]
+                placeholders = ', '.join(['(%s, %s, %s, %s, NOW())'] * len(batch))
+                params = []
+                for row in batch:
+                    params.extend(row)
+                cursor.execute(
+                    """
+                    INSERT INTO google_external_busy
+                        (calendar_id, start_at, end_at, google_event_id, synced_at)
+                    VALUES
+                    """
+                    + placeholders,
+                    params,
+                )
         cursor.execute(
             """
             INSERT INTO google_calendar_sync_state (calendar_id, last_busy_at, updated_at)
@@ -2454,16 +2744,23 @@ def reset_inbound_state(old_calendar_id=None):
         _disconnect(conn)
 
 
-def _times_match_appointment(start_dt, duration_minutes, apt_date, apt_time, apt_duration):
+def _times_match_appointment(
+    start_dt, duration_minutes, apt_date, apt_time, apt_duration, exact_minutes=None,
+):
+    """Google etkinligi yereldeki randevuyla ayni mi (yani mi, tasima mi)."""
     if not start_dt:
         return False
-    local_date = start_dt.date()
-    local_time = start_dt.strftime('%H:%M')
-    return (
-        local_date == _as_date(apt_date)
-        and local_time == _time_to_str(apt_time)
-        and int(duration_minutes or 0) == int(apt_duration or 0)
-    )
+    if start_dt.date() != _as_date(apt_date):
+        return False
+    if start_dt.strftime('%H:%M') != _time_to_str(apt_time):
+        return False
+    stored = int(apt_duration or 0)
+    if int(duration_minutes or 0) == stored:
+        return True
+    # Izgaraya uymayan eski kayitlar (ornegin 90 dk): Google'daki gercek sure
+    # birebir ayniysa bu bir yankidir, tasima degil. Yuvarlanmis degere bakip
+    # tasima saymak randevu suresini sessizce buyuturdu.
+    return exact_minutes is not None and int(exact_minutes) == stored
 
 
 def _load_appointment_for_inbound(cursor, appointment_id):
@@ -2563,7 +2860,29 @@ def _refresh_google_source_identity(
             )
 
 
+_ARTISTS_CACHE_TTL_SECONDS = 30
+_artists_cache_lock = threading.Lock()
+_artists_cache = {'rows': None, 'at': 0.0}
+
+
+def reset_artists_cache():
+    """Sanatci eklenince/adi degisince cache'i dusur."""
+    with _artists_cache_lock:
+        _artists_cache['rows'] = None
+        _artists_cache['at'] = 0.0
+
+
 def _load_bookable_artists(cursor):
+    """Kitaplanabilir sanatcilar (kisa omurlu cache).
+
+    Bir inbound turunda yuzlerce etkinlik islenebiliyor ve her biri bu listeyi
+    yeniden sorguluyordu (N+1). Sanatci listesi nadiren degisir.
+    """
+    now = time.time()
+    with _artists_cache_lock:
+        cached = _artists_cache['rows']
+        if cached is not None and (now - _artists_cache['at']) < _ARTISTS_CACHE_TTL_SECONDS:
+            return cached
     cursor.execute(
         """
         SELECT id, name, COALESCE(calendar_aliases, '{}'::text[])
@@ -2572,7 +2891,11 @@ def _load_bookable_artists(cursor):
          ORDER BY display_order ASC, id ASC
         """
     )
-    return cursor.fetchall() or []
+    rows = cursor.fetchall() or []
+    with _artists_cache_lock:
+        _artists_cache['rows'] = rows
+        _artists_cache['at'] = time.time()
+    return rows
 
 
 def _match_customer_by_name(cursor, name, surname):
@@ -2636,7 +2959,6 @@ def _stamp_origin_on_event(calendar_id, event_id, appointment_id, row_for_hash):
     if not event_id or not appointment_id:
         return
     try:
-        service = _get_calendar_service()
         content_hash = _content_hash(
             row_for_hash[0], row_for_hash[1], row_for_hash[2], 'confirmed', row_for_hash[3],
         )
@@ -2644,11 +2966,13 @@ def _stamp_origin_on_event(calendar_id, event_id, appointment_id, row_for_hash):
         body = {'extendedProperties': _extended_properties(appointment_id, content_hash)}
         if staff_id:
             body['colorId'] = _color_id_for_staff(staff_id)
-        service.events().patch(
-            calendarId=calendar_id,
-            eventId=event_id,
-            body=body,
-        ).execute()
+        _google_execute(
+            lambda: _get_calendar_service().events().patch(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=body,
+            )
+        )
     except Exception as exc:
         logger.warning(
             'Google etkinligine origin yazilamadi | event=%s apt=%s hata=%s',
@@ -2680,15 +3004,29 @@ def refresh_google_event_colors(limit=400):
             (int(limit),),
         )
         rows = cursor.fetchall() or []
+        cursor.execute(
+            """
+            SELECT id, google_event_id
+              FROM time_off
+             WHERE google_event_id IS NOT NULL
+             ORDER BY off_date DESC, id DESC
+             LIMIT %s
+            """,
+            (int(limit),),
+        )
+        off_rows = cursor.fetchall() or []
         cursor.close()
-        service = _get_calendar_service()
         for apt_id, staff_id, event_id, staff_name in rows:
             try:
-                service.events().patch(
-                    calendarId=calendar_id,
-                    eventId=event_id,
-                    body={'colorId': _color_id_for_staff(staff_id, staff_name)},
-                ).execute()
+                _google_execute(
+                    lambda eid=event_id, sid=staff_id, sname=staff_name: (
+                        _get_calendar_service().events().patch(
+                            calendarId=calendar_id,
+                            eventId=eid,
+                            body={'colorId': _color_id_for_staff(sid, sname)},
+                        )
+                    )
+                )
                 updated += 1
             except Exception as exc:
                 failed += 1
@@ -2696,14 +3034,44 @@ def refresh_google_event_colors(limit=400):
                     'Google renk guncellenemedi | apt=%s event=%s hata=%s',
                     apt_id, event_id, str(exc)[:160],
                 )
-        logger.info('Google etkinlik renkleri guncellendi | ok=%s fail=%s', updated, failed)
-        return {'ok': True, 'updated': updated, 'failed': failed, 'total': len(rows)}
+        off_updated = 0
+        for off_id, event_id in off_rows:
+            try:
+                _google_execute(
+                    lambda eid=event_id: (
+                        _get_calendar_service().events().patch(
+                            calendarId=calendar_id,
+                            eventId=eid,
+                            body={'colorId': GCAL_COLOR_GRAPHITE},
+                        )
+                    )
+                )
+                updated += 1
+                off_updated += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    'Google Off Day rengi guncellenemedi | time_off=%s event=%s hata=%s',
+                    off_id, event_id, str(exc)[:160],
+                )
+        logger.info(
+            'Google etkinlik renkleri guncellendi | ok=%s fail=%s off_day=%s',
+            updated, failed, off_updated,
+        )
+        return {
+            'ok': True,
+            'updated': updated,
+            'failed': failed,
+            'total': len(rows) + len(off_rows),
+            'off_day_updated': off_updated,
+        }
     except Exception as e:
         log_error(logger, E_GCAL_001, 'Google etkinlik renkleri guncellenemedi', exc=e)
         return {'ok': False, 'updated': updated, 'failed': failed, 'error': str(e)[:200]}
     finally:
-        if conn:
-            conn.close()
+        # conn.close() havuzdan alinan baglantiyi havuza geri vermez; slot
+        # kalici olarak sizardi. _disconnect dogru saglayiciyi kullanir.
+        _disconnect(conn)
 
 
 def _import_manual_google_event(cursor, event, calendar_id):
@@ -2764,6 +3132,11 @@ def _import_manual_google_event(cursor, event, calendar_id):
     )
     if cursor.fetchone():
         return 'skip'
+
+    # Müşteri/admin randevu yazım yoluyla aynı sanatçı/gün için yarışa
+    # girmesin — aksi halde çakışma kontrolü ile INSERT arasına başka bir
+    # randevu girip double-booking oluşabilir.
+    _lock_staff_day(cursor, staff_id, local_date.isoformat())
 
     cursor.execute(
         'DELETE FROM google_external_busy WHERE google_event_id = %s',
@@ -2877,18 +3250,18 @@ def _stamp_origin_on_off_day_event(calendar_id, event_id, time_off_id, staff_id,
     if not event_id or not time_off_id:
         return
     try:
-        service = _get_calendar_service()
         body = {
             'extendedProperties': _off_day_extended_properties(time_off_id),
             'transparency': 'opaque',
+            'colorId': GCAL_COLOR_GRAPHITE,
         }
-        if staff_id:
-            body['colorId'] = _color_id_for_staff(staff_id, staff_name)
-        service.events().patch(
-            calendarId=calendar_id,
-            eventId=event_id,
-            body=body,
-        ).execute()
+        _google_execute(
+            lambda: _get_calendar_service().events().patch(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=body,
+            )
+        )
     except Exception as exc:
         logger.warning(
             'Google Off Day origin yazilamadi | event=%s id=%s hata=%s',
@@ -2972,7 +3345,6 @@ def _import_off_day_event(cursor, event, calendar_id, staff_id, staff_name, reas
     _stamp_origin_on_off_day_event(
         calendar_id, event_id, time_off_id, staff_id, staff_name,
     )
-    enqueue_time_off_sync(cursor, time_off_id)
     logger.info(
         'Google etkinlik Off Day oldu (WhatsApp yok) time_off #%s event=%s staff=%s %s %s-%s',
         time_off_id, event_id, staff_id, times['off_date'],
@@ -3066,7 +3438,7 @@ def _handle_inbound_time_off(cursor, event, calendar_id, time_off_id):
     return 'moved'
 
 
-def _handle_inbound_event(cursor, event, calendar_id):
+def _handle_inbound_event(cursor, event, calendar_id, cancelled_ids=None):
     if _is_off_day_origin(event):
         time_off_id = _our_time_off_id_from_event(event)
         if not time_off_id:
@@ -3124,13 +3496,14 @@ def _handle_inbound_event(cursor, event, calendar_id):
 
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
     duration_minutes = _round_duration_minutes(start_dt, end_dt) if start_dt and end_dt else 0
+    exact_minutes = _exact_duration_minutes(start_dt, end_dt)
 
     if status == 'completed':
         if deleted:
             enqueue_appointment_sync(cursor, appointment_id)
             return 'revert'
         if all_day or not _times_match_appointment(
-            start_dt, duration_minutes, apt_date, apt_time, apt_duration
+            start_dt, duration_minutes, apt_date, apt_time, apt_duration, exact_minutes
         ):
             enqueue_appointment_sync(cursor, appointment_id)
             return 'revert'
@@ -3139,7 +3512,11 @@ def _handle_inbound_event(cursor, event, calendar_id):
     if deleted:
         if source in ('customer', 'admin', 'google'):
             if _soft_cancel_from_google(cursor, appointment_id):
-                logger.info('Google silme -> soft iptal (WhatsApp yok) apt #%s', appointment_id)
+                logger.info('Google silme -> soft iptal apt #%s', appointment_id)
+                # Musteri iptalden habersiz stüdyoya gelmesin. Bildirim commit
+                # sonrasi toplu gonderilir; burada sadece kuyruklanir.
+                if cancelled_ids is not None:
+                    cancelled_ids.append(appointment_id)
                 return 'cancel'
         return 'skip'
 
@@ -3150,7 +3527,9 @@ def _handle_inbound_event(cursor, event, calendar_id):
     local_date = start_dt.date()
     local_time = start_dt.strftime('%H:%M')
 
-    if _times_match_appointment(start_dt, duration_minutes, apt_date, apt_time, apt_duration):
+    if _times_match_appointment(
+        start_dt, duration_minutes, apt_date, apt_time, apt_duration, exact_minutes
+    ):
         if event.get('etag') and event.get('etag') != stored_etag:
             cursor.execute(
                 'UPDATE appointments SET google_etag = %s, google_updated_at = NOW() WHERE id = %s',
@@ -3210,70 +3589,83 @@ def poll_inbound_changes():
         service = _get_calendar_service()
         items = []
         next_token = None
-        page_token = None
-        full_sync = not sync_token
-        try:
-            while True:
-                kwargs = {
-                    'calendarId': calendar_id,
-                    'maxResults': 250,
-                    'pageToken': page_token,
-                    'showDeleted': True,
-                    'singleEvents': True,
-                    'fields': (
-                        'items(id,status,transparency,start,end,etag,summary,'
-                        'extendedProperties,description,recurringEventId),'
-                        'nextPageToken,nextSyncToken'
-                    ),
-                }
-                if sync_token and not full_sync:
-                    kwargs['syncToken'] = sync_token
-                else:
-                    tz = _studio_tz()
-                    now = datetime.now(tz) if tz else datetime.utcnow()
-                    kwargs['timeMin'] = (now - timedelta(days=_BUSY_LOOKBACK_DAYS)).isoformat()
-                    kwargs['timeMax'] = (now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)).isoformat()
-                resp = _google_execute(lambda kw=kwargs: _get_calendar_service().events().list(**kw))
-                items.extend(resp.get('items') or [])
-                page_token = resp.get('nextPageToken')
-                next_token = resp.get('nextSyncToken') or next_token
-                if not page_token:
-                    break
-        except Exception as exc:
-            if _http_status(exc) == 410:
-                logger.warning('Google syncToken suresi doldu, tam senkron')
-                cursor.execute(
-                    """
-                    INSERT INTO google_calendar_sync_state (calendar_id, events_sync_token, updated_at)
-                    VALUES (%s, NULL, NOW())
-                    ON CONFLICT (calendar_id) DO UPDATE
-                       SET events_sync_token = NULL, updated_at = NOW()
-                    """,
-                    (calendar_id,),
-                )
-                conn.commit()
-                cursor.close()
-                _disconnect(conn)
-                return poll_inbound_changes()
-            raise
+        # syncToken suresi dolarsa (410) token dusurulup bir kez tam senkron
+        # yapilir. Ozyineleme yerine sinirli dongu: Google israrla 410 donerse
+        # yigin tasmasi olmaz ve baglanti tek yerden birakilir.
+        for attempt in range(2):
+            items = []
+            next_token = None
+            page_token = None
+            full_sync = not sync_token
+            try:
+                while True:
+                    kwargs = {
+                        'calendarId': calendar_id,
+                        'maxResults': 250,
+                        'pageToken': page_token,
+                        'showDeleted': True,
+                        'singleEvents': True,
+                        'fields': (
+                            'items(id,status,transparency,start,end,etag,summary,'
+                            'extendedProperties,description,recurringEventId),'
+                            'nextPageToken,nextSyncToken'
+                        ),
+                    }
+                    if sync_token and not full_sync:
+                        kwargs['syncToken'] = sync_token
+                    else:
+                        tz = _studio_tz()
+                        now = datetime.now(tz) if tz else datetime.now(timezone.utc)
+                        kwargs['timeMin'] = (now - timedelta(days=_BUSY_LOOKBACK_DAYS)).isoformat()
+                        kwargs['timeMax'] = (now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)).isoformat()
+                    resp = _google_execute(lambda kw=kwargs: _get_calendar_service().events().list(**kw))
+                    items.extend(resp.get('items') or [])
+                    page_token = resp.get('nextPageToken')
+                    next_token = resp.get('nextSyncToken') or next_token
+                    if not page_token:
+                        break
+                break
+            except Exception as exc:
+                if _http_status(exc) == 410 and sync_token and attempt == 0:
+                    logger.warning('Google syncToken suresi doldu, tam senkron')
+                    cursor.execute(
+                        """
+                        INSERT INTO google_calendar_sync_state (calendar_id, events_sync_token, updated_at)
+                        VALUES (%s, NULL, NOW())
+                        ON CONFLICT (calendar_id) DO UPDATE
+                           SET events_sync_token = NULL, updated_at = NOW()
+                        """,
+                        (calendar_id,),
+                    )
+                    conn.commit()
+                    sync_token = None
+                    continue
+                raise
 
         summary = {
             'echo': 0, 'moved': 0, 'cancel': 0, 'revert': 0,
             'skip': 0, 'imported': 0, 'unmatched': 0, 'conflict': 0,
         }
+        cancelled_ids = []
         for event in items:
             if event.get('recurringEventId') and not event.get('start'):
                 summary['skip'] += 1
                 continue
+            marker = len(cancelled_ids)
             try:
                 cursor.execute('SAVEPOINT gcal_inbound_event')
-                action = _handle_inbound_event(cursor, event, calendar_id) or 'skip'
+                action = _handle_inbound_event(
+                    cursor, event, calendar_id, cancelled_ids
+                ) or 'skip'
                 cursor.execute('RELEASE SAVEPOINT gcal_inbound_event')
             except Exception as exc:
                 try:
                     cursor.execute('ROLLBACK TO SAVEPOINT gcal_inbound_event')
                 except Exception:
                     pass
+                # Savepoint geri alindiysa iptal de gerceklesmedi; bildirim
+                # gonderilmemeli.
+                del cancelled_ids[marker:]
                 logger.warning(
                     'Google inbound event atlandi | event=%s hata=%s',
                     (event.get('id') or '')[:80],
@@ -3281,6 +3673,14 @@ def poll_inbound_changes():
                 )
                 action = 'skip'
             summary[action] = summary.get(action, 0) + 1
+            try:
+                _apply_inbound_busy_side_effect(cursor, calendar_id, event, action)
+            except Exception as busy_exc:
+                logger.warning(
+                    'Google inbound busy yan etki atlandi | event=%s hata=%s',
+                    (event.get('id') or '')[:80],
+                    str(busy_exc).strip()[:160],
+                )
 
         if next_token:
             cursor.execute(
@@ -3297,6 +3697,9 @@ def poll_inbound_changes():
             )
         conn.commit()
         cursor.close()
+        # Yalnizca commit basarili olduktan sonra: iptal edilmemis randevu icin
+        # musteriye "iptal edildi" mesaji gitmesin.
+        _dispatch_cancel_notifications(cancelled_ids)
         if (
             summary['moved'] or summary['cancel'] or summary['revert']
             or summary['imported'] or summary['unmatched'] or summary['conflict']
@@ -3362,8 +3765,8 @@ def enqueue_identity_backfill(cursor=None):
 
 
 def run_gcal_inbound_tick():
-    """Scheduler: kimlik backfill, yerel meşguliyet, sonra inbound."""
+    """Scheduler: kimlik backfill, incremental inbound, sonra (seyrek) tam mesguliyet."""
     enqueue_identity_backfill()
-    busy = refresh_external_busy()
     inbound = poll_inbound_changes()
+    busy = refresh_external_busy()
     return {'busy': busy, 'inbound': inbound}

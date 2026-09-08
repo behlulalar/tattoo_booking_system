@@ -1673,9 +1673,7 @@ async function loadWapioSettingsPage() {
       $('wapio-device-name').value = s.device_name || s.instance_name || 'roof-tattoo';
     }
     if ($('whatsapp-api-url') && s.api_url) $('whatsapp-api-url').value = s.api_url;
-    if ($('wapio-welcome-enabled')) {
-      $('wapio-welcome-enabled').checked = s.welcome_message_enabled !== false;
-    }
+    syncWelcomeEnabledToggles(s.welcome_message_enabled !== false);
     if ($('wapio-otp-keyboard-enabled')) {
       $('wapio-otp-keyboard-enabled').checked = s.otp_keyboard_hint_enabled !== false;
     }
@@ -3484,17 +3482,24 @@ function renderTimeOff(items, { containerId = 'time-off-list', deleteUrlFor } = 
   }
   container.innerHTML = items
     .map((t) => {
+      const hours = t.end_time
+        ? `${escapeHtml(t.start_time)} – ${escapeHtml(t.end_time)}`
+        : escapeHtml(t.start_time || 'Tüm gün');
       return `
-        <div class="appointment-card status-cancelled">
-          <div class="appointment-header">
-            <div>
+        <div class="appointment-card time-off-card status-cancelled">
+          <div class="apt-card-top">
+            <div class="apt-datetime">
               <div class="appointment-date"><i class="fas fa-calendar-alt"></i> ${escapeHtml(t.date)}</div>
-              <div class="appointment-time"><i class="fas fa-clock"></i> ${escapeHtml(t.start_time || 'Tüm gün')} ${t.end_time ? `- ${escapeHtml(t.end_time)}` : ''}</div>
+              <div class="appointment-time"><i class="fas fa-clock"></i> ${hours}</div>
             </div>
-            <button class="filter-btn secondary" data-timeoff-del="${t.id}"><i class="fas fa-trash"></i> Sil</button>
+            <button class="filter-btn secondary" type="button" data-timeoff-del="${t.id}"><i class="fas fa-trash"></i> Sil</button>
           </div>
-          <div class="appointment-details">
-            <div class="detail-row"><i class="fas fa-note-sticky"></i><span class="detail-label">Açıklama</span><span class="detail-value">${escapeHtml(t.reason || '-')}</span></div>
+          <div class="apt-card-body">
+            <div class="apt-detail-row">
+              <span class="apt-detail-icon"><i class="fas fa-note-sticky"></i></span>
+              <span class="apt-detail-label">Açıklama:</span>
+              <span class="apt-detail-value">${escapeHtml(t.reason || '—')}</span>
+            </div>
           </div>
         </div>
       `;
@@ -4369,6 +4374,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('welcome-message-save-btn')?.addEventListener('click', saveWelcomeMessageSettings);
   $('welcome-message-reset-btn')?.addEventListener('click', resetWelcomeMessageEditor);
   $('welcome-message-editor')?.addEventListener('input', refreshWelcomeMessagePreview);
+  $('welcome-message-editor')?.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      saveWelcomeMessageSettings();
+    }
+  });
+  $('welcome-field-chips')?.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-token]');
+    if (!chip) return;
+    insertWelcomeField(chip.getAttribute('data-token'));
+  });
+  $('welcome-format-bold')?.addEventListener('click', () => wrapWelcomeSelection('*', '*'));
+  $('welcome-format-italic')?.addEventListener('click', () => wrapWelcomeSelection('_', '_'));
+  $('msg-welcome-enabled')?.addEventListener('change', () => persistWelcomeMessageEnabled($('msg-welcome-enabled')));
+  document.querySelectorAll('[data-go-page]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      const page = el.getAttribute('data-go-page');
+      document.querySelector(`.nav-item[data-page="${page}"]`)?.click();
+    });
+  });
   $('gcal-save-btn')?.addEventListener('click', saveGoogleCalendarSettings);
   $('gcal-test-btn')?.addEventListener('click', testGoogleCalendarSettings);
   $('gcal-copy-email-btn')?.addEventListener('click', copyGcalServiceEmail);
@@ -4376,27 +4402,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const val = (e.target.value || '').trim();
     if (val && $('gcal-calendar-id')) $('gcal-calendar-id').value = val;
   });
-  $('wapio-welcome-enabled')?.addEventListener('change', async () => {
-    const enabled = !!$('wapio-welcome-enabled')?.checked;
-    const { ok, data } = await apiCall('/admin/evolution-settings', {
-      method: 'PUT',
-      body: JSON.stringify({ welcome_message_enabled: enabled }),
-    });
-    const saved =
-      ok && data.success && data.settings?.welcome_message_enabled !== undefined
-        ? !!data.settings.welcome_message_enabled
-        : enabled;
-    if (ok && data.success) {
-      if ($('wapio-welcome-enabled')) $('wapio-welcome-enabled').checked = saved;
-      showToast(
-        saved ? 'Karşılama mesajı açıldı (webhook senkron)' : 'Karşılama mesajı kapatıldı (webhook senkron)',
-        'success',
-      );
-    } else {
-      showToast(data?.message || 'Ayar kaydedilemedi', 'error');
-      if ($('wapio-welcome-enabled')) $('wapio-welcome-enabled').checked = !enabled;
-    }
-  });
+  $('wapio-welcome-enabled')?.addEventListener('change', () => persistWelcomeMessageEnabled($('wapio-welcome-enabled')));
   $('wapio-otp-keyboard-enabled')?.addEventListener('change', async () => {
     const enabled = !!$('wapio-otp-keyboard-enabled')?.checked;
     const { ok, data } = await apiCall('/admin/evolution-settings', {
@@ -4645,11 +4651,46 @@ function applyGcalQueueStats(queue) {
   summaryEl.textContent = `Bekleyen: ${pendingN} · Bırakılan: ${deadN}.${oldest}`;
 }
 
+const WELCOME_MESSAGE_FIELDS = [
+  { key: '{business_name}', label: 'Stüdyo adı' },
+  { key: '{randevu_url}', label: 'Randevu linki' },
+  { key: '{phone}', label: 'Telefon' },
+  { key: '{address}', label: 'Adres' },
+  { key: '{hours}', label: 'Çalışma saatleri' },
+];
+
 let _welcomeMessageState = {
   defaultTemplate: '',
   placeholderValues: {},
   maxLength: 4000,
+  savedText: '',
+  isCustom: false,
 };
+
+function syncWelcomeEnabledToggles(enabled) {
+  ['wapio-welcome-enabled', 'msg-welcome-enabled'].forEach((id) => {
+    if ($(id)) $(id).checked = !!enabled;
+  });
+}
+
+async function persistWelcomeMessageEnabled(checkbox) {
+  const enabled = !!checkbox?.checked;
+  const { ok, data } = await apiCall('/admin/evolution-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ welcome_message_enabled: enabled }),
+  });
+  const saved =
+    ok && data.success && data.settings?.welcome_message_enabled !== undefined
+      ? !!data.settings.welcome_message_enabled
+      : enabled;
+  if (ok && data.success) {
+    syncWelcomeEnabledToggles(saved);
+    showToast(saved ? 'Karşılama mesajı açık' : 'Karşılama mesajı kapalı', 'success');
+  } else {
+    showToast(data?.message || 'Ayar kaydedilemedi', 'error');
+    syncWelcomeEnabledToggles(!enabled);
+  }
+}
 
 function applyWelcomePlaceholders(text, values) {
   let out = String(text || '');
@@ -4659,6 +4700,76 @@ function applyWelcomePlaceholders(text, values) {
   return out;
 }
 
+function formatWhatsappPreviewHtml(text) {
+  let html = escapeHtml(text || '');
+  html = html.replace(/\*(.+?)\*/g, '<strong>$1</strong>');
+  html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+  return html;
+}
+
+function truncateChipValue(value) {
+  const text = String(value || '').trim() || '—';
+  return text.length > 42 ? `${text.slice(0, 40)}…` : text;
+}
+
+function renderWelcomeFieldChips() {
+  const wrap = $('welcome-field-chips');
+  if (!wrap) return;
+  const values = _welcomeMessageState.placeholderValues || {};
+  wrap.innerHTML = WELCOME_MESSAGE_FIELDS.map((field) => {
+    const current = truncateChipValue(values[field.key]);
+    return `<button type="button" class="msg-field-chip" data-token="${escapeHtml(field.key)}">
+      <span class="msg-field-chip-label">${escapeHtml(field.label)}</span>
+      <span class="msg-field-chip-value">${escapeHtml(current)}</span>
+    </button>`;
+  }).join('');
+}
+
+function insertAtEditor(text) {
+  const editor = $('welcome-message-editor');
+  if (!editor) return;
+  const start = editor.selectionStart ?? editor.value.length;
+  const end = editor.selectionEnd ?? start;
+  editor.value = editor.value.slice(0, start) + text + editor.value.slice(end);
+  const pos = start + text.length;
+  editor.focus();
+  editor.setSelectionRange(pos, pos);
+  refreshWelcomeMessagePreview();
+}
+
+function insertWelcomeField(token) {
+  if (!token) return;
+  insertAtEditor(token);
+}
+
+function wrapWelcomeSelection(before, after) {
+  const editor = $('welcome-message-editor');
+  if (!editor) return;
+  const start = editor.selectionStart ?? 0;
+  const end = editor.selectionEnd ?? 0;
+  const selected = editor.value.slice(start, end) || 'metin';
+  const wrapped = `${before}${selected}${after}`;
+  editor.value = editor.value.slice(0, start) + wrapped + editor.value.slice(end);
+  const innerStart = start + before.length;
+  editor.focus();
+  editor.setSelectionRange(innerStart, innerStart + selected.length);
+  refreshWelcomeMessagePreview();
+}
+
+function updateWelcomeDirtyState() {
+  const editor = $('welcome-message-editor');
+  const saveBtn = $('welcome-message-save-btn');
+  const badge = $('welcome-message-badge');
+  const current = editor?.value || '';
+  const dirty = current !== (_welcomeMessageState.savedText || '');
+  saveBtn?.classList.toggle('is-dirty', dirty);
+  if (!badge) return;
+  badge.classList.toggle('is-dirty', dirty);
+  badge.classList.toggle('is-custom', !dirty && !!_welcomeMessageState.isCustom);
+  if (dirty) badge.textContent = 'Kaydedilmedi';
+  else badge.textContent = _welcomeMessageState.isCustom ? 'Özel metin' : 'Varsayılan';
+}
+
 function refreshWelcomeMessagePreview() {
   const editor = $('welcome-message-editor');
   const preview = $('welcome-message-preview');
@@ -4666,34 +4777,50 @@ function refreshWelcomeMessagePreview() {
   const text = editor?.value || '';
   const maxLen = _welcomeMessageState.maxLength || 4000;
   if (count) count.textContent = `${text.length} / ${maxLen}`;
-  if (preview) preview.textContent = applyWelcomePlaceholders(text, _welcomeMessageState.placeholderValues);
+  if (preview) {
+    const rendered = applyWelcomePlaceholders(text, _welcomeMessageState.placeholderValues);
+    preview.classList.toggle('is-empty', !rendered.trim());
+    preview.innerHTML = rendered.trim()
+      ? formatWhatsappPreviewHtml(rendered)
+      : 'Mesaj yazdıkça burada görünecek';
+  }
+  updateWelcomeDirtyState();
 }
 
 function applyWelcomeMessageSettings(data) {
   _welcomeMessageState.defaultTemplate = data.default_welcome_message || '';
   _welcomeMessageState.placeholderValues = data.placeholder_values || {};
   _welcomeMessageState.maxLength = Number(data.max_length) || 4000;
+  _welcomeMessageState.isCustom = !!data.is_custom;
   const editor = $('welcome-message-editor');
   if (editor) {
     editor.maxLength = _welcomeMessageState.maxLength;
     editor.value = data.welcome_message || '';
   }
+  _welcomeMessageState.savedText = editor?.value || '';
   const status = $('welcome-message-status');
   if (status) {
     status.textContent = data.is_custom
       ? 'Kayıtlı özel mesaj kullanılıyor.'
       : 'Şu an varsayılan karşılama mesajı kullanılıyor.';
   }
+  renderWelcomeFieldChips();
   refreshWelcomeMessagePreview();
 }
 
 async function loadMessageSettings() {
-  const res = await apiCall('/admin/message-settings');
-  if (!res.ok || !res.data?.success) {
-    showToast(res.data?.message || 'Mesaj ayarları yüklenemedi', 'error');
+  const [msgRes, evoRes] = await Promise.all([
+    apiCall('/admin/message-settings'),
+    apiCall('/admin/evolution-settings'),
+  ]);
+  if (!msgRes.ok || !msgRes.data?.success) {
+    showToast(msgRes.data?.message || 'Mesaj ayarları yüklenemedi', 'error');
     return;
   }
-  applyWelcomeMessageSettings(res.data);
+  applyWelcomeMessageSettings(msgRes.data);
+  if (evoRes.ok && evoRes.data?.settings) {
+    syncWelcomeEnabledToggles(evoRes.data.settings.welcome_message_enabled !== false);
+  }
 }
 
 async function saveWelcomeMessageSettings() {
@@ -4714,7 +4841,12 @@ async function saveWelcomeMessageSettings() {
   showToast('Karşılama mesajı kaydedildi', 'success');
 }
 
-function resetWelcomeMessageEditor() {
+async function resetWelcomeMessageEditor() {
+  const confirmed = await customConfirm(
+    'Varsayılana dön',
+    'Yazdığınız metin varsayılan karşılama mesajıyla değişecek. Kaydetmeden kalıcı olmaz.',
+  );
+  if (!confirmed) return;
   const editor = $('welcome-message-editor');
   if (editor) editor.value = _welcomeMessageState.defaultTemplate || '';
   const status = $('welcome-message-status');
