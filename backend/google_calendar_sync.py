@@ -71,7 +71,7 @@ _STABLE_EVENT_ID_RE = re.compile(r'^[a-v0-9]{5,1024}$')
 # bulunamayip _resolve_or_create_gcal_customer telefon-eslestirmesi hic
 # calismiyordu. _normalize_customer_phone zaten ayirici/on-ek temizligini
 # yapiyor, burada sadece adayi (span'i) genisletmek yeterli.
-_GCAL_PHONE_RE = re.compile(r'(?<!\d)(?:\+?90[\s.\-]?)?0?5\d{2}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}(?!\d)')
+_GCAL_PHONE_RE = re.compile(r'(?<!\d)((?:\+?90[\s.\-]?)?0?5\d{2}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2})(?!\d)')
 _OFF_DAY_KEYWORD_RE = re.compile(r'\b(off[\s\-]?day|offday|izin)\b')
 _MIN_ARTIST_KEY_LEN = 3
 _unmatched_artist_logged = set()

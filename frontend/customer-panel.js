@@ -3,8 +3,6 @@
 // Roof Tattoo Gallery
 // =============================================
 
-console.log('customer-panel.js YÜKLENDI');
-
 // API Base URL — local dev'de backend port 3000'de çalışır
 function getApiBase() {
     const stored = localStorage.getItem('API_BASE_URL');
@@ -47,9 +45,7 @@ function initTheme() {
 }
 
 function toggleTheme() {
-    console.log('toggleTheme çağrıldı');
     const isDark = document.body.classList.toggle('dark-theme');
-    console.log('Dark mode:', isDark);
     localStorage.setItem('customerTheme', isDark ? 'dark' : 'light');
     updateThemeIcon(isDark);
 }
@@ -127,7 +123,6 @@ function setupEventListeners() {
         const themeToggle = document.getElementById('theme-toggle');
         if (themeToggle) {
             themeToggle.addEventListener('click', toggleTheme);
-            console.log('Theme toggle listener eklendi');
         } else {
             console.error('theme-toggle elementi bulunamadı!');
         }
@@ -683,12 +678,12 @@ function openCancelModal(appointmentId) {
         <div class="detail-row">
             <i class="fas fa-calendar-alt"></i>
             <span class="detail-label">Tarih</span>
-            <span class="detail-value">${apt.date} - ${apt.time}</span>
+            <span class="detail-value">${escapeHtml(apt.date)} - ${escapeHtml(apt.time)}</span>
         </div>
         <div class="detail-row">
             <i class="fas fa-user-tie"></i>
             <span class="detail-label">Sanatçı</span>
-                        <span class="detail-value">${apt.staff.name}</span>
+                        <span class="detail-value">${escapeHtml(apt.staff.name)}</span>
         </div>
         <div class="detail-row">
             <i class="fas fa-pen-nib"></i>
@@ -831,14 +826,6 @@ async function redeemLoyaltyDiscount() {
     } else {
         showToast(data?.message || 'İndirim kodu oluşturulamadı', 'error');
     }
-}
-
-function escapeHtml(str) {
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
 }
 
 // =============================================
