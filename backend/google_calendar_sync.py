@@ -3209,19 +3209,31 @@ def _import_manual_google_event(cursor, event, calendar_id):
 
 
 def _off_day_times_from_event(event):
+    """time_off tek gunluk bir satirdir (kolon: tek off_date) — Google'da
+    coklu gun suren (all-day araligi veya gece yarisini asan) bir blok
+    gelirse burada YALNIZCA ILK GUN isleniyor, kalan gunler otomatik
+    kapanmiyor. 'spans_multiple_days' bu durumu cagirana bildirir, cagiran
+    (bkz. _import_off_day_event / _handle_inbound_time_off) admin'e alarm
+    basar ki kalan gunler sessizce rezervasyona acik kalmasin — coklu satir
+    / semadaki UNIQUE(google_event_id) kisitini degistiren tam destek ayri
+    bir is olarak birakildi (bkz. ilgili yorum satirlari)."""
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
     if not start_dt or not end_dt or end_dt <= start_dt:
         return None
     if all_day:
+        last_day = end_dt.date() - timedelta(days=1)  # Google end tarihi exclusive
         return {
             'all_day': True,
             'off_date': start_dt.date(),
             'start_time': None,
             'end_time': None,
+            'spans_multiple_days': last_day > start_dt.date(),
+            'last_day': last_day,
         }
     start_m = start_dt.hour * 60 + start_dt.minute
     end_m = end_dt.hour * 60 + end_dt.minute
-    if end_dt.date() > start_dt.date():
+    spans_multiple_days = end_dt.date() > start_dt.date()
+    if spans_multiple_days:
         end_m = 24 * 60
     if end_m <= start_m:
         end_m = 24 * 60
@@ -3235,6 +3247,8 @@ def _off_day_times_from_event(event):
         'off_date': start_dt.date(),
         'start_time': start_hh,
         'end_time': end_hh,
+        'spans_multiple_days': spans_multiple_days,
+        'last_day': end_dt.date(),
     }
 
 
@@ -3298,6 +3312,14 @@ def _import_off_day_event(cursor, event, calendar_id, staff_id, staff_name, reas
     times = _off_day_times_from_event(event)
     if not times:
         return 'skip'
+
+    if times.get('spans_multiple_days'):
+        log_error(
+            logger, E_GCAL_004,
+            'Coklu gunluk Off Day tespit edildi, sadece ilk gun otomatik kapatildi',
+            event_id=event_id, staff_id=staff_id,
+            first_day=times['off_date'], last_day=times.get('last_day'),
+        )
 
     cursor.execute(
         'SELECT id FROM time_off WHERE google_event_id = %s',
@@ -3392,6 +3414,14 @@ def _handle_inbound_time_off(cursor, event, calendar_id, time_off_id):
     times = _off_day_times_from_event(event)
     if not times:
         return 'skip'
+
+    if times.get('spans_multiple_days'):
+        log_error(
+            logger, E_GCAL_004,
+            'Coklu gunluk Off Day tasindi/guncellendi, sadece ilk gun otomatik kapatildi',
+            event_id=(event.get('id') or '').strip(), staff_id=staff_id,
+            first_day=times['off_date'], last_day=times.get('last_day'),
+        )
 
     same_day = _as_date(off_date) == times['off_date']
     same_start = (start_time is None and times['start_time'] is None) or (
