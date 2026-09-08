@@ -65,7 +65,13 @@ SLOT_GRID_MINUTES = 60
 # Google client-supplied event id: ^[a-v0-9]{5,1024}$
 # Timeout sonrasi tekrar insert mukerrer etkinlik uretmesin diye sabit id.
 _STABLE_EVENT_ID_RE = re.compile(r'^[a-v0-9]{5,1024}$')
-_GCAL_PHONE_RE = re.compile(r'(?<!\d)(0?5\d{9})(?!\d)')
+# Elle yazilan takvim basliklarinda telefon genelde bosluk/tire/nokta ile
+# gruplanir (0532 123 45 67, 0532-123-45-67, +90 532...) — eski hali sadece
+# 10 hanenin bitisik yazildigi hali yakaliyordu, digerlerinde eslesme
+# bulunamayip _resolve_or_create_gcal_customer telefon-eslestirmesi hic
+# calismiyordu. _normalize_customer_phone zaten ayirici/on-ek temizligini
+# yapiyor, burada sadece adayi (span'i) genisletmek yeterli.
+_GCAL_PHONE_RE = re.compile(r'(?<!\d)(?:\+?90[\s.\-]?)?0?5\d{2}[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}(?!\d)')
 _OFF_DAY_KEYWORD_RE = re.compile(r'\b(off[\s\-]?day|offday|izin)\b')
 _MIN_ARTIST_KEY_LEN = 3
 _unmatched_artist_logged = set()

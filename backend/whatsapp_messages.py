@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from urllib.parse import urlparse
 
 from config import SITE_CONFIG, get_evolution_config
@@ -526,13 +527,25 @@ def build_staff_cancel_notification_message(
 
 
 def _otp_web_origin() -> str:
-    """Web OTP / klavye önerisi için site host (RANDEVU_URL)."""
+    """Web OTP / klavye önerisi için site host (RANDEVU_URL).
+
+    RANDEVU_URL yanlışlıkla localhost/staging'e ayarlı kalırsa (test
+    sonrası unutulmuş .env, vb.) bu host gerçek müşteriye giden OTP
+    mesajına sızmasın diye local/private görünen host'lar filtrelenir.
+    """
     url = (_biz().get('url') or os.getenv('RANDEVU_URL') or '').strip()
     if not url:
         return ''
     if '://' not in url:
         url = f'https://{url}'
-    return (urlparse(url).hostname or '').lower()
+    host = (urlparse(url).hostname or '').lower()
+    if not host or host in ('localhost', '127.0.0.1', '0.0.0.0', '::1'):
+        return ''
+    if host.endswith(('.local', '.test', '.internal')):
+        return ''
+    if re.match(r'^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)', host):
+        return ''
+    return host
 
 
 def build_verification_code_message(code) -> str:
