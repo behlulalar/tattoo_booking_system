@@ -1552,6 +1552,14 @@ function bindAppointmentStatusControls(container, afterSuccess) {
         openGoogleCompletePriceModal(id, afterSuccess);
         return;
       }
+      if (status === 'cancelled' || status === 'no_show') {
+        const label = status === 'cancelled' ? 'iptal etmek' : 'gelmedi olarak işaretlemek';
+        const confirmed = await customConfirm(
+          'Emin misiniz?',
+          `Bu randevuyu ${label} istediğinizden emin misiniz? Yanlışlıkla dokunulan bir durum düğmesi randevuyu geri alınamaz şekilde değiştirir.`,
+        );
+        if (!confirmed) return;
+      }
       btn.disabled = true;
       const ok = await updateAppointmentStatus(id, status);
       btn.disabled = false;
@@ -3508,6 +3516,11 @@ function renderTimeOff(items, { containerId = 'time-off-list', deleteUrlFor } = 
 
   container.querySelectorAll('button[data-timeoff-del]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      const confirmed = await customConfirm(
+        'Off Day silinsin mi?',
+        'Bu izin/kapalı gün bloğunu silmek istediğinizden emin misiniz? Google Takvim ile senkronize olduğu için gün tekrar rezervasyona açılır.',
+      );
+      if (!confirmed) return;
       const id = btn.getAttribute('data-timeoff-del');
       const url = deleteUrlFor ? deleteUrlFor(id) : `/admin/time-off/${id}`;
       const { ok, data } = await apiCall(url, { method: 'DELETE' });

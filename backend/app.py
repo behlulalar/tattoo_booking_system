@@ -697,7 +697,6 @@ def cleanup_expired_verification_codes():
     except Exception as e:
         if conn:
             conn.rollback()
-            cursor.close()
         logger.error(f"cleanup_expired_verification_codes hatası: {e}")
         return 0
     finally:
@@ -733,7 +732,6 @@ def cleanup_expired_webhook_messages():
     except Exception as e:
         if conn:
             conn.rollback()
-            cursor.close()
         logger.error(f"cleanup_expired_webhook_messages hatası: {e}")
         return 0
     finally:
@@ -956,42 +954,49 @@ def drain_whatsapp_queue():
             """
         )
         rows = cursor.fetchall()
+        # Her satir kendi commit'ini yapar: 20'lik batch tek transaction'da
+        # olsaydi, N. mesajdan sonraki bir UPDATE beklenmedik sekilde
+        # patlarsa tek rollback 1..N-1 icin zaten yapilmis 'sent' isaretini
+        # de geri alir — musteriye tekrar (mukerrer) mesaj gitmesine yol acar.
         for row_id, phone, message, attempts, max_attempts in rows:
             try:
-                ok = send_whatsapp_message(phone, message)
-            except Exception as send_err:
-                ok = False
-                logger.warning(f"whatsapp queue gonderim hatasi: {send_err}")
+                try:
+                    ok = send_whatsapp_message(phone, message)
+                except Exception as send_err:
+                    ok = False
+                    logger.warning(f"whatsapp queue gonderim hatasi: {send_err}")
 
-            if ok:
-                cursor.execute(
-                    "UPDATE whatsapp_message_queue SET status = 'sent', sent_at = NOW() WHERE id = %s",
-                    (row_id,),
-                )
-                continue
-
-            attempts += 1
-            if attempts >= max_attempts:
-                cursor.execute(
-                    "UPDATE whatsapp_message_queue SET status = 'failed', attempts = %s WHERE id = %s",
-                    (attempts, row_id),
-                )
-                log_error(
-                    logger, E_WA_004,
-                    "WhatsApp mesaji tum tekrar denemelerine ragmen gonderilemedi",
-                    phone=phone, attempts=attempts, queue_id=row_id,
-                )
-            else:
-                backoff_minutes = min(60, 5 * attempts)
-                cursor.execute(
-                    """
-                    UPDATE whatsapp_message_queue
-                    SET attempts = %s, next_attempt_at = NOW() + (%s || ' minutes')::interval
-                    WHERE id = %s
-                    """,
-                    (attempts, backoff_minutes, row_id),
-                )
-        conn.commit()
+                if ok:
+                    cursor.execute(
+                        "UPDATE whatsapp_message_queue SET status = 'sent', sent_at = NOW() WHERE id = %s",
+                        (row_id,),
+                    )
+                else:
+                    attempts += 1
+                    if attempts >= max_attempts:
+                        cursor.execute(
+                            "UPDATE whatsapp_message_queue SET status = 'failed', attempts = %s WHERE id = %s",
+                            (attempts, row_id),
+                        )
+                        log_error(
+                            logger, E_WA_004,
+                            "WhatsApp mesaji tum tekrar denemelerine ragmen gonderilemedi",
+                            phone=phone, attempts=attempts, queue_id=row_id,
+                        )
+                    else:
+                        backoff_minutes = min(60, 5 * attempts)
+                        cursor.execute(
+                            """
+                            UPDATE whatsapp_message_queue
+                            SET attempts = %s, next_attempt_at = NOW() + (%s || ' minutes')::interval
+                            WHERE id = %s
+                            """,
+                            (attempts, backoff_minutes, row_id),
+                        )
+                conn.commit()
+            except Exception as row_err:
+                conn.rollback()
+                logger.warning(f"whatsapp queue satir islenemedi (id={row_id}): {row_err}")
         cursor.close()
     except Exception as e:
         if conn:
@@ -2061,7 +2066,6 @@ def send_whatsapp_code(phone):
         logger.error(f"Verification code kaydetme hatası: {e}")
         if conn:
             conn.rollback()
-            cursor.close()
     finally:
         release_db_connection(conn)
     
@@ -2739,7 +2743,6 @@ def create_tattoo_request():
                 }
             except LoyaltyCodeError as loyalty_err:
                 conn.rollback()
-                cursor.close()
                 return jsonify({'success': False, 'message': str(loyalty_err)}), 400
 
         conn.commit()
@@ -3000,7 +3003,6 @@ def choose_offer_slot(token):
         if time_str not in available_start_slots:
             msg = 'Seçilen saat artık uygun değil. Lütfen saatleri yeniden yükleyip tekrar deneyin.'
             conn.rollback()
-            cursor.close()
             return jsonify({'success': False, 'message': msg}), 409
 
         cursor.execute("""
@@ -4012,7 +4014,6 @@ def admin_create_manual_appointment():
 
         if appointment_slot_conflicts(cursor, staff_id, formatted_date, time_str, duration_minutes):
             conn.rollback()
-            cursor.close()
             return jsonify({
                 'success': False,
                 'message': 'Bu saat aralığında başka randevu var. Süreyi veya saati değiştirin.'
@@ -4023,7 +4024,6 @@ def admin_create_manual_appointment():
         )
         if is_day_closed_locked or time_str not in available_starts_locked:
             conn.rollback()
-            cursor.close()
             return jsonify({
                 'success': False,
                 'message': 'Saat artık uygun değil (takvim güncellendi). Lütfen saatleri yenileyip tekrar deneyin.'
@@ -5221,7 +5221,7 @@ STAFF_COMMISSION_RATE = Decimal('0.50')
 
 def _staff_share_amount(full_price):
     """Personelin net kazancı — yapılan işin %50'si (Decimal, kuruş hassasiyetinde)."""
-    return Decimal(full_price or 0) * STAFF_COMMISSION_RATE
+    return (Decimal(full_price or 0) * STAFF_COMMISSION_RATE).quantize(Decimal('0.01'))
 
 
 @app.route('/api/admin/staff/<int:staff_id>/stats', methods=['GET'])
@@ -5553,11 +5553,18 @@ def add_income_adjustment():
     amount          = data.get('amount')
     description     = data.get('description')
     adjustment_date = data.get('date') or data.get('adjustment_date')
-    adj_type        = data.get('type', 'income')
+    adj_type        = (data.get('type') or 'income').strip().lower()
 
     # Validasyon
     if not all([amount, description]):
         return jsonify({'success': False, 'message': 'Tutar ve açıklama zorunlu'}), 400
+
+    # get_income_reports/get_income_adjustments 'income' disindaki HER
+    # degeri gider (negatif) sayiyor — burada whitelist yapilmazsa bir yazim
+    # hatasi (orn. "Income", "gelir") sessizce gelir raporunu eksik
+    # gosterirdi.
+    if adj_type not in ('income', 'expense'):
+        return jsonify({'success': False, 'message': "Tip 'income' veya 'expense' olmalı"}), 400
     
     try:
         # str() ara adimi: Decimal(float) ikili kayan nokta hatasini miras
@@ -5873,8 +5880,12 @@ def change_password():
 def get_wapio_settings():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 @app.route('/api/admin/wapio-settings', methods=['PUT'])
@@ -5882,8 +5893,12 @@ def get_wapio_settings():
 def update_wapio_settings():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 @app.route('/api/admin/wapio/create-device', methods=['POST'])
@@ -5891,8 +5906,12 @@ def update_wapio_settings():
 def admin_wapio_create_device():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 @app.route('/api/admin/wapio/qr', methods=['POST'])
@@ -5900,8 +5919,12 @@ def admin_wapio_create_device():
 def admin_wapio_qr():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 @app.route('/api/admin/wapio/session-status', methods=['GET'])
@@ -5909,8 +5932,12 @@ def admin_wapio_qr():
 def admin_wapio_session_status():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 @app.route('/api/admin/wapio/update-webhook', methods=['POST'])
@@ -5918,8 +5945,12 @@ def admin_wapio_session_status():
 def admin_wapio_update_webhook():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 @app.route('/api/admin/wapio-compat-check', methods=['GET'])
@@ -5927,8 +5958,12 @@ def admin_wapio_update_webhook():
 def admin_wapio_compat_check():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 @app.route('/api/admin/wapio-contract', methods=['GET'])
@@ -5936,8 +5971,12 @@ def admin_wapio_compat_check():
 def admin_wapio_contract():
     if not is_studio_admin():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    if not WAPIO_INTEGRATION_ENABLED:
-        return _wapio_disabled_json()
+    # Wapio gercek mantigi kaldirildi (Evolution kullaniliyor); bu route'lar
+    # sadece uyumluluk icin duruyor. WAPIO_INTEGRATION_ENABLED tekrar True
+    # yapilsa bile burada calisacak baska kod yok, o yuzden kosula bagli
+    # olmadan hep disabled json donuyoruz (aksi halde Flask "View function
+    # did not return a valid response" ile 500 verirdi).
+    return _wapio_disabled_json()
 
 
 # =============================================
@@ -7403,7 +7442,6 @@ def post_customer_loyalty_redeem():
         redemption, err = redeem_loyalty_discount(cursor, request.customer_id)
         if err:
             conn.rollback()
-            cursor.close()
             return jsonify({'success': False, 'message': err}), 400
         summary = build_loyalty_summary(cursor, request.customer_id)
         conn.commit()
