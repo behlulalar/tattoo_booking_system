@@ -19,6 +19,7 @@ E_WA_001 = "E-WA-001"  # mesaj gönderilemedi
 E_WA_002 = "E-WA-002"  # webhook işlenemedi
 E_WA_003 = "E-WA-003"  # yapılandırma eksik
 E_WA_004 = "E-WA-004"  # doğrulama kodu / hatırlatma gönderilemedi
+E_WA_005 = "E-WA-005"  # oturum kopuk — toplu gönderim bu turda atlandı
 
 # Google Takvim
 E_GCAL_001 = "E-GCAL-001"  # senkron veya silme hatası
@@ -50,6 +51,7 @@ CODE_HELP = {
     E_WA_002: "WhatsApp webhook işlenirken hata. Gelen event ve traceback.",
     E_WA_003: "Evolution api_key veya instance_name eksik.",
     E_WA_004: "OTP, hatırlatma veya karşılama mesajı gönderilemedi.",
+    E_WA_005: "WhatsApp oturumu kopuk (QR bekliyor/çıkış yapılmış/banlı olabilir) — otomatik toplu gönderim bu turda hiç denenmedi.",
     E_GCAL_001: "Google Takvim yazılamadı/silinemedi. credentials ve calendar_id.",
     E_GCAL_002: "Takvim senkron kuyruğuna yazılamadı/okunamadı. google_calendar_queue tablosu.",
     E_GCAL_003: "Takvim işi tüm denemelerden sonra bırakıldı. Kuyrukta dead_at dolu satıra bak.",
