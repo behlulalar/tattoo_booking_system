@@ -180,7 +180,7 @@ def build_cors_origins():
     defaults = [
         "http://localhost", "http://localhost:80", "http://127.0.0.1", "http://127.0.0.1:80",
         "http://localhost:8000", "http://localhost:8080", "http://127.0.0.1:8000", "http://127.0.0.1:8080",
-        "https://tattoo.roof.behlulalar.online", "http://tattoo.roof.behlulalar.online"
+        "https://randevu-rooftattoogallery.com", "http://randevu-rooftattoogallery.com"
     ]
 
     env_list = []

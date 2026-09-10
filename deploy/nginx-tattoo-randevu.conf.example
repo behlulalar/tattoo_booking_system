@@ -1,6 +1,6 @@
 server {
     listen 80;
-    server_name tattoo.roof.behlulalar.online;
+    server_name randevu-rooftattoogallery.com;
 
     root /opt/roof_tattoo/frontend;
     index index.html;

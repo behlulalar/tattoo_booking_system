@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-ROOF_DOMAIN="tattoo.roof.behlulalar.online"
+ROOF_DOMAIN="randevu-rooftattoogallery.com"
 ROOF_DIR="/opt/roof_tattoo"
 ROOF_SOCKET="/opt/roof_tattoo/run/gunicorn.sock"
 ROOF_SERVICE="roof-tattoo-backend"

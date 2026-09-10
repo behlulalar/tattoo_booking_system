@@ -110,5 +110,5 @@ echo "╔═══════════════════════�
 echo "║  Evolution API kuruldu (127.0.0.1:8080)          ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo "Admin panel: WhatsApp → Instance oluştur → QR → Webhook"
-echo "Webhook: https://tattoo.roof.behlulalar.online/api/whatsapp/webhook"
+echo "Webhook: https://randevu-rooftattoogallery.com/api/whatsapp/webhook"
 docker compose ps
