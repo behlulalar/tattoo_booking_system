@@ -1,13 +1,26 @@
-# Sadece randevu-rooftattoogallery.com → /opt/roof_tattoo (Roof Tattoo Gallery)
+# randevu-rooftattoogallery.com → /opt/roof_tattoo (Roof Tattoo Gallery)
 # Host: 109.122.6.59
 
+# Catch-all: reject any hostname that isn't explicitly configured below
+# (old/leftover domains, direct-IP requests, scanners). Must stay first
+# so it becomes the default_server for unmatched SNI/Host.
 server {
-    listen 80;
-    listen [::]:80;
-    server_name randevu-rooftattoogallery.com;
-    return 301 https://$host$request_uri;
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name _;
+    ssl_certificate /etc/ssl/certs/ssl-cert-snakeoil.pem;
+    ssl_certificate_key /etc/ssl/private/ssl-cert-snakeoil.key;
+    return 444;
 }
 
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    return 444;
+}
+
+# randevu-rooftattoogallery.com (primary production domain)
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -42,4 +55,26 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 120;
     }
+}
+
+# www -> bare domain (HTTPS)
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name www.randevu-rooftattoogallery.com;
+
+    ssl_certificate /etc/letsencrypt/live/randevu-rooftattoogallery.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/randevu-rooftattoogallery.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    return 301 https://randevu-rooftattoogallery.com$request_uri;
+}
+
+# HTTP -> HTTPS redirect
+server {
+    listen 80;
+    listen [::]:80;
+    server_name randevu-rooftattoogallery.com www.randevu-rooftattoogallery.com;
+    return 301 https://randevu-rooftattoogallery.com$request_uri;
 }
