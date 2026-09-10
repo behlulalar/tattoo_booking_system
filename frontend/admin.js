@@ -453,7 +453,8 @@ function openTimeOffFormModal() {
   return new Promise((resolve) => {
     _timeOffResolve = resolve;
     const overlay = $('time-off-form-overlay');
-    $('tof-date').value = new Date().toISOString().slice(0, 10);
+    const _today = new Date();
+    $('tof-date').value = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`;
     $('tof-fullday').checked = true;
     $('tof-time-range').style.display = 'none';
     $('tof-reason').value = '';
