@@ -939,10 +939,98 @@ def _enqueue_whatsapp_retry(phone, message, error=None):
 WHATSAPP_BULK_SEND_MIN_DELAY = float(os.getenv('WHATSAPP_BULK_SEND_MIN_DELAY_SECONDS', '4'))
 WHATSAPP_BULK_SEND_MAX_DELAY = float(os.getenv('WHATSAPP_BULK_SEND_MAX_DELAY_SECONDS', '18'))
 
+# Saatlik/gunluk toplu gonderim tavani (ayni amac: ban riski). Studyonun
+# gercek hacmi (~7 randevu/gun, randevu basina en fazla 2 otomatik mesaj)
+# gozetilerek bol paylı belirlendi — normal kullanimda hic devreye girmez,
+# sadece bir bug/donguye girmis gonderim senaryosunda fren gorevi gorur.
+# OTP gibi musteri bekleyen tekil gonderimler bu tavana dahil DEGILDIR.
+WHATSAPP_BULK_HOURLY_CAP = int(os.getenv('WHATSAPP_BULK_HOURLY_CAP', '15'))
+WHATSAPP_BULK_DAILY_CAP = int(os.getenv('WHATSAPP_BULK_DAILY_CAP', '60'))
+
 
 def _bulk_send_delay():
     """Toplu gonderim dongulerinde mesajlar arasi rastgele bekleme (ban riski icin)."""
     time.sleep(random.uniform(WHATSAPP_BULK_SEND_MIN_DELAY, WHATSAPP_BULK_SEND_MAX_DELAY))
+
+
+def ensure_whatsapp_bulk_send_log_table():
+    """Toplu gonderim tavani icin gonderim zaman damgalarini tutan tablo."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS whatsapp_bulk_send_log (
+                id BIGSERIAL PRIMARY KEY,
+                sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_whatsapp_bulk_send_log_sent_at
+            ON whatsapp_bulk_send_log (sent_at)
+            """
+        )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_whatsapp_bulk_send_log_table: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
+def _bulk_send_cap_reached():
+    """Saatlik/gunluk toplu gonderim tavani asildi mi?
+
+    Hata durumunda "fail-open" davranir (tavani asilmamis kabul eder) —
+    bir izleme sorgusu hatasi yuzunden gercek hatirlatmalarin engellenmesi
+    istenmiyor; tavan sadece ek bir guvenlik firkasi.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE sent_at > NOW() - INTERVAL '1 hour'),
+                COUNT(*) FILTER (WHERE sent_at > NOW() - INTERVAL '1 day')
+            FROM whatsapp_bulk_send_log
+            WHERE sent_at > NOW() - INTERVAL '1 day'
+            """
+        )
+        hourly, daily = cursor.fetchone()
+        cursor.close()
+        if hourly >= WHATSAPP_BULK_HOURLY_CAP:
+            return True, 'saatlik'
+        if daily >= WHATSAPP_BULK_DAILY_CAP:
+            return True, 'gunluk'
+        return False, None
+    except Exception as e:
+        logger.warning(f"Bulk gonderim tavani kontrol edilemedi (fail-open): {e}")
+        return False, None
+    finally:
+        release_db_connection(conn)
+
+
+def _record_bulk_send():
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO whatsapp_bulk_send_log (sent_at) VALUES (NOW())")
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"Bulk gonderim log'u yazilamadi: {e}")
+    finally:
+        release_db_connection(conn)
 
 
 def drain_whatsapp_queue():
@@ -977,7 +1065,10 @@ def drain_whatsapp_queue():
                 _bulk_send_delay()
             try:
                 try:
-                    ok = send_whatsapp_message(phone, message)
+                    # queue_on_failure=False: bu mesaj zaten kuyrukta, tekrar
+                    # kuyruklamak mukerrer kayit olusturur. count_for_cap=True:
+                    # toplu gonderim tavanina dahil (ban riski azaltma).
+                    ok = send_wapio_message(phone, message, queue_on_failure=False, count_for_cap=True)
                 except Exception as send_err:
                     ok = False
                     logger.warning(f"whatsapp queue gonderim hatasi: {send_err}")
@@ -1024,15 +1115,33 @@ def drain_whatsapp_queue():
         release_db_connection(conn)
 
 
-def send_wapio_message(phone, message, retry_count=0, queue_on_failure=True, **kwargs):
+def send_wapio_message(phone, message, retry_count=0, queue_on_failure=True, count_for_cap=False, **kwargs):
     """Giden WhatsApp mesajı — aktif sağlayıcıya yönlendirilir (Evolution).
 
     Basarisizlikta (queue_on_failure=True, varsayilan) mesaj retry kuyruguna
     eklenir — Evolution gecici olarak kapaliysa/hata veriyorsa mesaj kalici
     olarak kaybolmaz. OTP gibi zaman-hassas veya kendi retry mekanizmasi
     olan (randevu hatirlatmalari) cagrilar queue_on_failure=False gecmeli.
+
+    count_for_cap=True ise (yalnizca toplu/otomatik gonderim dongulerinde
+    kullanilir — hatirlatmalar, retry kuyrugu) saatlik/gunluk tavan kontrol
+    edilir ve basarili gonderim loglanir. OTP gibi musteri bekleyen tekil
+    gonderimler bu parametreyi HIC gecmemeli (tavana dahil edilmemeli).
     """
+    if count_for_cap:
+        reached, period = _bulk_send_cap_reached()
+        if reached:
+            logger.warning(
+                "Toplu WhatsApp gonderim tavani asildi (%s) — bu dongude gonderilmedi: %s",
+                period, phone,
+            )
+            return False
+
     ok = send_whatsapp_message(phone, message, retry_count, **kwargs)
+
+    if ok and count_for_cap:
+        _record_bulk_send()
+
     if not ok and queue_on_failure:
         _enqueue_whatsapp_retry(phone, message)
     return ok
@@ -6507,7 +6616,8 @@ def send_appointment_reminders():
                 # Bu job zaten reminder_sent bayragiyla her 5 dk'da bir
                 # kendi retry'ini yapiyor (bkz. _reset_reminder_flag) —
                 # ayrica kuyruga da eklemek cift gonderime yol acar.
-                ok = send_wapio_message(phone, message, queue_on_failure=False)
+                # count_for_cap=True: toplu gonderim tavanina dahil (ban riski).
+                ok = send_wapio_message(phone, message, queue_on_failure=False, count_for_cap=True)
                 if not ok:
                     # send_wapio_message basarisizlikta False doner, exception
                     # firlatmaz — flag'i geri almazsak hatirlatma bir daha
@@ -6625,7 +6735,8 @@ def send_aftercare_cream_reminders():
                 message = build_aftercare_reminder_message(customer_name, staff_name)
 
                 # aftercare_reminder_sent bayragiyla kendi retry'i var, kuyruk gerekmez.
-                ok = send_wapio_message(phone, message, queue_on_failure=False)
+                # count_for_cap=True: toplu gonderim tavanina dahil (ban riski).
+                ok = send_wapio_message(phone, message, queue_on_failure=False, count_for_cap=True)
                 if not ok:
                     _reset_aftercare_flag(apt_id)
                     logger.warning(
@@ -7114,6 +7225,7 @@ def start_scheduler_if_master():
         return False
 
 ensure_whatsapp_queue_table()
+ensure_whatsapp_bulk_send_log_table()
 
 # Scheduler'ı başlat (sadece bir process başlatacak)
 start_scheduler_if_master()
