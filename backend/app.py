@@ -931,6 +931,20 @@ def _enqueue_whatsapp_retry(phone, message, error=None):
         release_db_connection(conn)
 
 
+# Ban riski azaltma: toplu WhatsApp gonderimlerinde (hatirlatma job'lari,
+# retry kuyrugu) mesajlar arasinda rastgele bekleme. Evolution API resmi
+# olmayan bir API oldugundan, ayni numaradan kisa surede arka arkaya cok
+# sayida mesaj atmak bot/spam davranisi olarak algilanip hesabin
+# banlanma riskini artirir. Tek seferlik gonderimlerde (OTP vb.) kullanilmaz.
+WHATSAPP_BULK_SEND_MIN_DELAY = float(os.getenv('WHATSAPP_BULK_SEND_MIN_DELAY_SECONDS', '4'))
+WHATSAPP_BULK_SEND_MAX_DELAY = float(os.getenv('WHATSAPP_BULK_SEND_MAX_DELAY_SECONDS', '18'))
+
+
+def _bulk_send_delay():
+    """Toplu gonderim dongulerinde mesajlar arasi rastgele bekleme (ban riski icin)."""
+    time.sleep(random.uniform(WHATSAPP_BULK_SEND_MIN_DELAY, WHATSAPP_BULK_SEND_MAX_DELAY))
+
+
 def drain_whatsapp_queue():
     """Basarisiz WhatsApp mesajlarini ustel geri cekilmeyle tekrar dener.
 
@@ -958,7 +972,9 @@ def drain_whatsapp_queue():
         # olsaydi, N. mesajdan sonraki bir UPDATE beklenmedik sekilde
         # patlarsa tek rollback 1..N-1 icin zaten yapilmis 'sent' isaretini
         # de geri alir — musteriye tekrar (mukerrer) mesaj gitmesine yol acar.
-        for row_id, phone, message, attempts, max_attempts in rows:
+        for idx, (row_id, phone, message, attempts, max_attempts) in enumerate(rows):
+            if idx > 0:
+                _bulk_send_delay()
             try:
                 try:
                     ok = send_whatsapp_message(phone, message)
@@ -6377,35 +6393,61 @@ def _studio_now():
         return datetime.now()
 
 
+def _reset_reminder_flag(apt_id):
+    """reminder_sent bayragini geri alir (WhatsApp gonderimi basarisizsa).
+
+    Ayri, kisa omurlu bir baglanti kullanir — gonderim asamasi artik
+    orijinal SELECT FOR UPDATE transaction'inin disinda calisiyor.
+    """
+    conn2 = None
+    try:
+        conn2 = get_db_connection()
+        cur2 = conn2.cursor()
+        cur2.execute("UPDATE appointments SET reminder_sent = FALSE WHERE id = %s", (apt_id,))
+        conn2.commit()
+        cur2.close()
+    except Exception as e:
+        if conn2:
+            conn2.rollback()
+        logger.warning(f"reminder_sent flag geri alinamadi (id={apt_id}): {e}")
+    finally:
+        release_db_connection(conn2)
+
+
 def send_appointment_reminders():
     """1 saat içinde başlayacak randevulara hatırlatma mesajı gönder
-    
+
     Race condition önleme:
     - SELECT FOR UPDATE ile atomic işlem
     - Mesaj göndermeden ÖNCE reminder_sent flag'ini güncelle
     - Her randevu için sadece 1 kez mesaj gönderilmesini garanti eder
+
+    Iki asamali calisir: once flag guncellemeleri tek, kisa bir transaction'da
+    commit edilip DB kilitleri hemen birakilir; WhatsApp gonderimleri (ve
+    aralarindaki ban-riski azaltma gecikmesi, bkz. _bulk_send_delay) kilit
+    disinda, ikinci asamada yapilir. Aksi halde onlarca saniye surebilen
+    gecikmeler boyunca randevu satirlari kilitli kalir (iptal/degisiklik
+    islemlerini bloke eder).
     """
     conn = None
+    to_send = []
     try:
         conn = get_db_connection()
-        
-        # Transaction başlat (atomic işlem için)
         conn.autocommit = False
         cursor = conn.cursor()
-        
+
         reminder_hours = get_reminder_hours_before()
         now = _studio_now()
         reminder_until = now + timedelta(hours=reminder_hours)
-        
-        # Bugünün tarihi
+
         today = now.date()
         current_time = now.strftime('%H:%M')
         reminder_until_time = reminder_until.strftime('%H:%M')
-        
+
         # X saat içinde başlayacak, onaylanmış ve henüz hatırlatma gönderilmemiş randevular
         # SELECT FOR UPDATE: Aynı anda birden fazla worker aynı randevuyu işlemesin
         cursor.execute("""
-            SELECT 
+            SELECT
                 a.id, a.appointment_date, a.appointment_time,
                 c.phone, c.name, c.surname,
                 COALESCE(tr.body_area, '-') as body_area,
@@ -6422,66 +6464,69 @@ def send_appointment_reminders():
               AND (a.reminder_sent IS NULL OR a.reminder_sent = FALSE)
             FOR UPDATE OF a SKIP LOCKED
         """, (today, current_time, reminder_until_time))
-        
+
         appointments = cursor.fetchall()
-        
-        sent_count = 0
+
         for apt in appointments:
             apt_id, apt_date, apt_time, phone, name, surname, body_area, tattoo_size, staff_name = apt
-            
-            try:
-                # ÖNCE reminder_sent flag'ini güncelle (race condition önleme)
-                # Bu sayede başka bir worker aynı randevuyu işlemez
-                cursor.execute("UPDATE appointments SET reminder_sent = TRUE WHERE id = %s AND (reminder_sent IS NULL OR reminder_sent = FALSE)", (apt_id,))
-                
-                # Eğer UPDATE başarılı olduysa (1 row affected), mesaj gönder
-                if cursor.rowcount > 0:
-                    message = build_appointment_reminder_message(
-                        f'{name} {surname}'.strip(),
-                        apt_date.strftime('%d.%m.%Y'),
-                        str(apt_time)[:5],
-                        body_area,
-                        tattoo_size,
-                        staff_name,
-                        hours_before=reminder_hours,
-                    )
-                    
-                    # Bu job zaten reminder_sent bayragiyla her 5 dk'da bir
-                    # kendi retry'ini yapiyor (bkz. asagidaki flag reset) —
-                    # ayrica kuyruga da eklemek cift gonderime yol acar.
-                    ok = send_wapio_message(phone, message, queue_on_failure=False)
-                    if not ok:
-                        # send_wapio_message basarisizlikta False doner, exception
-                        # firlatmaz — flag'i geri almazsak hatirlatma bir daha
-                        # asla denenmez ve musteri sessizce hic mesaj almaz.
-                        cursor.execute("UPDATE appointments SET reminder_sent = FALSE WHERE id = %s", (apt_id,))
-                        logger.warning(f"Hatirlatma gonderilemedi (tekrar denenecek): {phone} - {apt_date} {apt_time}")
-                    else:
-                        sent_count += 1
-                        logger.info(f"Hatırlatma gönderildi: {phone} - {apt_date} {apt_time}")
-                else:
-                    # Başka bir worker zaten bu randevuyu işlemiş
-                    logger.info(
-                        "Hatirlatma atlandi (zaten gonderilmis) | phone=%s date=%s time=%s",
-                        phone,
-                        apt_date,
-                        apt_time,
-                    )
-                
-            except Exception as e:
-                log_error(logger, E_WA_004, "Randevu hatirlatmasi gonderilemedi", exc=e, phone=phone)
-                # Hata durumunda reminder_sent'i geri al (rollback için)
-                cursor.execute("UPDATE appointments SET reminder_sent = FALSE WHERE id = %s", (apt_id,))
-        
-        # Transaction'ı commit et
+            # ÖNCE reminder_sent flag'ini güncelle (race condition önleme)
+            # Bu sayede başka bir worker aynı randevuyu işlemez
+            cursor.execute("UPDATE appointments SET reminder_sent = TRUE WHERE id = %s AND (reminder_sent IS NULL OR reminder_sent = FALSE)", (apt_id,))
+            if cursor.rowcount > 0:
+                to_send.append((apt_id, apt_date, apt_time, phone, name, surname, body_area, tattoo_size, staff_name))
+            else:
+                # Başka bir worker zaten bu randevuyu işlemiş
+                logger.info(
+                    "Hatirlatma atlandi (zaten gonderilmis) | phone=%s date=%s time=%s",
+                    phone,
+                    apt_date,
+                    apt_time,
+                )
+
+        # Flag guncellemelerini hemen commit et — kilitler burada birakilir.
         conn.commit()
         cursor.close()
-        
+        release_db_connection(conn)
+        conn = None
+
+        sent_count = 0
+        for idx, (apt_id, apt_date, apt_time, phone, name, surname, body_area, tattoo_size, staff_name) in enumerate(to_send):
+            if idx > 0:
+                _bulk_send_delay()
+            try:
+                message = build_appointment_reminder_message(
+                    f'{name} {surname}'.strip(),
+                    apt_date.strftime('%d.%m.%Y'),
+                    str(apt_time)[:5],
+                    body_area,
+                    tattoo_size,
+                    staff_name,
+                    hours_before=reminder_hours,
+                )
+
+                # Bu job zaten reminder_sent bayragiyla her 5 dk'da bir
+                # kendi retry'ini yapiyor (bkz. _reset_reminder_flag) —
+                # ayrica kuyruga da eklemek cift gonderime yol acar.
+                ok = send_wapio_message(phone, message, queue_on_failure=False)
+                if not ok:
+                    # send_wapio_message basarisizlikta False doner, exception
+                    # firlatmaz — flag'i geri almazsak hatirlatma bir daha
+                    # asla denenmez ve musteri sessizce hic mesaj almaz.
+                    _reset_reminder_flag(apt_id)
+                    logger.warning(f"Hatirlatma gonderilemedi (tekrar denenecek): {phone} - {apt_date} {apt_time}")
+                else:
+                    sent_count += 1
+                    logger.info(f"Hatırlatma gönderildi: {phone} - {apt_date} {apt_time}")
+
+            except Exception as e:
+                log_error(logger, E_WA_004, "Randevu hatirlatmasi gonderilemedi", exc=e, phone=phone)
+                _reset_reminder_flag(apt_id)
+
         if sent_count > 0:
             logger.info(f"{sent_count} randevu hatırlatması gönderildi")
-        elif appointments:
-            logger.info("%s randevu bulundu ama hepsi zaten islenmis", len(appointments))
-            
+        elif to_send:
+            logger.info("%s randevu icin gonderim denendi ama hicbiri basarili olmadi", len(to_send))
+
     except Exception as e:
         if conn:
             conn.rollback()
@@ -6495,9 +6540,36 @@ def send_appointment_reminders():
 AFTERCARE_REMINDER_HOURS = float(os.getenv('AFTERCARE_REMINDER_HOURS', '2'))
 
 
+def _reset_aftercare_flag(apt_id):
+    """aftercare_reminder_sent bayragini geri alir (WhatsApp gonderimi basarisizsa).
+
+    Ayri, kisa omurlu bir baglanti kullanir — gonderim asamasi artik
+    orijinal SELECT FOR UPDATE transaction'inin disinda calisiyor.
+    """
+    conn2 = None
+    try:
+        conn2 = get_db_connection()
+        cur2 = conn2.cursor()
+        cur2.execute("UPDATE appointments SET aftercare_reminder_sent = FALSE WHERE id = %s", (apt_id,))
+        conn2.commit()
+        cur2.close()
+    except Exception as e:
+        if conn2:
+            conn2.rollback()
+        logger.warning(f"aftercare_reminder_sent flag geri alinamadi (id={apt_id}): {e}")
+    finally:
+        release_db_connection(conn2)
+
+
 def send_aftercare_cream_reminders():
-    """Tamamlanan randevulardan 2 saat sonra krem bakım hatırlatması (WhatsApp)."""
+    """Tamamlanan randevulardan 2 saat sonra krem bakım hatırlatması (WhatsApp).
+
+    Iki asamali calisir (bkz. send_appointment_reminders): flag guncellemeleri
+    hemen commit edilip kilitler birakilir, WhatsApp gonderimleri (ve
+    aralarindaki ban-riski azaltma gecikmesi) kilit disinda yapilir.
+    """
     conn = None
+    to_send = []
     try:
         conn = get_db_connection()
         conn.autocommit = False
@@ -6526,31 +6598,36 @@ def send_aftercare_cream_reminders():
 
         rows = cursor.fetchall()
 
-        sent_count = 0
         for apt_id, phone, name, surname, staff_name, completed_at in rows:
-            try:
-                cursor.execute(
-                    """
-                    UPDATE appointments
-                    SET aftercare_reminder_sent = TRUE
-                    WHERE id = %s
-                      AND (aftercare_reminder_sent IS NULL OR aftercare_reminder_sent = FALSE)
-                    """,
-                    (apt_id,),
-                )
-                if cursor.rowcount <= 0:
-                    continue
+            cursor.execute(
+                """
+                UPDATE appointments
+                SET aftercare_reminder_sent = TRUE
+                WHERE id = %s
+                  AND (aftercare_reminder_sent IS NULL OR aftercare_reminder_sent = FALSE)
+                """,
+                (apt_id,),
+            )
+            if cursor.rowcount > 0:
+                to_send.append((apt_id, phone, name, surname, staff_name, completed_at))
 
+        conn.commit()
+        cursor.close()
+        release_db_connection(conn)
+        conn = None
+
+        sent_count = 0
+        for idx, (apt_id, phone, name, surname, staff_name, completed_at) in enumerate(to_send):
+            if idx > 0:
+                _bulk_send_delay()
+            try:
                 customer_name = f"{name} {surname}".strip() or 'Müşterimiz'
                 message = build_aftercare_reminder_message(customer_name, staff_name)
 
                 # aftercare_reminder_sent bayragiyla kendi retry'i var, kuyruk gerekmez.
                 ok = send_wapio_message(phone, message, queue_on_failure=False)
                 if not ok:
-                    cursor.execute(
-                        "UPDATE appointments SET aftercare_reminder_sent = FALSE WHERE id = %s",
-                        (apt_id,),
-                    )
+                    _reset_aftercare_flag(apt_id)
                     logger.warning(
                         "Krem bakim hatirlatmasi gonderilemedi (tekrar denenecek) | phone=%s appointment_id=%s",
                         phone, apt_id,
@@ -6572,13 +6649,8 @@ def send_aftercare_cream_reminders():
                     exc=send_err,
                     appointment_id=apt_id,
                 )
-                cursor.execute(
-                    "UPDATE appointments SET aftercare_reminder_sent = FALSE WHERE id = %s",
-                    (apt_id,),
-                )
+                _reset_aftercare_flag(apt_id)
 
-        conn.commit()
-        cursor.close()
         if sent_count > 0:
             logger.info(f"{sent_count} krem bakım hatırlatması gönderildi")
     except Exception as e:
