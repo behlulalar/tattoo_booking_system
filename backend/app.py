@@ -154,6 +154,7 @@ from error_codes import (
     E_WA_002,
     E_WA_003,
     E_WA_004,
+    E_WA_005,
     W_CFG_001,
 )
 
@@ -1005,12 +1006,22 @@ def _bulk_send_cap_reached():
         )
         hourly, daily = cursor.fetchone()
         cursor.close()
+        # Salt-okunur sorgu ama baglanti autocommit=False ile havuzdan
+        # geliyor — commit/rollback yapilmazsa "acik transaction" durumunda
+        # havuza geri doner ve bir sonraki kullanicida (orn. autocommit
+        # degistirmeye calisan baska bir fonksiyon) hataya yol acar.
+        conn.rollback()
         if hourly >= WHATSAPP_BULK_HOURLY_CAP:
             return True, 'saatlik'
         if daily >= WHATSAPP_BULK_DAILY_CAP:
             return True, 'gunluk'
         return False, None
     except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         logger.warning(f"Bulk gonderim tavani kontrol edilemedi (fail-open): {e}")
         return False, None
     finally:
@@ -1033,6 +1044,30 @@ def _record_bulk_send():
         release_db_connection(conn)
 
 
+def _whatsapp_session_ready_for_bulk_send():
+    """Toplu gonderim oncesi WhatsApp oturumu saglikli mi diye bakar.
+
+    Oturum kopuksa (QR bekliyor, cikis yapilmis, banli olabilir) o turda
+    HIC gonderim denenmez — kopuk bir oturuma karsi tekrar tekrar mesaj
+    denemek hem sonuc vermez hem de (oturum kismen ayaktaysa) ban riskini
+    artirir. Saglik kontrolunun kendisi hata verirse fail-closed davranir
+    (bu turu atlar) — cunku amaci zaten temkinli olmak.
+    """
+    try:
+        result = check_whatsapp_health()
+        healthy = bool(result.get('healthy'))
+        if not healthy:
+            log_error(
+                logger, E_WA_005,
+                "WhatsApp oturumu kopuk — toplu gonderim bu turda atlandi",
+                reason=result.get('reason'),
+            )
+        return healthy
+    except Exception as e:
+        log_error(logger, E_WA_005, "WhatsApp oturum saglik kontrolu basarisiz — toplu gonderim atlandi", exc=e)
+        return False
+
+
 def drain_whatsapp_queue():
     """Basarisiz WhatsApp mesajlarini ustel geri cekilmeyle tekrar dener.
 
@@ -1040,6 +1075,9 @@ def drain_whatsapp_queue():
     loglanir — bu, error_notifier'a baglandigi icin (bkz. logging_setup)
     kalici basarisizliklar artik e-posta ile de bildirilir.
     """
+    if not _whatsapp_session_ready_for_bulk_send():
+        return
+
     conn = None
     try:
         conn = get_db_connection()
@@ -6538,6 +6576,9 @@ def send_appointment_reminders():
     gecikmeler boyunca randevu satirlari kilitli kalir (iptal/degisiklik
     islemlerini bloke eder).
     """
+    if not _whatsapp_session_ready_for_bulk_send():
+        return
+
     conn = None
     to_send = []
     try:
@@ -6678,6 +6719,9 @@ def send_aftercare_cream_reminders():
     hemen commit edilip kilitler birakilir, WhatsApp gonderimleri (ve
     aralarindaki ban-riski azaltma gecikmesi) kilit disinda yapilir.
     """
+    if not _whatsapp_session_ready_for_bulk_send():
+        return
+
     conn = None
     to_send = []
     try:
