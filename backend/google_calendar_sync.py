@@ -1677,6 +1677,35 @@ def ensure_queue_table():
         _disconnect(conn)
 
 
+def ensure_time_off_multi_day_support():
+    """Coklu gunluk Off Day destegi: time_off eskiden Google etkinligi basina
+    tek satir tutuyordu (UNIQUE(google_event_id)), bu yuzden birden fazla gun
+    suren bir etkinlik sadece ilk gunu kapatiyordu. Artik etkinlik basina
+    (gun sayisi kadar) birden fazla satir yazilabiliyor — eski tekil kisiti
+    (google_event_id, off_date) ikilisi uzerinden UNIQUE'e gevsetir.
+    """
+    conn = None
+    try:
+        conn = _connect()
+        cursor = conn.cursor()
+        cursor.execute("DROP INDEX IF EXISTS uq_time_off_google_event_id")
+        cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_time_off_google_event_id_date
+            ON time_off (google_event_id, off_date)
+            WHERE google_event_id IS NOT NULL
+            """
+        )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_time_off_multi_day_support: %s', str(e).strip()[:200])
+    finally:
+        _disconnect(conn)
+
+
 def _ensure_partial_slot_unique_index(conn):
     """Iptal satirlar ayni slotu yeni randevuya biraksin."""
     cursor = conn.cursor()
@@ -3208,48 +3237,59 @@ def _import_manual_google_event(cursor, event, calendar_id):
     return 'imported'
 
 
-def _off_day_times_from_event(event):
-    """time_off tek gunluk bir satirdir (kolon: tek off_date) — Google'da
-    coklu gun suren (all-day araligi veya gece yarisini asan) bir blok
-    gelirse burada YALNIZCA ILK GUN isleniyor, kalan gunler otomatik
-    kapanmiyor. 'spans_multiple_days' bu durumu cagirana bildirir, cagiran
-    (bkz. _import_off_day_event / _handle_inbound_time_off) admin'e alarm
-    basar ki kalan gunler sessizce rezervasyona acik kalmasin — coklu satir
-    / semadaki UNIQUE(google_event_id) kisitini degistiren tam destek ayri
-    bir is olarak birakildi (bkz. ilgili yorum satirlari)."""
+def _off_day_day_blocks(event):
+    """Bir Off Day etkinligini, her biri time_off'a bir satir olarak yazilacak
+    (off_date, start_time, end_time) ucluleri listesine ayirir.
+
+    time_off satir basina tek gun tutar (kolon: tek off_date), bu yuzden
+    coklu gun suren (all-day araligi veya gece yarisini asan) bir Google
+    etkinligi birden fazla satira bolunur — hepsi ayni google_event_id'yi
+    paylasir (bkz. uq_time_off_google_event_id_date, (google_event_id,
+    off_date) uzerinde UNIQUE). start_time/end_time None ise o gun tam
+    gun kapali demektir (bkz. _count_overlapping_appointments).
+
+    Tek gunluk etkinlikler icin tek elemanli liste doner.
+    """
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
     if not start_dt or not end_dt or end_dt <= start_dt:
-        return None
+        return []
+
     if all_day:
+        first_day = start_dt.date()
         last_day = end_dt.date() - timedelta(days=1)  # Google end tarihi exclusive
-        return {
-            'all_day': True,
-            'off_date': start_dt.date(),
-            'start_time': None,
-            'end_time': None,
-            'spans_multiple_days': last_day > start_dt.date(),
-            'last_day': last_day,
-        }
-    start_m = start_dt.hour * 60 + start_dt.minute
-    end_m = end_dt.hour * 60 + end_dt.minute
-    spans_multiple_days = end_dt.date() > start_dt.date()
-    if spans_multiple_days:
-        end_m = 24 * 60
-    if end_m <= start_m:
-        end_m = 24 * 60
-    start_hh = f'{start_m // 60:02d}:{start_m % 60:02d}'
-    if end_m >= 24 * 60:
-        end_hh = '00:00'
-    else:
-        end_hh = f'{end_m // 60:02d}:{end_m % 60:02d}'
-    return {
-        'all_day': False,
-        'off_date': start_dt.date(),
-        'start_time': start_hh,
-        'end_time': end_hh,
-        'spans_multiple_days': spans_multiple_days,
-        'last_day': end_dt.date(),
-    }
+        if last_day < first_day:
+            last_day = first_day
+        blocks = []
+        d = first_day
+        while d <= last_day:
+            blocks.append((d, None, None))
+            d += timedelta(days=1)
+        return blocks
+
+    first_day = start_dt.date()
+    last_day = end_dt.date()
+
+    if last_day == first_day:
+        start_m = start_dt.hour * 60 + start_dt.minute
+        end_m = end_dt.hour * 60 + end_dt.minute
+        if end_m <= start_m:
+            end_m = 24 * 60
+        start_hh = f'{start_m // 60:02d}:{start_m % 60:02d}'
+        end_hh = '00:00' if end_m >= 24 * 60 else f'{end_m // 60:02d}:{end_m % 60:02d}'
+        return [(first_day, start_hh, end_hh)]
+
+    # Gece yarisini asan / coklu gun suren saatli blok:
+    # ilk gun baslangictan gece yarisina, ara gunler tam gun,
+    # son gun gece yarisindan bitis saatine kadar.
+    blocks = [(first_day, f'{start_dt.hour:02d}:{start_dt.minute:02d}', '00:00')]
+    d = first_day + timedelta(days=1)
+    while d < last_day:
+        blocks.append((d, None, None))
+        d += timedelta(days=1)
+    end_hh = f'{end_dt.hour:02d}:{end_dt.minute:02d}'
+    if end_hh != '00:00':
+        blocks.append((last_day, '00:00', end_hh))
+    return blocks
 
 
 def _count_overlapping_appointments(cursor, staff_id, off_date, start_time, end_time):
@@ -3309,20 +3349,12 @@ def _import_off_day_event(cursor, event, calendar_id, staff_id, staff_name, reas
     if not event_id or not staff_id:
         return 'skip'
 
-    times = _off_day_times_from_event(event)
-    if not times:
+    blocks = _off_day_day_blocks(event)
+    if not blocks:
         return 'skip'
 
-    if times.get('spans_multiple_days'):
-        log_error(
-            logger, E_GCAL_004,
-            'Coklu gunluk Off Day tespit edildi, sadece ilk gun otomatik kapatildi',
-            event_id=event_id, staff_id=staff_id,
-            first_day=times['off_date'], last_day=times.get('last_day'),
-        )
-
     cursor.execute(
-        'SELECT id FROM time_off WHERE google_event_id = %s',
+        'SELECT 1 FROM time_off WHERE google_event_id = %s LIMIT 1',
         (event_id,),
     )
     if cursor.fetchone():
@@ -3333,153 +3365,188 @@ def _import_off_day_event(cursor, event, calendar_id, staff_id, staff_name, reas
         (event_id,),
     )
 
-    overlap = _count_overlapping_appointments(
-        cursor, staff_id, times['off_date'], times['start_time'], times['end_time'],
-    )
-    if overlap:
-        # Sadece log dosyasina degil e-postaya da dusun ki admin fark etsin —
-        # randevu otomatik iptal edilmiyor, elle kontrol gerekiyor.
-        log_error(
-            logger, E_GCAL_004,
-            'Off Day, mevcut onayli randevuyla cakisiyor (randevu iptal edilmedi)',
-            event_id=event_id, staff_id=staff_id, date=times['off_date'], overlap_count=overlap,
-        )
-
-    try:
-        cursor.execute('SAVEPOINT gcal_off_import')
-        cursor.execute(
-            """
-            INSERT INTO time_off (
-                staff_id, off_date, start_time, end_time, reason,
-                google_event_id, google_etag, google_calendar_id, google_updated_at
+    first_time_off_id = None
+    inserted_days = []
+    for off_date, start_time, end_time in blocks:
+        overlap = _count_overlapping_appointments(cursor, staff_id, off_date, start_time, end_time)
+        if overlap:
+            # Sadece log dosyasina degil e-postaya da dusun ki admin fark etsin —
+            # randevu otomatik iptal edilmiyor, elle kontrol gerekiyor.
+            log_error(
+                logger, E_GCAL_004,
+                'Off Day, mevcut onayli randevuyla cakisiyor (randevu iptal edilmedi)',
+                event_id=event_id, staff_id=staff_id, date=off_date, overlap_count=overlap,
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
-            RETURNING id
-            """,
-            (
-                staff_id,
-                times['off_date'],
-                times['start_time'],
-                times['end_time'],
-                (reason or '')[:100],
-                event_id,
-                event.get('etag'),
-                calendar_id,
-            ),
-        )
-        time_off_id = cursor.fetchone()[0]
-        cursor.execute('RELEASE SAVEPOINT gcal_off_import')
-    except Exception as exc:
+
         try:
-            cursor.execute('ROLLBACK TO SAVEPOINT gcal_off_import')
-        except Exception:
-            pass
-        logger.warning(
-            'Google Off Day yazilamadi | event=%s hata=%s',
-            event_id, str(exc).strip()[:200],
-        )
+            cursor.execute('SAVEPOINT gcal_off_import')
+            cursor.execute(
+                """
+                INSERT INTO time_off (
+                    staff_id, off_date, start_time, end_time, reason,
+                    google_event_id, google_etag, google_calendar_id, google_updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                RETURNING id
+                """,
+                (
+                    staff_id, off_date, start_time, end_time,
+                    (reason or '')[:100],
+                    event_id, event.get('etag'), calendar_id,
+                ),
+            )
+            row_id = cursor.fetchone()[0]
+            cursor.execute('RELEASE SAVEPOINT gcal_off_import')
+            if first_time_off_id is None:
+                first_time_off_id = row_id
+            inserted_days.append(off_date)
+        except Exception as exc:
+            try:
+                cursor.execute('ROLLBACK TO SAVEPOINT gcal_off_import')
+            except Exception:
+                pass
+            logger.warning(
+                'Google Off Day gunu yazilamadi | event=%s tarih=%s hata=%s',
+                event_id, off_date, str(exc).strip()[:200],
+            )
+
+    if not inserted_days:
         return 'skip'
 
     _stamp_origin_on_off_day_event(
-        calendar_id, event_id, time_off_id, staff_id, staff_name,
+        calendar_id, event_id, first_time_off_id, staff_id, staff_name,
     )
     logger.info(
-        'Google etkinlik Off Day oldu (WhatsApp yok) time_off #%s event=%s staff=%s %s %s-%s',
-        time_off_id, event_id, staff_id, times['off_date'],
-        times['start_time'] or 'tum-gun', times['end_time'] or '',
+        'Google etkinlik Off Day oldu (WhatsApp yok) event=%s staff=%s %d gun (%s .. %s)',
+        event_id, staff_id, len(inserted_days), inserted_days[0], inserted_days[-1],
     )
     return 'imported'
 
 
 def _handle_inbound_time_off(cursor, event, calendar_id, time_off_id):
-    deleted = (event.get('status') or '') == 'cancelled'
-    cursor.execute(
-        """
-        SELECT id, staff_id, off_date, start_time, end_time, google_etag
-          FROM time_off
-         WHERE id = %s
-        """,
-        (time_off_id,),
-    )
+    """Google'da Off Day etkinligi silindi/tasindi/yeniden boyutlandirildi.
+
+    Bir etkinlik artik birden fazla time_off satirina karsilik gelebilir
+    (coklu gun, bkz. _off_day_day_blocks) — gelen time_off_id yalnizca "bu
+    bizim event'imiz" tespiti icindir; asil islem ayni google_event_id'yi
+    paylasan TUM satirlar uzerinde yapilir. Guncellemede kismi diff yerine
+    en guvenilir yol izlenir: mevcut gunler silinip yeni gun bloklari
+    yeniden yazilir.
+    """
+    event_id = (event.get('id') or '').strip()
+    staff_id = None
+
+    cursor.execute('SELECT staff_id, google_event_id FROM time_off WHERE id = %s', (time_off_id,))
     row = cursor.fetchone()
-    if not row:
+    if row:
+        staff_id, stored_event_id = row
+        event_id = stored_event_id or event_id
+    elif event_id:
+        # Gelen time_off_id gecersiz/eski olabilir — onceki bir tasima
+        # islemi ayni event icin satirlari silip yeniden yazmis, dolayisiyla
+        # Google'a damgalanan id artik yok. event_id uzerinden gercek
+        # satirlara geri don ki tasima/silme zinciri kopmasin.
+        cursor.execute('SELECT staff_id FROM time_off WHERE google_event_id = %s LIMIT 1', (event_id,))
+        fallback = cursor.fetchone()
+        if fallback:
+            staff_id = fallback[0]
+
+    if not event_id or staff_id is None:
         return 'skip'
 
-    _id, staff_id, off_date, start_time, end_time, stored_etag = row
-    if deleted:
-        cursor.execute('DELETE FROM time_off WHERE id = %s', (time_off_id,))
-        logger.info('Google Off Day silme -> time_off silindi #%s (WhatsApp yok)', time_off_id)
+    if (event.get('status') or '') == 'cancelled':
+        cursor.execute('DELETE FROM time_off WHERE google_event_id = %s', (event_id,))
+        removed = cursor.rowcount
+        logger.info('Google Off Day silme -> %d time_off satiri silindi (event=%s, WhatsApp yok)', removed, event_id)
         return 'cancel'
 
-    times = _off_day_times_from_event(event)
-    if not times:
+    cursor.execute(
+        """
+        SELECT off_date, start_time, end_time, google_etag, reason
+          FROM time_off
+         WHERE google_event_id = %s
+         ORDER BY off_date
+        """,
+        (event_id,),
+    )
+    existing_rows = cursor.fetchall()
+    if not existing_rows:
         return 'skip'
 
-    if times.get('spans_multiple_days'):
-        log_error(
-            logger, E_GCAL_004,
-            'Coklu gunluk Off Day tasindi/guncellendi, sadece ilk gun otomatik kapatildi',
-            event_id=(event.get('id') or '').strip(), staff_id=staff_id,
-            first_day=times['off_date'], last_day=times.get('last_day'),
-        )
+    blocks = _off_day_day_blocks(event)
+    if not blocks:
+        return 'skip'
 
-    same_day = _as_date(off_date) == times['off_date']
-    same_start = (start_time is None and times['start_time'] is None) or (
-        start_time is not None
-        and times['start_time'] is not None
-        and str(start_time)[:5] == times['start_time']
-    )
-    same_end = (end_time is None and times['end_time'] is None) or (
-        end_time is not None
-        and times['end_time'] is not None
-        and str(end_time)[:5] == times['end_time']
-    )
-    if same_day and same_start and same_end:
+    stored_etag = existing_rows[0][3]
+    stored_reason = existing_rows[0][4]
+    existing_shape = [
+        (r[0], str(r[1])[:5] if r[1] is not None else None, str(r[2])[:5] if r[2] is not None else None)
+        for r in existing_rows
+    ]
+    if existing_shape == blocks:
         if event.get('etag') and event.get('etag') != stored_etag:
             cursor.execute(
                 """
                 UPDATE time_off
                    SET google_etag = %s, google_updated_at = NOW(), google_calendar_id = %s
-                 WHERE id = %s
+                 WHERE google_event_id = %s
                 """,
-                (event.get('etag'), calendar_id, time_off_id),
+                (event.get('etag'), calendar_id, event_id),
             )
         return 'echo'
 
-    overlap = _count_overlapping_appointments(
-        cursor, staff_id, times['off_date'], times['start_time'], times['end_time'],
-    )
-    if overlap:
-        log_error(
-            logger, E_GCAL_004,
-            'Google Off Day tasima mevcut onayli randevuyla cakisiyor (randevu iptal edilmedi)',
-            time_off_id=time_off_id, staff_id=staff_id, date=times['off_date'], overlap_count=overlap,
-        )
+    cursor.execute('DELETE FROM time_off WHERE google_event_id = %s', (event_id,))
 
-    cursor.execute(
-        """
-        UPDATE time_off
-           SET off_date = %s,
-               start_time = %s,
-               end_time = %s,
-               google_etag = %s,
-               google_calendar_id = %s,
-               google_updated_at = NOW()
-         WHERE id = %s
-        """,
-        (
-            times['off_date'],
-            times['start_time'],
-            times['end_time'],
-            event.get('etag'),
-            calendar_id,
-            time_off_id,
-        ),
-    )
+    written_days = []
+    new_first_id = None
+    for off_date, start_time, end_time in blocks:
+        overlap = _count_overlapping_appointments(cursor, staff_id, off_date, start_time, end_time)
+        if overlap:
+            log_error(
+                logger, E_GCAL_004,
+                'Google Off Day tasima mevcut onayli randevuyla cakisiyor (randevu iptal edilmedi)',
+                event_id=event_id, staff_id=staff_id, date=off_date, overlap_count=overlap,
+            )
+        try:
+            cursor.execute('SAVEPOINT gcal_off_move')
+            cursor.execute(
+                """
+                INSERT INTO time_off (
+                    staff_id, off_date, start_time, end_time, reason,
+                    google_event_id, google_etag, google_calendar_id, google_updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                RETURNING id
+                """,
+                (staff_id, off_date, start_time, end_time, stored_reason, event_id, event.get('etag'), calendar_id),
+            )
+            row_id = cursor.fetchone()[0]
+            cursor.execute('RELEASE SAVEPOINT gcal_off_move')
+            if new_first_id is None:
+                new_first_id = row_id
+            written_days.append(off_date)
+        except Exception as exc:
+            try:
+                cursor.execute('ROLLBACK TO SAVEPOINT gcal_off_move')
+            except Exception:
+                pass
+            logger.warning(
+                'Google Off Day tasima gunu yazilamadi | event=%s tarih=%s hata=%s',
+                event_id, off_date, str(exc).strip()[:200],
+            )
+
+    if not written_days:
+        logger.warning('Google Off Day tasima sonrasi hicbir gun yazilamadi | event=%s', event_id)
+        return 'skip'
+
+    # Eski satirlar silinip yeni id'lerle yeniden yazildigi icin Google
+    # etkinligindeki damgayi (extendedProperties.time_off_id) guncel
+    # tutmazsak bir sonraki tasima/silme bu event'i taniyamaz (stale id).
+    _stamp_origin_on_off_day_event(calendar_id, event_id, new_first_id, staff_id)
+
     logger.info(
-        'Google Off Day tasima uygulandi #%s %s %s-%s (WhatsApp yok)',
-        time_off_id, times['off_date'],
-        times['start_time'] or 'tum-gun', times['end_time'] or '',
+        'Google Off Day tasima uygulandi event=%s %d gun (%s .. %s) (WhatsApp yok)',
+        event_id, len(written_days), written_days[0], written_days[-1],
     )
     return 'moved'
 
