@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 from urllib.parse import urlparse
 
@@ -383,10 +384,17 @@ def build_appointment_reminder_message(
     staff_name: str,
     hours_before: float = 1,
 ) -> str:
-    """Randevudan X saat önce hatırlatma."""
+    """Randevudan X saat önce hatırlatma.
+
+    Ban riski azaltma: birebir aynı sablon metni yüzlerce farklı numaraya
+    gitmesin diye 3 varyasyon arasindan rastgele secilir (bilgi alanlari
+    ayni kalir, sadece kalip/ifade degisir).
+    """
     b = _biz()
     when = '1 saat' if hours_before == 1 else f'{hours_before:g} saat'
-    return f"""🔔 *Randevu Hatırlatması*
+
+    variants = [
+        f"""🔔 *Randevu Hatırlatması*
 
 Sayın {customer_name},
 
@@ -399,14 +407,50 @@ Randevunuz {when} sonra başlayacak:
 
 Sizi bekliyoruz!
 
-📍 {b['name']}"""
+📍 {b['name']}""",
+        f"""⏰ *Randevu Hatırlatması*
+
+Merhaba {customer_name},
+
+{when} sonra randevunuz var, hatırlatmak istedik:
+
+📅 Tarih: {date_str}
+🕐 Saat: {time_str}
+🎨 Bölge: {body_area} · Boyut: {tattoo_size}
+👤 Sanatçınız: {staff_name}
+
+Stüdyoda görüşmek üzere!
+
+📍 {b['name']}""",
+        f"""🔔 *Randevu Hatırlatmanız*
+
+Merhabalar {customer_name},
+
+Randevunuza {when} kaldı:
+
+📅 {date_str}
+⏰ {time_str}
+🎨 Bölge: {body_area} · Boyut: {tattoo_size}
+👤 Sanatçı: {staff_name}
+
+Sizi stüdyomuzda ağırlamaktan mutluluk duyarız.
+
+📍 {b['name']}""",
+    ]
+    return random.choice(variants)
 
 
 def build_aftercare_reminder_message(customer_name: str, staff_name: str) -> str:
-    """Tamamlanan randevudan sonra bakım hatırlatması."""
+    """Tamamlanan randevudan sonra bakım hatırlatması.
+
+    Ban riski azaltma: 3 varyasyon arasindan rastgele secilir (bkz.
+    build_appointment_reminder_message).
+    """
     b = _biz()
     contact = f'\n📞 {b["phone"]}' if b['phone'] else ''
-    return f"""🧴 *Bakım Hatırlatması*
+
+    variants = [
+        f"""🧴 *Bakım Hatırlatması*
 
 Sayın {customer_name},
 
@@ -420,7 +464,39 @@ Sorunuz olursa yazabilirsiniz.
 
 👤 Sanatçı: {staff_name}{contact}
 
-{b['name']}"""
+{b['name']}""",
+        f"""🧴 *Bakım Önerileri*
+
+Merhaba {customer_name},
+
+Dövmeniz tamamlandı, geçmiş olsun! Bakım için birkaç not:
+
+• Nötr, kokusuz nemlendiriciyi ince tabaka halinde sürün.
+• Sanatçınızın önerdiği streç/örtü süresine dikkat edin.
+• Bol su tüketin; güneş/havuz/denizden bir süre uzak durun.
+
+Her türlü sorunuzda buradayız.
+
+👤 Sanatçı: {staff_name}{contact}
+
+{b['name']}""",
+        f"""🧴 *Bakım Hatırlatmanız*
+
+Selam {customer_name},
+
+Dövmeniz için tamamlandı bilgisi geldi. Unutmayın:
+
+• Kokusuz, nötr krem ile ince bir tabaka nemlendirme yapın.
+• Örtü/streç önerisine uyum sağlayın.
+• Su tüketimini artırın; güneş, deniz, havuzdan kaçının.
+
+Aklınıza takılan olursa yazmaktan çekinmeyin.
+
+👤 Sanatçı: {staff_name}{contact}
+
+{b['name']}""",
+    ]
+    return random.choice(variants)
 
 
 def build_appointment_confirmed_message(
