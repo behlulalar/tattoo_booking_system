@@ -1,6 +1,6 @@
 ## Sunucuya Çakışmasız Deployment (Ubuntu + Nginx + Systemd)
 
-Canlı kurulum: `109.122.6.59` — `https://tattoo.roof.behlulalar.online`  
+Canlı kurulum: `109.122.6.59` — `https://randevu-rooftattoogallery.com`  
 Kod: `/opt/roof_tattoo` · servis: `roof-tattoo-backend`
 
 Bu rehber, aynı sunucuda başka sistemler varken güvenli deployment içindir.
@@ -25,7 +25,7 @@ nginx -t
 Notlar:
 - Bu proje backend için **unix socket** kullanır (`/opt/roof_tattoo/run/gunicorn.sock`), yani port çakışması yaşamaz.
 - Nginx tarafında çakışma olmaması için **farklı server_name** kullanın.
-- Bu rehberde domain: `tattoo.roof.behlulalar.online`
+- Bu rehberde domain: `randevu-rooftattoogallery.com`
 
 ### 3) Sistem kullanıcısı ve dizinler
 
@@ -84,9 +84,9 @@ nano /opt/roof_tattoo/backend/.env
 Mutlaka doldur:
 - `DATABASE_*`
 - `JWT_SECRET`
-- `RANDEVU_URL=https://tattoo.roof.behlulalar.online`
-- `FRONTEND_ORIGIN=https://tattoo.roof.behlulalar.online`
-- `CORS_ALLOWED_ORIGINS=https://tattoo.roof.behlulalar.online`
+- `RANDEVU_URL=https://randevu-rooftattoogallery.com`
+- `FRONTEND_ORIGIN=https://randevu-rooftattoogallery.com`
+- `CORS_ALLOWED_ORIGINS=https://randevu-rooftattoogallery.com`
 - gerekiyorsa `WAPIO_*`
 
 Hızlı başlangıç için istersen:
@@ -134,7 +134,7 @@ nano /etc/nginx/sites-available/roof-tattoo.conf
 ```
 
 Değiştir:
-- `server_name tattoo.roof.behlulalar.online;`
+- `server_name randevu-rooftattoogallery.com;`
 
 Aktifleştir:
 
@@ -147,8 +147,8 @@ systemctl reload nginx
 ### 10) Son kontroller
 
 ```bash
-curl -I http://tattoo.roof.behlulalar.online/
-curl http://tattoo.roof.behlulalar.online/api/health
+curl -I http://randevu-rooftattoogallery.com/
+curl http://randevu-rooftattoogallery.com/api/health
 journalctl -u roof-tattoo-backend -n 100 --no-pager
 ```
 
@@ -179,7 +179,7 @@ psql -h <DB_HOST> -U <DB_USER> -d <DB_NAME> -f /opt/roof_tattoo/backend/migratio
 3. Gerekirse migration çalıştır
 4. `systemctl restart roof-tattoo-backend`
 5. `nginx -t && systemctl reload nginx`
-6. `curl -s http://tattoo.roof.behlulalar.online/api/health` → `"connected":true`
+6. `curl -s http://randevu-rooftattoogallery.com/api/health` → `"connected":true`
 
 ## Lokal geliştirmeye geri dönüş
 

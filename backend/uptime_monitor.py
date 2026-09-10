@@ -87,7 +87,7 @@ def check_whatsapp_uptime() -> tuple[str, dict]:
 
 
 def uptime_catalog() -> dict:
-    base = public_base_url() or 'https://tattoo.roof.behlulalar.online'
+    base = public_base_url() or 'https://randevu-rooftattoogallery.com'
     return {
         'probe': PROBE_UP,
         'status': 'healthy',

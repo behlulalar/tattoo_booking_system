@@ -6,7 +6,7 @@ SERVER="${DEPLOY_SERVER:-root@109.122.6.59}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-/opt/roof_tattoo}"
 EXPECTED_DIR="/opt/roof_tattoo"
 EXPECTED_TITLE="Roof Tattoo Gallery"
-DOMAIN="tattoo.roof.behlulalar.online"
+DOMAIN="randevu-rooftattoogallery.com"
 SERVICE="roof-tattoo-backend"
 # Proje kökü (bu script deploy/ altında)
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

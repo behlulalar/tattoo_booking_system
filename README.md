@@ -2,7 +2,7 @@
 
 Dövme stüdyoları için uçtan uca **talep → teklif → slot seçimi → randevu** platformu. Müşteri arayüzü, sanatçı/admin paneli, WhatsApp bildirimleri (Evolution API), sadakat puanları ve gelir raporları tek repoda.
 
-**Örnek canlı kurulum:** [Roof Tattoo Gallery](https://tattoo.roof.behlulalar.online)
+**Örnek canlı kurulum:** [Roof Tattoo Gallery](https://randevu-rooftattoogallery.com)
 
 ---
 
@@ -129,7 +129,7 @@ cd backend && ../venv/bin/python scripts/setup_uptimerobot.py
 
 Sunucuya güvenli kurulum: [`DEPLOY_SERVER_GUIDE.md`](DEPLOY_SERVER_GUIDE.md)
 
-Canlı: [tattoo.roof.behlulalar.online](https://tattoo.roof.behlulalar.online) (`109.122.6.59`), kod `/opt/roof_tattoo`.
+Canlı: [randevu-rooftattoogallery.com](https://randevu-rooftattoogallery.com) (`109.122.6.59`), kod `/opt/roof_tattoo`.
 
 Özet: kod `rsync` → `deploy/fix-roof-only-on-server.sh` → systemd (`roof-tattoo-backend`) + nginx.
 
