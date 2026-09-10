@@ -52,6 +52,7 @@ from google_calendar_sync import (
     kick_queue_worker as kick_gcal_queue,
     drain_queue as drain_gcal_queue,
     ensure_queue_table as ensure_gcal_queue_table,
+    ensure_time_off_multi_day_support,
     queue_stats as gcal_queue_stats,
     inbound_sync_health as gcal_inbound_sync_health,
     reset_calendar_service as reset_gcal_service,
@@ -849,6 +850,11 @@ try:
     ensure_gcal_queue_table()
 except Exception as e:
     logger.warning(f"Takvim senkron kuyruğu hazırlanamadı: {e}")
+
+try:
+    ensure_time_off_multi_day_support()
+except Exception as e:
+    logger.warning(f"Coklu gunluk Off Day destegi hazirlanamadi: {e}")
 
 # Uygulama başlatıldığında temizlik yap
 try:
@@ -4598,8 +4604,8 @@ def get_admin_dashboard():
         cursor = conn.cursor()
         today = datetime.now().strftime('%Y-%m-%d')
 
-        # Personel kendi istatistiklerini görür; teknik destek stüdyo genelini görür.
-        studio_wide = request.staff_role == 'tech_support'
+        # Personel kendi istatistiklerini görür; super admin ve teknik destek stüdyo genelini görür.
+        studio_wide = is_studio_admin()
         staff_filter = "" if studio_wide else "AND staff_id = %s"
         params = [today] if studio_wide else [today, request.staff_id]
         
