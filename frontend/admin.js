@@ -15,6 +15,14 @@ function getApiBase() {
 
 const API_BASE = getApiBase();
 
+// Yerel (tarayici) tarihini YYYY-MM-DD dondurur. new Date().toISOString()
+// KULLANMA — UTC'ye cevirir, gece yarisindan sonraki birkac saat (TR UTC+3)
+// bir onceki gunu gosterir. Tarih input'larini "bugun"e set ederken hep bunu kullan.
+function todayLocalDateStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function hasStudioAccess(role = getLoggedInStaff()?.role) {
   return role === 'super_admin' || role === 'tech_support';
 }
@@ -453,8 +461,7 @@ function openTimeOffFormModal() {
   return new Promise((resolve) => {
     _timeOffResolve = resolve;
     const overlay = $('time-off-form-overlay');
-    const _today = new Date();
-    $('tof-date').value = `${_today.getFullYear()}-${String(_today.getMonth() + 1).padStart(2, '0')}-${String(_today.getDate()).padStart(2, '0')}`;
+    $('tof-date').value = todayLocalDateStr();
     $('tof-fullday').checked = true;
     $('tof-time-range').style.display = 'none';
     $('tof-reason').value = '';
@@ -3949,7 +3956,7 @@ async function submitAdjustment() {
   const amount      = $('adjustment-amount')?.value?.trim();
   const adjType     = $('adjustment-type')?.value || 'income';
   const description = $('adjustment-description')?.value?.trim();
-  const adjDate     = $('adjustment-date')?.value || new Date().toISOString().split('T')[0];
+  const adjDate     = $('adjustment-date')?.value || todayLocalDateStr();
 
   if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
     showToast('Geçerli bir tutar girin', 'error'); return;
@@ -4189,7 +4196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Bugünün tarihini otomatik set et
     const dateInput = $('adjustment-date');
     if (dateInput && !dateInput.value) {
-      dateInput.value = new Date().toISOString().split('T')[0];
+      dateInput.value = todayLocalDateStr();
     }
     const overlay = $('adjustment-modal-overlay');
     if (overlay) overlay.style.display = 'flex';
