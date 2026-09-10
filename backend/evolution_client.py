@@ -346,6 +346,29 @@ def ensure_instance_ready_for_send(cfg: dict | None = None, max_wait_sec: float 
     return False
 
 
+def send_presence(
+    phone: str,
+    presence: str = "composing",
+    delay_ms: int = 1200,
+    cfg: dict | None = None,
+    *,
+    remote_jid: str | None = None,
+    remote_jid_alt: str | None = None,
+) -> bool:
+    """'Yazıyor...' sinyali — ban riski azaltma (gönderimin insan davranışına
+    benzemesi). Best-effort: başarısız olsa da asıl mesaj gönderimini
+    engellemez, send_text her zaman devam eder.
+    """
+    cfg = cfg or get_evolution_config()
+    name = _instance_name(cfg)
+    if not name or not _api_key(cfg):
+        return False
+    target = resolve_evolution_send_target(phone, remote_jid=remote_jid, remote_jid_alt=remote_jid_alt)
+    payload = {"number": target, "delay": delay_ms, "presence": presence}
+    status, _body, _raw = _request("POST", f"/chat/sendPresence/{name}", cfg=cfg, json_body=payload, timeout=6)
+    return 200 <= status < 300
+
+
 def send_text(
     phone: str,
     message: str,
@@ -369,6 +392,9 @@ def send_text(
 
     try:
         logger.info(f"Evolution sendText → {target} (deneme {retry_count + 1})")
+        # Ban riski azaltma: gercek mesajdan once kisa bir "yaziyor..."
+        # sinyali gonder. Basarisiz olsa da asil gonderimi engellemez.
+        send_presence(phone, cfg=cfg, remote_jid=remote_jid, remote_jid_alt=remote_jid_alt)
         status, body, raw = _request("POST", url_path, cfg=cfg, json_body=payload)
         if 200 <= status < 300 and _send_text_response_ok(body, raw):
             logger.info(f"Evolution sendText OK: {target}")
