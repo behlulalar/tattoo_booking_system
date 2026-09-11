@@ -193,40 +193,37 @@ def _connection_status_from_fetch(body, instance_name: str) -> str | None:
 
 def resolve_evolution_connection(cfg: dict | None = None, instance_name: str | None = None) -> dict:
     """
-    Kararlı bağlantı durumu — önce fetchInstances (connectionStatus),
-    gerekirse connectionState örneklemesi (open/connecting titremesini yumuşatır).
+    Bağlantı durumu — YALNIZCA canlı connectionState üzerinden belirlenir.
+
+    Daha once burada Evolution'in fetchInstances.connectionStatus alanina
+    (DB'ye yazilan, gecikmeli guncellenen bir kayit) once bakiliyordu.
+    Bu alan iki yonde de bayat cikabiliyor: hem "connecting" saatlerce
+    takili kalabiliyor (QR ile basariyla baglanildiktan sonra bile), hem de
+    tam tersi — "open" gosterip aslinda oturum cebinde kopmus olabiliyor,
+    bu da gercek bir kopmayi saatlerce "bagli" gibi gostererek
+    _whatsapp_session_ready_for_bulk_send circuit-breaker'ini yanlis
+    yonlendirdi (canlida "close" iken app "connected: true" raporladi).
+    Bu yuzden fetchInstances artik karar icin hic kullanilmiyor.
     """
     cfg = cfg or get_evolution_config()
     name = (instance_name or _instance_name(cfg) or "").strip()
     if not _api_key(cfg) or not name:
         return interpret_connection_status(0, None, "")
 
-    status, body, raw = fetch_instances(cfg)
-    fetch_state = _connection_status_from_fetch(body, name) if status == 200 else None
+    # Hizli yol: tek bir canli sorgu net "open" derse hemen guven.
+    status, body, raw = connection_state(name, cfg)
+    if status == 200 and isinstance(body, dict):
+        inst = body.get("instance") if isinstance(body.get("instance"), dict) else {}
+        if (inst.get("state") or inst.get("status") or "").lower() == "open":
+            info = interpret_connection_status(200, {"instance": {"state": "open"}}, raw)
+            info["source"] = "connectionState"
+            return info
 
-    if fetch_state == "open":
-        info = interpret_connection_status(
-            200, {"instance": {"state": "open", "connectionStatus": "open"}}, raw
-        )
-        info["source"] = "fetchInstances"
-        return info
-
-    # NOT: fetch_state == "connecting" icin ERKEN DONMUYORUZ. Evolution'in
-    # fetchInstances alanindaki connectionStatus, DB'ye yazilan ve gecikmeli
-    # guncellenen bir alan — QR ile basariyla yeniden baglanildiktan sonra
-    # bile saatlerce "connecting" gosterebiliyor, canli soket durumu aslinda
-    # "open" olsa dahi. Bu yuzden "connecting" gorunce asagidaki canli
-    # connectionState orneklemesine dusuyoruz; sadece fetchInstances'in kendisi
-    # "open" veya "close/closed" dediginde (belirsizlik yok) hemen guveniyoruz.
-    if fetch_state in ("close", "closed"):
-        info = interpret_connection_status(200, {"instance": {"state": "close"}}, raw)
-        info["source"] = "fetchInstances"
-        return info
-
+    # Net "open" gelmediyse (connecting/close/hata) kisa bir orneklemeyle
+    # titremeyi yumusat — anlik bir "connecting" goruntusu yuzunden
+    # sagliksiz raporlamayalim.
     seen_open = False
-    last_body = None
-    last_status = 0
-    last_raw = ""
+    last_status, last_body, last_raw = status, body, raw
     for _ in range(5):
         last_status, last_body, last_raw = connection_state(name, cfg)
         if last_status == 200 and isinstance(last_body, dict):
@@ -234,6 +231,7 @@ def resolve_evolution_connection(cfg: dict | None = None, instance_name: str | N
             st = (inst.get("state") or inst.get("status") or "").lower()
             if st == "open":
                 seen_open = True
+                break
             if st in ("close", "closed"):
                 seen_open = False
                 break
