@@ -3267,6 +3267,7 @@ def choose_offer_slot(token):
         customer_name = ' '.join(
             filter(None, [customer_first_name, customer_last_name])
         ).strip() or None
+        is_pre_consultation = (tattoo_style or '') in ('pre_consultation', 'Ön görüşme')
 
         if used_at is not None:
             cursor.close()
@@ -3314,6 +3315,7 @@ def choose_offer_slot(token):
             reference_number=reference_number,
             body_area=body_area,
             tattoo_size=tattoo_size,
+            pre_consultation=is_pre_consultation,
         )
         staff_msg = build_appointment_created_staff_message(
             customer_phone,
@@ -3326,6 +3328,7 @@ def choose_offer_slot(token):
             body_area=body_area,
             tattoo_size=tattoo_size,
             description=request_description,
+            pre_consultation=is_pre_consultation,
         )
 
         send_wapio_message(customer_phone, customer_msg)
