@@ -125,28 +125,6 @@ def save_wapio_config(api_key, session_id, domain_key='', device_name='', welcom
         json.dump(settings, f, indent=4)
     return True
 
-# Site ayarları JSON dosya yolu
-SITE_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'site_settings.json')
-
-def get_site_settings():
-    """Site ayarlarını JSON dosyasından oku"""
-    try:
-        if os.path.exists(SITE_SETTINGS_FILE):
-            with open(SITE_SETTINGS_FILE, 'r') as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {
-        'banner_image': '',
-        'logo_image': '',
-    }
-
-def save_site_settings(settings):
-    """Site ayarlarını JSON dosyasına kaydet"""
-    with open(SITE_SETTINGS_FILE, 'w') as f:
-        json.dump(settings, f, indent=4)
-    return True
-
 CODE_EXPIRATION_SECONDS = 120
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
