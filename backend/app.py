@@ -455,9 +455,28 @@ def get_db_connection(timeout=None):
 
 
 def release_db_connection(conn, close=False):
-    """Bağlantıyı havuza geri ver (hatalı bağlantıları close=True ile kapat)."""
+    """Bağlantıyı havuza geri ver (hatalı bağlantıları close=True ile kapat).
+
+    Havuzdaki baglantilar autocommit=False ile olusturuluyor; bazi
+    fonksiyonlar (ozellikle salt-okunur SELECT'ler) commit/rollback
+    cagirmadan bu fonksiyonu cagirirsa, baglanti "acik transaction"
+    durumunda havuza geri doner. Bir sonraki kullanici o baglantiyi
+    alip conn.autocommit degistirmeye calisirsa (orn. drain_whatsapp_queue,
+    send_appointment_reminders) psycopg2.ProgrammingError: "set_session
+    cannot be used inside a transaction" ile coker — hatanin kaynagi ile
+    ortaya ciktigi yer farkli oldugundan tespiti zor. Tek tek her cagri
+    yerini duzeltmek yerine, burada merkezi bir savunma: kapatilmiyorsa
+    ve baglanti acik bir transaction'daysa once rollback et.
+    """
     if db_pool and conn:
         try:
+            if not close and not getattr(conn, 'closed', 0):
+                try:
+                    if conn.get_transaction_status() != psycopg2.extensions.TRANSACTION_STATUS_IDLE:
+                        conn.rollback()
+                except Exception:
+                    close = True  # rollback da basarisizsa baglantiyi guvenli tarafta kapat
+
             if close or getattr(conn, 'closed', 0):
                 db_pool.putconn(conn, close=True)
             else:
@@ -1149,6 +1168,13 @@ def drain_whatsapp_queue():
                 conn.rollback()
                 logger.warning(f"whatsapp queue satir islenemedi (id={row_id}): {row_err}")
         cursor.close()
+        # rows bossa (kuyrukta bekleyen mesaj yoksa) for donguesu hic
+        # calismaz ve yukarideki SELECT ... FOR UPDATE'in actigi transaction
+        # hicbir zaman commit/rollback edilmez — asagidaki finally'de
+        # conn.autocommit = True calisirken "acik transaction" hatasi
+        # verir. Bu commit onu kapatir; satirlar zaten kendi commit'ini
+        # yaptiysa no-op'tur.
+        conn.commit()
     except Exception as e:
         if conn:
             conn.rollback()
