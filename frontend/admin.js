@@ -500,7 +500,7 @@ function showOfferUrlModal(offerUrl, whatsappSent) {
   $('offer-url-input').value = offerUrl || '';
   const statusEl = $('offer-url-whatsapp-status');
   if (whatsappSent) {
-    statusEl.textContent = '✅ WhatsApp mesajı müşteriye gönderildi (Evolution).';
+    statusEl.textContent = '✅ WhatsApp mesajı müşteriye gönderildi.';
     statusEl.style.background = 'rgba(111, 154, 111, 0.16)';
     statusEl.style.color = '#6F9A6F';
     statusEl.style.border = '1px solid rgba(111, 154, 111, 0.28)';
