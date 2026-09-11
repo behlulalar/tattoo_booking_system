@@ -2219,12 +2219,15 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
 
       const waBtn = renderWhatsAppBtnHtml(tr.customer?.phone);
 
+      const isPreConsult = ['pre_consultation', 'Ön görüşme'].includes(tr.tattoo_style || '') || tr.body_area === 'Ön görüşme';
       const specRows = [
         ['Sanatçı', tr.staff?.name || '—'],
-        ['Bölge', tr.body_area || 'Belirtilmedi'],
-        ['Boyut', tr.size || 'Belirtilmedi'],
       ];
-      if (tr.tattoo_style) specRows.push(['Stil', tr.tattoo_style]);
+      if (!isPreConsult) {
+        specRows.push(['Bölge', tr.body_area || 'Belirtilmedi']);
+        specRows.push(['Boyut', tr.size || 'Belirtilmedi']);
+      }
+      if (tr.tattoo_style && !isPreConsult) specRows.push(['Stil', tr.tattoo_style]);
       if (tr.description) specRows.push(['Not', tr.description]);
       if (tr.loyalty_discount) {
         specRows.push([
@@ -2634,7 +2637,7 @@ function renderAppointmentsGrouped(containerId, items) {
               <span class="apt-detail-label">Süre:</span>
               <span class="apt-detail-value">${a.duration_minutes || 30} dk</span>
             </div>
-            ${tr.body_area ? `<div class="apt-detail-row">
+            ${tr.body_area && tr.body_area !== 'Ön görüşme' ? `<div class="apt-detail-row">
               <span class="apt-detail-icon"><i class="fas fa-map-marker-alt"></i></span>
               <span class="apt-detail-label">Bölge:</span>
               <span class="apt-detail-value">${escapeHtml(tr.body_area)}</span>
@@ -2719,7 +2722,7 @@ function renderAppointments(containerId, items) {
               <span class="apt-detail-label">Süre:</span>
               <span class="apt-detail-value">${a.duration_minutes || 30} dk</span>
             </div>
-            ${tr.body_area ? `<div class="apt-detail-row">
+            ${tr.body_area && tr.body_area !== 'Ön görüşme' ? `<div class="apt-detail-row">
               <span class="apt-detail-icon"><i class="fas fa-map-marker-alt"></i></span>
               <span class="apt-detail-label">Bölge:</span>
               <span class="apt-detail-value">${escapeHtml(tr.body_area)}</span>
@@ -3464,7 +3467,7 @@ function renderPastAppointments(containerId, items) {
             <span class="apt-detail-label">Süre:</span>
             <span class="apt-detail-value">${a.duration_minutes || 30} dk</span>
           </div>
-          ${tr.body_area ? `<div class="apt-detail-row">
+          ${tr.body_area && tr.body_area !== 'Ön görüşme' ? `<div class="apt-detail-row">
             <span class="apt-detail-icon"><i class="fas fa-map-marker-alt"></i></span>
             <span class="apt-detail-label">Bölge:</span>
             <span class="apt-detail-value">${escapeHtml(tr.body_area)}</span>

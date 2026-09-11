@@ -59,13 +59,18 @@ def _tattoo_detail_lines(
     size: str | None = None,
     description: str | None = None,
     reference_number: str | None = None,
+    pre_consultation: bool = False,
 ) -> list[str]:
     lines: list[str] = []
     if reference_number:
         lines.append(f'🔖 Referans: *{reference_number}*')
-    if body_area:
+    # On gorusme talebinde body_area/size alanlari gercek bir govde
+    # bolgesi/boyut degil, sadece "Ön görüşme" sabit metnini tasiyor —
+    # "Bölge: Ön görüşme" seklinde gostermek govde bolgesiymis gibi
+    # yaniltici oluyordu. Baslik zaten bunu belirttigi icin atlaniyor.
+    if body_area and not pre_consultation:
         lines.append(f'🖋️ Bölge: {body_area}')
-    if size:
+    if size and not pre_consultation:
         lines.append(f'📏 Boyut: {size}')
     if description and str(description).strip():
         lines.append(f'📝 Not: {_truncate_text(description)}')
@@ -291,11 +296,13 @@ def build_appointment_created_customer_message(
     reference_number: str | None = None,
     body_area: str | None = None,
     tattoo_size: str | None = None,
+    pre_consultation: bool = False,
 ) -> str:
     """Müşteriye: randevu oluşturuldu."""
     b = _biz()
 
-    lines = ['✅ *Randevunuz Oluşturuldu!*', '']
+    title = 'Ön Görüşme Randevunuz Oluşturuldu!' if pre_consultation else 'Randevunuz Oluşturuldu!'
+    lines = [f'✅ *{title}*', '']
     if customer_name and str(customer_name).strip():
         lines.append(f'Sayın {customer_name.strip()},')
         lines.append('')
@@ -304,6 +311,7 @@ def build_appointment_created_customer_message(
         reference_number=reference_number,
         body_area=body_area,
         size=tattoo_size,
+        pre_consultation=pre_consultation,
     )
     if tattoo_lines:
         lines.extend(tattoo_lines)
@@ -343,10 +351,16 @@ def build_appointment_created_staff_message(
     body_area: str | None = None,
     tattoo_size: str | None = None,
     description: str | None = None,
+    pre_consultation: bool = False,
 ) -> str:
     """Sanatçıya: yeni randevu bildirimi."""
     b = _biz()
-    title = 'Manuel Randevu' if manual else 'Yeni Dövme Randevusu'
+    if manual:
+        title = 'Manuel Randevu'
+    elif pre_consultation:
+        title = 'Yeni Ön Görüşme Randevusu'
+    else:
+        title = 'Yeni Dövme Randevusu'
 
     lines = [
         f'🔔 *{title}!*',
@@ -359,6 +373,7 @@ def build_appointment_created_staff_message(
             body_area=body_area,
             size=tattoo_size,
             description=description,
+            pre_consultation=pre_consultation,
         )
     )
 
