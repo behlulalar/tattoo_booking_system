@@ -2096,6 +2096,11 @@ function phoneToWhatsAppIntl(phone) {
   if (digits.startsWith('90') && digits.length === 12 && digits[2] === '5') return digits;
   if (digits.startsWith('0') && digits.length === 11 && digits[1] === '5') return `90${digits.slice(1)}`;
   if (digits.length === 10 && digits.startsWith('5')) return `90${digits}`;
+  // Yurt disi numara: ulke kodu dahil tam basamaklarla saklaniyor
+  // (bkz. backend parse_mobile_number) — wa.me zaten "ulke kodu+numara"
+  // rakam dizisi bekliyor, ek bir donusum gerekmiyor. Makul bir uzunluk
+  // araligiyla (E.164 azami 15 hane) kaba bir gecerlilik kontrolu yeterli.
+  if (digits.length >= 8 && digits.length <= 15) return digits;
   return null;
 }
 
