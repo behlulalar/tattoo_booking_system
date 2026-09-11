@@ -720,8 +720,15 @@ document.getElementById('phone-intl-toggle')?.addEventListener('click', () => {
   phoneInput?.focus();
 });
 
+let sendCodeInFlight = false;
+
 phoneForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
+  // Cift dokunma / yavas ag yuzunden ikinci kez tiklama -> iki ayri
+  // WhatsApp kodu gonderimi oluyordu (mobilde gozlemlendi). Istek
+  // devam ederken yeni gonderimi engelle.
+  if (sendCodeInFlight) return;
+
   // Uluslararasi numarada backend'in sakladigi formatla (ulke kodu dahil,
   // + ve bosluksuz rakamlar) birebir eslesmesi lazim — sonraki dogrulama
   // adiminda (verify-code) ayni "phone" degeri geri gonderiliyor.
@@ -742,20 +749,27 @@ phoneForm?.addEventListener('submit', async (e) => {
 
   showInlineError(document.getElementById('phone-form-error'), '');
 
-  const { ok, data } = await api('/api/send-code', {
-    method: 'POST',
-    body: JSON.stringify({ phone: value }),
-  });
+  sendCodeInFlight = true;
+  if (phoneCheckBtn) phoneCheckBtn.disabled = true;
+  try {
+    const { ok, data } = await api('/api/send-code', {
+      method: 'POST',
+      body: JSON.stringify({ phone: value }),
+    });
 
-  if (!ok || !data.success) {
-    showInlineError(document.getElementById('phone-form-error'), data.message || 'Kod gönderilemedi');
-    return;
+    if (!ok || !data.success) {
+      showInlineError(document.getElementById('phone-form-error'), data.message || 'Kod gönderilemedi');
+      return;
+    }
+
+    savedPhone = value;
+    verifyOverlay.style.display = 'flex';
+    startCountdown(120);
+    verifyOtpApi.focusFirst();
+  } finally {
+    sendCodeInFlight = false;
+    if (phoneCheckBtn) phoneCheckBtn.disabled = false;
   }
-
-  savedPhone = value;
-  verifyOverlay.style.display = 'flex';
-  startCountdown(120);
-  verifyOtpApi.focusFirst();
 });
 
 verifyForm?.addEventListener('submit', async (e) => {
@@ -846,17 +860,25 @@ document.getElementById('verify-cancel-btn')?.addEventListener('click', () => {
 });
 
 resendBtn?.addEventListener('click', async () => {
-  const { ok, data } = await api('/api/send-code', {
-    method: 'POST',
-    body: JSON.stringify({ phone: savedPhone }),
-  });
-  if (!ok || !data.success) {
-    showVerifyError(data.message || 'Kod gönderilemedi');
-    return;
+  if (sendCodeInFlight) return;
+  sendCodeInFlight = true;
+  resendBtn.disabled = true;
+  try {
+    const { ok, data } = await api('/api/send-code', {
+      method: 'POST',
+      body: JSON.stringify({ phone: savedPhone }),
+    });
+    if (!ok || !data.success) {
+      showVerifyError(data.message || 'Kod gönderilemedi');
+      return;
+    }
+    verifyOtpApi.focusFirst();
+    startCountdown(120);
+    showSuccess('Kod Gönderildi', 'Yeni doğrulama kodu WhatsApp üzerinden gönderildi.');
+  } finally {
+    sendCodeInFlight = false;
+    resendBtn.disabled = false;
   }
-  verifyOtpApi.focusFirst();
-  startCountdown(120);
-  showSuccess('Kod Gönderildi', 'Yeni doğrulama kodu WhatsApp üzerinden gönderildi.');
 });
 
 document.getElementById('verify-paste-btn')?.addEventListener('click', async () => {
