@@ -4,7 +4,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import requests
 from dotenv import load_dotenv
-from config import DATABASE_CONFIG, WAPIO_CONFIG, CODE_EXPIRATION_SECONDS, SITE_CONFIG, get_site_settings, save_site_settings, get_evolution_config, save_evolution_config, get_google_calendar_config, save_google_calendar_config
+from config import DATABASE_CONFIG, WAPIO_CONFIG, CODE_EXPIRATION_SECONDS, SITE_CONFIG, get_evolution_config, save_evolution_config, get_google_calendar_config, save_google_calendar_config
 # Wapio (legacy — dosyalar repoda; runtime devre dışı)
 # from config import get_wapio_config, save_wapio_config
 # from wapio_compat import run_wapio_compat_check
@@ -6366,54 +6366,6 @@ def update_admin_message_settings():
     except Exception as e:
         logger.error(f"update_admin_message_settings hatası: {e}")
         return jsonify({'success': False, 'message': 'Mesaj kaydedilemedi'}), 500
-
-
-@app.route('/api/admin/site-settings', methods=['GET'])
-@token_required
-def get_site_settings_endpoint():
-    """Site ayarlarını (logo, banner vb.) al"""
-    try:
-        settings = get_site_settings()
-        return jsonify({'success': True, 'settings': settings})
-    except Exception as e:
-        logger.error(f"get_site_settings_endpoint hatası: {e}")
-        return jsonify({'success': False, 'message': 'Site ayarları alınamadı'}), 500
-
-
-@app.route('/api/admin/site-settings', methods=['PUT'])
-@token_required
-def update_site_settings_endpoint():
-    """Site ayarlarını güncelle - SADECE SUPER_ADMIN"""
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-    
-    data = request.get_json()
-    try:
-        settings = get_site_settings()
-        
-        # Sadece izin verilen alanları güncelle
-        if 'banner_image' in data:
-            settings['banner_image'] = data['banner_image']
-        if 'logo_image' in data:
-            settings['logo_image'] = data['logo_image']
-            
-        save_site_settings(settings)
-        logger.info(f"Site ayarları güncellendi by staff_id={request.staff_id}")
-        return jsonify({'success': True, 'message': 'Site ayarları kaydedildi'})
-    except Exception as e:
-        logger.error(f"update_site_settings_endpoint hatası: {e}")
-        return jsonify({'success': False, 'message': 'Ayarlar kaydedilemedi'}), 500
-
-
-@app.route('/api/site-settings', methods=['GET'])
-def get_public_site_settings():
-    """Giriş gerektirmeyen herkese açık site ayarlarını al"""
-    try:
-        settings = get_site_settings()
-        return jsonify({'success': True, 'settings': settings})
-    except Exception as e:
-        logger.error(f"get_public_site_settings hatası: {e}")
-        return jsonify({'success': False, 'message': 'Ayarlar alınamadı'}), 500
 
 
 def _google_calendar_settings_payload():
