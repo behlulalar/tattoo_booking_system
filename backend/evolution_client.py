@@ -211,16 +211,13 @@ def resolve_evolution_connection(cfg: dict | None = None, instance_name: str | N
         info["source"] = "fetchInstances"
         return info
 
-    if fetch_state == "connecting":
-        return {
-            "state": "pending",
-            "connected": False,
-            "label": "Bağlanıyor",
-            "detail": "Oturum yenileniyor — birkaç saniye bekleyin",
-            "raw_state": "connecting",
-            "source": "fetchInstances",
-        }
-
+    # NOT: fetch_state == "connecting" icin ERKEN DONMUYORUZ. Evolution'in
+    # fetchInstances alanindaki connectionStatus, DB'ye yazilan ve gecikmeli
+    # guncellenen bir alan — QR ile basariyla yeniden baglanildiktan sonra
+    # bile saatlerce "connecting" gosterebiliyor, canli soket durumu aslinda
+    # "open" olsa dahi. Bu yuzden "connecting" gorunce asagidaki canli
+    # connectionState orneklemesine dusuyoruz; sadece fetchInstances'in kendisi
+    # "open" veya "close/closed" dediginde (belirsizlik yok) hemen guveniyoruz.
     if fetch_state in ("close", "closed"):
         info = interpret_connection_status(200, {"instance": {"state": "close"}}, raw)
         info["source"] = "fetchInstances"
