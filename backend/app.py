@@ -2547,9 +2547,23 @@ def ensure_artist_is_active_column():
         release_db_connection(conn)
 
 
+# profile_photo alanlari base64 metin olarak saklaniyor (sanatci basina
+# ~45KB) — bu, herkese acik ve sik cagrilan (her anasayfa acilisinda) bir
+# endpoint oldugundan, yuk testinde diger endpoint'lere gore belirgin
+# yavaslik olarak cikti. Sanatci listesi/fotograflari çok nadir degistigi
+# icin kisa sureli bir bellek onbellegi yeterli — DB sorgusunu ve ~135KB+
+# payload'un tekrar tekrar olusturulmasini onler.
+_artists_cache = {'data': None, 'ts': 0}
+_ARTISTS_CACHE_TTL_SECONDS = 60
+
+
 @app.route('/api/barbers', methods=['GET'])  # backward compatible
 @app.route('/api/artists', methods=['GET'])
 def get_artists():
+    now = time.time()
+    if _artists_cache['data'] is not None and (now - _artists_cache['ts']) < _ARTISTS_CACHE_TTL_SECONDS:
+        return jsonify(_artists_cache['data'])
+
     conn = None
     try:
         conn = get_db_connection()
@@ -2577,6 +2591,8 @@ def get_artists():
             }
             artist_list.append(artist)
 
+        _artists_cache['data'] = artist_list
+        _artists_cache['ts'] = now
         return jsonify(artist_list)
     except Exception as e:
         logger.error(f"get_artists hatası: {e}")
