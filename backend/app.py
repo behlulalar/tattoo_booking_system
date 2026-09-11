@@ -3674,7 +3674,7 @@ def admin_offer_slots(tattoo_request_id):
         loyalty_discount = get_request_loyalty_discount(cursor, tattoo_request_id)
 
         cursor.execute("""
-            SELECT tr.customer_id, tr.staff_id, tr.reference_number, c.phone, s.name
+            SELECT tr.customer_id, tr.staff_id, tr.reference_number, c.phone, s.name, tr.tattoo_style
             FROM tattoo_requests tr
             JOIN customers c ON tr.customer_id = c.id
             JOIN artists s ON tr.staff_id = s.id
@@ -3685,7 +3685,8 @@ def admin_offer_slots(tattoo_request_id):
             cursor.close()
             return jsonify({'success': False, 'message': 'Talep bulunamadı'}), 404
 
-        customer_id, staff_id, request_ref, customer_phone, staff_name = row
+        customer_id, staff_id, request_ref, customer_phone, staff_name, tattoo_style = row
+        is_pre_consultation = (tattoo_style or '') in ('pre_consultation', 'Ön görüşme')
         if not is_studio_admin() and int(staff_id) != int(request.staff_id):
             cursor.close()
             return jsonify({'success': False, 'message': 'Bu talep için yetkiniz yok'}), 403
@@ -3764,8 +3765,9 @@ def admin_offer_slots(tattoo_request_id):
             price_line = ""
 
         ref_line = f"📋 Referans: *{request_ref}*\n\n" if request_ref else ""
+        title = "Ön Görüşme Randevusu Saat Seçimi" if is_pre_consultation else "Dövme Randevu Saat Seçimi"
         msg = (
-            f"🕒 *Dövme Randevu Saat Seçimi*\n\n"
+            f"🕒 *{title}*\n\n"
             f"{ref_line}"
             f"Dövmeniz için süre: *{duration_minutes} dakika*.\n\n"
             f"{price_line}"
