@@ -20,6 +20,9 @@ Flask-Limiter>=3.5.0
 # Input Validation
 marshmallow>=3.20.0
 
+# Uluslararasi telefon numarasi ayristirma/dogrulama (yurt disi musteriler)
+phonenumbers>=8.13.0
+
 # Google Calendar API (Phase 1 sync)
 google-api-python-client>=2.100.0
 google-auth>=2.23.0

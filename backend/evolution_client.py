@@ -62,9 +62,12 @@ def normalize_phone_for_send(phone: str) -> str:
     if "@" in phone:
         return phone
     digits = re.sub(r"\D", "", phone)
-    if digits.startswith("0") and len(digits) == 11:
+    if digits.startswith("0") and len(digits) == 11 and digits[1] == "5":
         digits = "90" + digits[1:]
-    elif len(digits) == 10 and not digits.startswith("90"):
+    elif len(digits) == 10 and not digits.startswith("90") and digits.startswith("5"):
+        # Turk cep numarasi (5xxxxxxxxx) -> ulke kodu ekle. Yurt disi
+        # numaralar zaten ulke kodu dahil (>10 hane) saklandigindan bu
+        # dala girmez; korusuzce "90" eklemek onlari bozardi.
         digits = f"90{digits}"
     return digits
 

@@ -11,7 +11,7 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <link rel="icon" type="image/png" href="img/logo.png" />
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
-    <link rel="stylesheet" href="style.css?v=20260828195000" />
+    <link rel="stylesheet" href="style.css?v=20260912011130" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260826183000" />
     <!-- Google Font -->
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -101,15 +101,16 @@
                     <form id="phone-form" class="auth-modal-form">
                         <label for="phone">Telefon Numarası:</label>
                         <div class="phone-input-wrapper auth-phone-wrap">
-                            <span class="phone-prefix">+90</span>
+                            <span class="phone-prefix" id="phone-prefix">+90</span>
                             <input type="tel" id="phone" name="phone" placeholder="5XX XXX XX XX" maxlength="10" />
                             <button type="button" class="phone-check-btn" id="phone-check-btn">
                                 ▶
                             </button>
                         </div>
-                        <p class="help-text">
+                        <p class="help-text" id="phone-help-text">
                             5 ile başlayan 10 haneli cep numarası girin (ör. 530 123 45 67). Başında 0 olmasın.
                         </p>
+                        <button type="button" id="phone-intl-toggle" class="phone-intl-toggle">Yurt dışı numaram var</button>
                         <div id="phone-form-error" class="customer-error-message" style="display: none; margin-top: 12px;"></div>
 
                         <button type="submit" class="primary-btn">
@@ -441,7 +442,7 @@
     </footer>
 
     <script src="otp-autofill.js?v=20260826183000"></script>
-    <script src="app.js?v=20260828195500"></script>
+    <script src="app.js?v=20260912011130"></script>
 </body>
 
 </html>

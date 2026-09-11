@@ -406,6 +406,7 @@ function bindTrMobileInput(el) {
   el.setAttribute('inputmode', 'numeric');
   el.setAttribute('maxlength', '10');
   el.addEventListener('input', () => {
+    if (isIntlPhone) return; // serbest uluslararasi giris, filtrelenmez
     const parsed = parseTrMobile(el.value);
     if (parsed) {
       el.value = parsed;
@@ -416,6 +417,40 @@ function bindTrMobileInput(el) {
     if (d.startsWith('0')) d = d.replace(/^0+/, '');
     el.value = d.slice(0, 10);
   });
+}
+
+// Yurt disi numara girisi: gercek dogrulama/normallestirme backend'de
+// (phonenumbers kutuphanesi) yapiliyor — burada sadece kaba bir sekil
+// kontrolu yeterli ("+" ile baslayan, makul uzunlukta rakam dizisi).
+function isPlausibleIntlPhone(value) {
+  const v = String(value || '').trim();
+  return /^\+[1-9]\d{7,14}$/.test(v.replace(/[\s()-]/g, ''));
+}
+
+let isIntlPhone = false;
+
+function setIntlPhoneMode(on) {
+  isIntlPhone = on;
+  const prefixEl = document.getElementById('phone-prefix');
+  const helpEl = document.getElementById('phone-help-text');
+  const toggleEl = document.getElementById('phone-intl-toggle');
+  if (!phoneInput) return;
+
+  if (on) {
+    if (prefixEl) prefixEl.style.display = 'none';
+    phoneInput.value = '';
+    phoneInput.setAttribute('maxlength', '20');
+    phoneInput.setAttribute('placeholder', '+44 7911 123456');
+    if (helpEl) helpEl.textContent = 'Ülke koduyla birlikte girin (ör. +44 7911 123456).';
+    if (toggleEl) toggleEl.textContent = 'Türkiye numarası kullan';
+  } else {
+    if (prefixEl) prefixEl.style.display = '';
+    phoneInput.value = '';
+    phoneInput.setAttribute('maxlength', '10');
+    phoneInput.setAttribute('placeholder', '5XX XXX XX XX');
+    if (helpEl) helpEl.textContent = '5 ile başlayan 10 haneli cep numarası girin (ör. 530 123 45 67). Başında 0 olmasın.';
+    if (toggleEl) toggleEl.textContent = 'Yurt dışı numaram var';
+  }
 }
 
 function showInlineError(el, message) {
@@ -679,18 +714,31 @@ phoneCheckBtn?.addEventListener('click', () => {
   phoneForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
 });
 
+document.getElementById('phone-intl-toggle')?.addEventListener('click', () => {
+  setIntlPhoneMode(!isIntlPhone);
+  showInlineError(document.getElementById('phone-form-error'), '');
+  phoneInput?.focus();
+});
+
 phoneForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const value = parseTrMobile(phoneInput.value);
+  // Uluslararasi numarada backend'in sakladigi formatla (ulke kodu dahil,
+  // + ve bosluksuz rakamlar) birebir eslesmesi lazim — sonraki dogrulama
+  // adiminda (verify-code) ayni "phone" degeri geri gonderiliyor.
+  const value = isIntlPhone
+    ? (isPlausibleIntlPhone(phoneInput.value) ? phoneInput.value.replace(/\D/g, '') : '')
+    : parseTrMobile(phoneInput.value);
 
   if (!value) {
     showInlineError(
       document.getElementById('phone-form-error'),
-      'Geçerli bir cep numarası girin (5XX XXX XX XX). Başında 0 olmasın.',
+      isIntlPhone
+        ? 'Geçerli bir numara girin, ülke koduyla birlikte (ör. +44 7911 123456).'
+        : 'Geçerli bir cep numarası girin (5XX XXX XX XX). Başında 0 olmasın.',
     );
     return;
   }
-  if (phoneInput) phoneInput.value = value;
+  if (phoneInput && !isIntlPhone) phoneInput.value = value;
 
   showInlineError(document.getElementById('phone-form-error'), '');
 
@@ -707,7 +755,6 @@ phoneForm?.addEventListener('submit', async (e) => {
   savedPhone = value;
   verifyOverlay.style.display = 'flex';
   startCountdown(120);
-  verifyOtpApi.applyCode('123456');
   verifyOtpApi.focusFirst();
 });
 
@@ -807,7 +854,6 @@ resendBtn?.addEventListener('click', async () => {
     showVerifyError(data.message || 'Kod gönderilemedi');
     return;
   }
-  verifyOtpApi.applyCode('123456');
   verifyOtpApi.focusFirst();
   startCountdown(120);
   showSuccess('Kod Gönderildi', 'Yeni doğrulama kodu WhatsApp üzerinden gönderildi.');
