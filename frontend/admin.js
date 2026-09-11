@@ -2252,7 +2252,10 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
                 ${refBadge}
                 <span class="tr-created"><i class="fas fa-calendar-alt"></i> ${escapeHtml(createdAt)}</span>
               </div>
-              <span class="status-badge pending">${escapeHtml(statusLabel)}</span>
+              <div class="tr-topbar-right">
+                ${isPreConsult ? '<span class="status-badge preconsult"><i class="fas fa-comments"></i> Ön Görüşme</span>' : ''}
+                <span class="status-badge pending">${escapeHtml(statusLabel)}</span>
+              </div>
             </div>
 
             <div class="tr-identity">
@@ -2618,6 +2621,7 @@ function renderAppointmentsGrouped(containerId, items) {
             </div>
             <div class="apt-card-badges">
               ${appointmentSourceBadgeHtml(a.source)}
+              ${tr.body_area === 'Ön görüşme' ? '<span class="status-badge preconsult"><i class="fas fa-comments"></i> Ön Görüşme</span>' : ''}
               <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
             </div>
           </div>
@@ -2703,6 +2707,7 @@ function renderAppointments(containerId, items) {
             </div>
             <div class="apt-card-badges">
               ${appointmentSourceBadgeHtml(a.source)}
+              ${tr.body_area === 'Ön görüşme' ? '<span class="status-badge preconsult"><i class="fas fa-comments"></i> Ön Görüşme</span>' : ''}
               <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
             </div>
           </div>
@@ -3448,6 +3453,7 @@ function renderPastAppointments(containerId, items) {
           </div>
           <div class="apt-card-badges">
             ${appointmentSourceBadgeHtml(a.source)}
+            ${tr.body_area === 'Ön görüşme' ? '<span class="status-badge preconsult"><i class="fas fa-comments"></i> Ön Görüşme</span>' : ''}
             <span class="status-badge completed">${escapeHtml(statusText('completed'))}</span>
           </div>
         </div>

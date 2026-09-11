@@ -1623,6 +1623,14 @@ strong, b, th {
     min-width: 0;
 }
 
+.tattoo-request-card .tr-topbar-right {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 .section-header-actions {
     display: flex;
     align-items: center;
@@ -1959,6 +1967,11 @@ strong, b, th {
 .status-badge.no_show {
     background: rgba(102, 102, 102, 0.15);
     color: var(--text-muted);
+}
+
+.status-badge.preconsult {
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
 }
 
 .apt-card-badges {
