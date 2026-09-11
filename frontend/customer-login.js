@@ -121,7 +121,6 @@ function showErr(el, msg) {
     if (sessionStep) sessionStep.hidden = true;
     loginStep.hidden = true;
     verifyStep.hidden = false;
-    customerOtpApi.applyCode('123456');
     customerOtpApi.focusFirst();
     startTimer(120);
     setTimeout(() => scrollActionIntoView(verifyForm), 320);
@@ -237,7 +236,6 @@ function showErr(el, msg) {
       showErr(verifyError, data.message || 'Kod gönderilemedi');
       return;
     }
-    customerOtpApi.applyCode('123456');
     customerOtpApi.focusFirst();
     startTimer(120);
   });

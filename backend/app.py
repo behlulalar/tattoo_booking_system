@@ -131,6 +131,7 @@ import bcrypt
 import jwt
 import logging
 import re
+import phonenumbers
 import atexit
 from functools import wraps
 from datetime import datetime, timedelta, time as dt_time
@@ -296,6 +297,51 @@ def parse_tr_mobile(phone):
         digits = digits.lstrip('0')
     if _TR_MOBILE_RE.fullmatch(digits):
         return digits
+    return None
+
+
+MOBILE_ERROR = (
+    'Geçerli bir telefon numarası girin — Türkiye için 5 ile başlayan 10 hane '
+    '(ör. 5301234567), yurt dışı için ülke koduyla birlikte (ör. +44 7911 123456).'
+)
+
+
+def parse_mobile_number(phone):
+    """TR (varsayilan bolge) veya '+' ile baslayan herhangi bir ulke icin
+    telefon numarasini ayristirip DB'ye yazilacak formata cevirir.
+
+    - Turk numaralari: geriye donuk uyumluluk icin CIPLAK 10 hane
+      (5XXXXXXXXX) — mevcut musteri kayitlari, arama/eslestirme mantigi
+      bu formata gore calisiyor.
+    - Yurt disi numaralar: ulke kodu dahil TAM basamaklar (ör. Ingiltere
+      +44 7911 123456 -> '447911123456'), hic kirpma yapilmadan.
+
+    Bu fonksiyon hem HAM kullanici girdisiyle (orn. "+44 7911 123456")
+    hem de daha once bu fonksiyondan gecmis, zaten normallestirilmis bir
+    degerle (orn. "447911123456", "+" olmadan) tekrar cagrilabilir —
+    booking akisinin sonraki adimlari (register-customer, tattoo-requests
+    vb.) ayni "phone" degerini tekrar backend'e gonderiyor. Bu yuzden
+    "+" ile baslamayan ama TR olarak gecerli olmayan bir girdi icin de
+    uluslararasi yorum denenir.
+
+    Gecersiz/ayristirilamayan girdi icin None doner.
+    """
+    raw = str(phone or '').strip()
+    if not raw or '@' in raw:
+        return None
+
+    candidates = [(raw, None)] if raw.startswith('+') else [(raw, 'TR'), (f'+{raw}', None)]
+    for value, region in candidates:
+        try:
+            parsed = phonenumbers.parse(value, region)
+        except phonenumbers.NumberParseException:
+            continue
+        if not phonenumbers.is_valid_number(parsed):
+            continue
+        e164_digits = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164).lstrip('+')
+        if parsed.country_code == 90 and e164_digits.startswith('905'):
+            return e164_digits[2:]  # Turk numarasi: ciplak 10 hane
+        return e164_digits
     return None
 
 
@@ -1642,25 +1688,35 @@ def normalize_phone_for_storage(phone):
     if phone.startswith('0'):
         phone = phone[1:]
     
-    # 90 ile başlamıyorsa ve 10 haneli ise ekle
-    if not phone.startswith('90') and len(phone) == 10:
+    # Turk cep numarasi (5 ile baslayan 10 hane) ve 90 ile baslamiyorsa ekle.
+    # Herhangi bir 10 haneli diziye korusuzce "90" eklemek yurt disi
+    # numaralarini (bazi ulkelerde de 10 hane olabiliyor) bozabilirdi.
+    if not phone.startswith('90') and len(phone) == 10 and phone.startswith('5'):
         phone = f"90{phone}"
-    
+
     # Sonuç: 90 ile başlayan 12 haneli numara veya WhatsApp ID formatı
     return phone
 
 
 def customer_phone_for_db(phone):
-    """customers.phone — 10 hane (5XXXXXXXXX), DB VARCHAR(10) ile uyumlu."""
+    """customers.phone icin normalize eder.
+
+    Turk numaralari geriye donuk uyumluluk icin CIPLAK 10 hane (5XXXXXXXXX)
+    olarak saklanir. Yurt disi numaralar ulke kodu dahil TAM basamaklariyla,
+    HIC KIRPILMADAN saklanir — eskiden burada "10 haneden uzunsa son 10
+    haneyi al" mantigi vardi, bu yurt disi numaralari sessizce baska (ve
+    yanlis) bir Turk numarasina donusturuyordu.
+    """
     if '@' in str(phone):
         return str(phone).strip()
     digits = ''.join(c for c in str(phone) if c.isdigit())
-    if digits.startswith('90') and len(digits) >= 12:
-        digits = digits[2:]
-    elif digits.startswith('0') and len(digits) == 11:
-        digits = digits[1:]
-    if len(digits) > 10:
-        digits = digits[-10:]
+    if digits.startswith('90') and len(digits) == 12 and digits[2] == '5':
+        return digits[2:]  # Turk numarasi (+90 5xx...) -> ciplak 10 hane
+    if digits.startswith('0') and len(digits) == 11 and digits[1] == '5':
+        return digits[1:]  # 0 ile yazilmis Turk numarasi -> ciplak 10 hane
+    if len(digits) == 10 and digits.startswith('5'):
+        return digits  # zaten ciplak Turk numarasi
+    # Taninmayan/yurt disi numara: oldugu gibi, kirpmadan dondur.
     return digits
 
 
@@ -2300,9 +2356,9 @@ def send_code():
         return jsonify({'success': False, 'message': ERROR_MESSAGES['validation']}), 400
 
     phone = data['phone']
-    parsed = parse_tr_mobile(phone)
+    parsed = parse_mobile_number(phone)
     if not parsed:
-        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+        return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
     phone = parsed
 
     try:
@@ -2417,14 +2473,11 @@ def register_customer():
     # Tattoo flow: phone verification only, name/surname optional
     if not phone:
         return jsonify({'success': False, 'message': 'Telefon numarası gereklidir'}), 400
-    parsed = parse_tr_mobile(phone)
+    parsed = parse_mobile_number(phone)
     if not parsed:
-        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+        return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
     phone = parsed
 
-    phone = customer_phone_for_db(str(phone).strip())
-    if len(phone) != 10:
-        return jsonify({'success': False, 'message': 'Geçerli 10 haneli telefon girin'}), 400
     name = format_person_name(name)
     surname = format_person_name(surname)
 
@@ -2569,6 +2622,26 @@ def ensure_artist_is_active_column():
         if conn:
             conn.rollback()
         logger.warning('ensure_artist_is_active_column: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
+def ensure_customer_phone_length():
+    """customers.phone eskiden VARCHAR(10) idi (yalniz Turk numaralari
+    icin yetiyordu) — yurt disi musteri numaralari (ulke kodu dahil,
+    12+ hane) sigmiyordu. VARCHAR(20)'ye genisletir; zaten genisse no-op.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE customers ALTER COLUMN phone TYPE VARCHAR(20)")
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_customer_phone_length: %s', e)
     finally:
         release_db_connection(conn)
 
@@ -2765,9 +2838,9 @@ def validate_loyalty_code():
     code = (data.get('loyalty_code') or '').strip()
     if not phone or not code:
         return jsonify({'success': False, 'message': 'Telefon ve indirim kodu gerekli'}), 400
-    parsed = parse_tr_mobile(phone)
+    parsed = parse_mobile_number(phone)
     if not parsed:
-        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+        return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
     phone = parsed
 
     conn = None
@@ -2865,9 +2938,9 @@ def create_tattoo_request():
 
     if not phone or not staff_id:
         return jsonify({'success': False, 'message': 'phone ve staff_id gerekli'}), 400
-    parsed = parse_tr_mobile(phone)
+    parsed = parse_mobile_number(phone)
     if not parsed:
-        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
+        return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
     phone = parsed
 
     if config_undecided or pre_consultation:
@@ -3693,19 +3766,15 @@ def admin_offer_slots(tattoo_request_id):
 
         from evolution_client import resolve_evolution_send_target
 
-        phone_digits = re.sub(r'\D', '', str(customer_phone or ''))
-        if phone_digits.startswith('0') and len(phone_digits) == 11:
-            phone_digits = '90' + phone_digits[1:]
-        elif len(phone_digits) == 10 and not phone_digits.startswith('90'):
-            phone_digits = f'90{phone_digits}'
-        if len(phone_digits) != 12 or not phone_digits.startswith('90') or phone_digits[2] != '5':
+        # parse_mobile_number hem Turk (ciplak 10 hane) hem yurt disi (ulke
+        # kodu dahil tam basamaklar) saklanmis numaralari dogru tanir —
+        # eskiden burada sadece Turk formatini kabul eden sabit bir kontrol
+        # vardi, yurt disi musterilere teklif linki gonderilemiyordu.
+        if not parse_mobile_number(customer_phone):
             cursor.close()
             return jsonify({
                 'success': False,
-                'message': (
-                    f'Geçersiz müşteri telefonu ({customer_phone}). '
-                    'Talep 5XXXXXXXXX formatında kayıtlı olmalı.'
-                ),
+                'message': f'Geçersiz müşteri telefonu ({customer_phone}).',
             }), 400
         whatsapp_target = resolve_evolution_send_target(customer_phone)
 
@@ -4173,10 +4242,9 @@ def admin_create_manual_appointment():
     if price < 0:
         price = 0
 
-    phone = customer_phone_for_db(phone_raw)
-    if not parse_tr_mobile(phone_raw) or len(phone) != 10:
-        return jsonify({'success': False, 'message': TR_MOBILE_ERROR}), 400
-    phone = parse_tr_mobile(phone_raw)
+    phone = parse_mobile_number(phone_raw)
+    if not phone:
+        return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
 
     formatted_date = parse_tr_date(date_str)
     if not formatted_date:
@@ -7277,6 +7345,7 @@ ensure_whatsapp_bulk_send_log_table()
 start_scheduler_if_master()
 ensure_artist_instagram_column()
 ensure_artist_is_active_column()
+ensure_customer_phone_length()
 
 def _shutdown_scheduler_and_lock():
     if scheduler.running:
