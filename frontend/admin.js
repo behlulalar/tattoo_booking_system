@@ -587,6 +587,29 @@ function bindTrMobileInput(el) {
   });
 }
 
+/** Manuel randevu telefonu: "+" ile baslarsa serbest yurt disi girisi,
+ * aksi halde eskisi gibi Turk cep numarasi filtresi (bindTrMobileInput
+ * ile ayni mantik). login-phone/staff-phone (personel alanlari) bilerek
+ * bu istisnayi almiyor, sadece musteri telefonu icin gecerli. */
+function bindManualApptPhoneInput(el) {
+  if (!el || el.dataset.manualPhoneBound === '1') return;
+  el.dataset.manualPhoneBound = '1';
+  el.setAttribute('inputmode', 'tel');
+  el.setAttribute('maxlength', '20');
+  el.addEventListener('input', () => {
+    if (el.value.trim().startsWith('+')) return; // yurt disi: filtrelenmez
+    const parsed = parseTrMobile(el.value);
+    if (parsed) {
+      el.value = parsed;
+      return;
+    }
+    let d = String(el.value || '').replace(/\D/g, '');
+    if (d.startsWith('90')) d = d.slice(2);
+    if (d.startsWith('0')) d = d.replace(/^0+/, '');
+    el.value = d.slice(0, 10);
+  });
+}
+
 function updateSidebarStaffInfo(partial) {
   const staff = getAdminStaff();
   if (!staff) return;
@@ -1298,8 +1321,14 @@ function hideManualApptSuggestBox(boxId) {
 }
 
 function applyManualApptCustomer(customer) {
-  const phone = parseTrMobile(customer.phone)
-    || String(customer.phone || '').replace(/\D/g, '').slice(-10);
+  // Turk numarasi -> ciplak 10 hane (eskisi gibi). Yurt disi numara ise
+  // (parseTrMobile basarisiz) son 10 haneyi almak yanlis bir numara
+  // uretiyordu — bunun yerine tam numarayi "+" ile geri koyuyoruz ki
+  // hem alanda dogru gorunsun hem de gonderim mantigi onu uluslararasi
+  // olarak tanisin.
+  const trPhone = parseTrMobile(customer.phone);
+  const rawDigits = String(customer.phone || '').replace(/\D/g, '');
+  const phone = trPhone || (rawDigits ? `+${rawDigits}` : '');
   if ($('manual-appt-phone') && phone) $('manual-appt-phone').value = phone;
   if ($('manual-appt-name')) $('manual-appt-name').value = formatPersonName(customer.name || '');
   if ($('manual-appt-surname')) $('manual-appt-surname').value = formatPersonName(customer.surname || '');
@@ -1417,10 +1446,21 @@ function scheduleManualApptNameLookup(openList = false) {
   }, openList ? 0 : 180);
 }
 
+/** Yurt disi manuel randevu numarasi icin kaba sekil kontrolu — gercek
+ * dogrulama backend'de (phonenumbers kutuphanesi) yapiliyor. */
+function isPlausibleIntlPhoneAdmin(value) {
+  const v = String(value || '').trim();
+  return /^\+[1-9]\d{7,14}$/.test(v.replace(/[\s()-]/g, ''));
+}
+
 async function submitManualAppointment(e) {
   e.preventDefault();
   const errEl = $('manual-appt-error');
-  const phone = normalizePhone10($('manual-appt-phone')?.value);
+  const rawPhone = ($('manual-appt-phone')?.value || '').trim();
+  const isIntlPhone = rawPhone.startsWith('+');
+  const phone = isIntlPhone
+    ? (isPlausibleIntlPhoneAdmin(rawPhone) ? rawPhone.replace(/\D/g, '') : '')
+    : normalizePhone10(rawPhone);
   const name = formatPersonName($('manual-appt-name')?.value || '');
   const surname = formatPersonName($('manual-appt-surname')?.value || '');
   const dateIso = manualApptDatePicker?.selectedDates?.[0]
@@ -1432,8 +1472,13 @@ async function submitManualAppointment(e) {
   const sendWhatsapp = $('manual-appt-whatsapp')?.checked !== false;
   const staffId = getManualApptStaffId();
 
-  if (!parseTrMobile(phone)) {
-    if (errEl) { errEl.textContent = 'Geçerli cep numarası girin (5XX XXX XX XX, başında 0 yok)'; errEl.style.display = 'block'; }
+  if (!phone) {
+    if (errEl) {
+      errEl.textContent = isIntlPhone
+        ? 'Geçerli bir numara girin, ülke koduyla birlikte (ör. +44 7911 123456)'
+        : 'Geçerli cep numarası girin (5XX XXX XX XX, başında 0 yok) — yurt dışı için + ile başlayın';
+      errEl.style.display = 'block';
+    }
     return;
   }
   if (!name || !surname) {
@@ -2063,9 +2108,11 @@ function escapeHtml(text) {
 
 function formatPhonePretty(phone10) {
   const parsed = parseTrMobile(phone10);
-  const p = parsed || String(phone10 || '').replace(/\D/g, '').slice(-10);
-  if (p.length !== 10) return String(phone10 || '').trim();
-  return `${p.slice(0, 3)} ${p.slice(3, 6)} ${p.slice(6, 8)} ${p.slice(8, 10)}`;
+  if (parsed) return `${parsed.slice(0, 3)} ${parsed.slice(3, 6)} ${parsed.slice(6, 8)} ${parsed.slice(8, 10)}`;
+  // Turk numarasi degil (yurt disi) — son 10 haneyi almak yanlis bir
+  // numara gosterirdi; tam basamaklari "+" ile oldugu gibi goster.
+  const digits = String(phone10 || '').replace(/\D/g, '');
+  return digits ? `+${digits}` : String(phone10 || '').trim();
 }
 
 function formatPhoneDisplay(phone) {
@@ -2137,12 +2184,14 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
       const createdAt = tr.created_at || '-';
       const customerName = formatPersonName((tr.customer?.full_name || '').trim() || 'Müşteri');
       const parsedPhone = parseTrMobile(tr.customer?.phone);
-      const phoneDigits = parsedPhone || String(tr.customer?.phone || '').replace(/\D/g, '').slice(-10);
+      // Yurt disi numaralarda son 10 haneyi almak yanlis bir numara
+      // gosterirdi (kirpma) — tam basamaklari koruyoruz.
+      const phoneDigits = parsedPhone || String(tr.customer?.phone || '').replace(/\D/g, '');
       const customerPhone = parsedPhone
         ? formatPhoneDisplay(parsedPhone)
-        : (phoneDigits ? formatPhonePretty(phoneDigits) : 'Telefon yok');
+        : (phoneDigits ? `+${phoneDigits}` : 'Telefon yok');
       const phoneHtml = phoneDigits
-        ? `<a class="tr-customer-phone" href="tel:${parsedPhone ? '0' : ''}${escapeHtml(phoneDigits)}"><i class="fas fa-phone"></i> ${escapeHtml(customerPhone)}</a>`
+        ? `<a class="tr-customer-phone" href="tel:${parsedPhone ? '0' : '+'}${escapeHtml(phoneDigits)}"><i class="fas fa-phone"></i> ${escapeHtml(customerPhone)}</a>`
         : `<span class="tr-customer-phone is-missing"><i class="fas fa-phone"></i> Telefon yok</span>`;
 
       const statusRaw = String(tr.status || 'new');
@@ -4556,7 +4605,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   initAdminPwa();
-  ['login-phone', 'staff-phone', 'manual-appt-phone'].forEach((id) => bindTrMobileInput($(id)));
+  ['login-phone', 'staff-phone'].forEach((id) => bindTrMobileInput($(id)));
+  bindManualApptPhoneInput($('manual-appt-phone'));
 
   // Tarayıcı: F5 ile devam. PWA: Beni hatırla varsa uygulamayı açınca panele gir.
   const token = getAdminToken();
