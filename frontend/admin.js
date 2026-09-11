@@ -519,6 +519,19 @@ function closeOfferUrlModal() {
   if (overlay) overlay.style.display = 'none';
 }
 
+// Teklif formu kapanip API cagrisi (WhatsApp gonderimi dahil) bitene kadar
+// gecen sure boyunca hicbir gorsel geri bildirim yoktu — kullanici sistemin
+// hata verdigini sanabiliyordu. Bu araya bir bekleme modali giriyor.
+function showOfferSendingModal() {
+  const overlay = $('offer-sending-overlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function hideOfferSendingModal() {
+  const overlay = $('offer-sending-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
 function copyOfferUrl() {
   const input = $('offer-url-input');
   if (!input) return;
@@ -2214,6 +2227,7 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
       );
       if (!result) return;
       btn.disabled = true;
+      showOfferSendingModal();
       try {
         const { ok, data } = await apiCall(`/admin/tattoo-requests/${id}/offer`, {
           method: 'POST',
@@ -2232,6 +2246,7 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
         await reloadNewTattooRequestPages();
         await loadOfferedRequests();
       } finally {
+        hideOfferSendingModal();
         btn.disabled = false;
       }
     });
@@ -2249,6 +2264,7 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
       );
       if (!result) return;
       btn.disabled = true;
+      showOfferSendingModal();
       try {
         const { ok, data } = await apiCall(`/admin/tattoo-requests/${id}/offer`, {
           method: 'POST',
@@ -2269,6 +2285,7 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
         }
         await loadOfferedRequests();
       } finally {
+        hideOfferSendingModal();
         btn.disabled = false;
       }
     });
