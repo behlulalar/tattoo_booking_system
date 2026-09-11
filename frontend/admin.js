@@ -1525,14 +1525,24 @@ async function submitManualAppointment(e) {
   };
   if (staffId) body.staff_id = staffId;
 
-  const { ok, data } = await apiCall('/admin/appointments/manual', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  closeManualAppointmentModal();
+  const creatingOverlay = $('manual-appt-creating-overlay');
+  if (creatingOverlay) creatingOverlay.style.display = 'flex';
 
-  if (btn) btn.disabled = false;
+  let ok, data;
+  try {
+    ({ ok, data } = await apiCall('/admin/appointments/manual', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }));
+  } finally {
+    if (creatingOverlay) creatingOverlay.style.display = 'none';
+    if (btn) btn.disabled = false;
+  }
 
   if (!ok || !data.success) {
+    // Basarisizsa formu tekrar ac, girilen bilgiler kaybolmasin.
+    $('manual-appointment-overlay') && ($('manual-appointment-overlay').style.display = 'flex');
     if (errEl) {
       errEl.textContent = data?.message || 'Randevu oluşturulamadı';
       errEl.style.display = 'block';
@@ -1540,8 +1550,13 @@ async function submitManualAppointment(e) {
     return;
   }
 
-  showToast(data.message || 'Randevu oluşturuldu', 'success');
-  closeManualAppointmentModal();
+  const detailEl = $('manual-appt-success-detail');
+  if (detailEl) {
+    detailEl.textContent = `${name} ${surname} — ${isoDateToTr(dateIso)} ${time}`;
+  }
+  const successOverlay = $('manual-appt-success-overlay');
+  if (successOverlay) successOverlay.style.display = 'flex';
+
   await reloadActiveAdminAppointments();
 }
 
@@ -4362,6 +4377,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   $('close-manual-appointment-btn')?.addEventListener('click', closeManualAppointmentModal);
   $('cancel-manual-appointment-btn')?.addEventListener('click', closeManualAppointmentModal);
+  $('manual-appt-success-ok-btn')?.addEventListener('click', () => {
+    const overlay = $('manual-appt-success-overlay');
+    if (overlay) overlay.style.display = 'none';
+  });
   $('manual-appointment-overlay')?.addEventListener('click', (e) => {
     if (e.target === $('manual-appointment-overlay')) closeManualAppointmentModal();
   });
