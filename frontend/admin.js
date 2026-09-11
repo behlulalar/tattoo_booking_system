@@ -2457,9 +2457,23 @@ async function loadOfferedRequests() {
   if (!canAccessTattooRequests()) return;
   const container = $('offered-requests-list');
   if (!container) return;
+
+  // Personel filtresi: super_admin/teknik destek tum stüdyonun tekliflerini
+  // tek bir listede karisik goruyordu, kim gonderdigini ayirt etmek zordu.
+  const filtersWrap = $('offered-requests-filters');
+  let staffQ = '';
+  if (hasStudioAccess()) {
+    if (filtersWrap) filtersWrap.style.display = 'flex';
+    await populateStaffFilter('offered-requests-staff-filter');
+    const staffVal = $('offered-requests-staff-filter')?.value || '';
+    if (staffVal) staffQ = `&staff_id=${encodeURIComponent(staffVal)}`;
+  } else if (filtersWrap) {
+    filtersWrap.style.display = 'none';
+  }
+
   container.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
   const refQ = getTattooRefSearchParam('offered-ref-search');
-  const { ok, data } = await apiCall(`/admin/tattoo-requests?status=offered${refQ}`, { method: 'GET' });
+  const { ok, data } = await apiCall(`/admin/tattoo-requests?status=offered${refQ}${staffQ}`, { method: 'GET' });
   if (!ok || !data.success) {
     container.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(data.message || 'Yüklenemedi')}</p>`;
     return;
@@ -4500,6 +4514,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Enter') loadOfferedRequests();
   });
   $('refresh-offered-btn')?.addEventListener('click', loadOfferedRequests);
+  $('offered-requests-staff-filter')?.addEventListener('change', loadOfferedRequests);
 
   // View toggle — Randevular
   setupViewToggle('view-list-btn', 'view-table-btn',
