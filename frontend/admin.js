@@ -1696,6 +1696,11 @@ async function loadWapioSettingsPage() {
   }
 
   await refreshWapioConnectionStatus({ silent: true });
+  // Sayfa acildiginda bir kez kontrol yeterli degil — admin paneli acik
+  // birakilirsa rozet donuk kalip arka planda baglanti koptugunde bile
+  // "basarili" gostermeye devam ediyordu. Sayfadan ayrilinca (bkz. yukarida
+  // "page !== 'api-settings'" temizligi) zaten durduruluyor.
+  startWapioStatusPolling({ intervalMs: 20000 });
 
   const sessionId = ($('wapio-session-id')?.value || '').trim();
   if (sessionId) startWapioStatusPolling({ intervalMs: 5000 });
