@@ -2144,8 +2144,8 @@ def admin_schedule_grid_times():
 
 
 def is_wapio_demo_mode():
-    """Şimdilik sabit OTP 123456 — WhatsApp doğrulaması atlanır."""
-    return True
+    """Demo modu kapali — OTP artik gercek WhatsApp dogrulamasindan geciyor."""
+    return False
 
 
 def verify_phone_code_from_db(phone, code):
@@ -7517,6 +7517,7 @@ def delete_staff_time_off(staff_id, time_off_id):
 # =============================================
 
 @app.route('/api/customer/login', methods=['POST'])
+@limiter.limit("10 per minute")  # OTP brute-force korumasi (once hicbir limit yoktu)
 def customer_login():
     """Customer login with phone verification - returns JWT token"""
     data = request.get_json()
@@ -7530,8 +7531,8 @@ def customer_login():
     phone = str(phone).strip()
     normalized_phone = normalize_phone_for_storage(phone)
     
-    # Demo mode: sabit kod "123456" her zaman kabul edilir (WhatsApp doğrulaması atlanır)
-    if str(code).strip() != "123456":
+    # Demo bypass kaldirildi — dogrulama kodu her zaman DB'den kontrol edilir.
+    if True:
         conn_verify = None
         try:
             conn_verify = get_db_connection()
