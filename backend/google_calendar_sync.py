@@ -27,6 +27,7 @@ import psycopg2
 from config import DATABASE_CONFIG, SITE_CONFIG, get_google_calendar_config
 from error_codes import E_GCAL_001, E_GCAL_002, E_GCAL_003, E_GCAL_004
 from logging_setup import log_error
+from whatsapp_messages import format_try
 
 logger = logging.getLogger(__name__)
 
@@ -1100,7 +1101,6 @@ def _build_event_body(row):
     duration = int(duration_minutes or 30)
     artist = (staff_name or 'Sanatçı').strip()
     color_id = _color_id_for_staff(staff_id, artist)
-    color_label = _staff_color_label(staff_id, artist)
 
     summary_parts = [f'[{artist}]', customer]
     if phone != '-':
@@ -1118,14 +1118,13 @@ def _build_event_body(row):
     lines = [
         f"📅 Tarih: {_as_date(appointment_date).strftime('%d.%m.%Y')}  ⏰ Saat: {time_label}",
         f"Durum: {status_label}",
-        f"Sanatçı: {artist} (takvim rengi: {color_label})",
+        f"Sanatçı: {artist}",
         '',
         '— Müşteri —',
         f"Ad Soyad: {customer}",
         f"Telefon: {phone}",
         '',
         '— Dövme —',
-        f"Tarz: {style_label}",
         f"Bölge: {area_label}",
         f"Boyut: {size}",
         f"Süre: {duration} dk",
@@ -1135,13 +1134,9 @@ def _build_event_body(row):
     if request_description and str(request_description).strip():
         lines.append(f"Not: {str(request_description).strip()}")
     if price is not None and float(price or 0) > 0:
-        lines.append(f"Ücret: {float(price):.2f} ₺")
-    # Isletme adi/telefon/adres etkinlik aciklamasinda ve location alaninda
-    # gereksiz tekrar oluyordu (zaten kendi takvimleri) — kaldirildi.
-    lines.extend([
-        '',
-        f"Randevu ID: {appointment_id}",
-    ])
+        lines.append(f"Ücret: {format_try(float(price))} ₺")
+    # Isletme adi/telefon/adres/randevu ID/tarz/takvim rengi etiketi etkinlik
+    # aciklamasinda gereksiz gorunuyordu — kaldirildi.
 
     start_iso, end_iso, tz = _appointment_window(
         appointment_date, appointment_time, duration_minutes
