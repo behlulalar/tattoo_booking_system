@@ -1109,18 +1109,41 @@ function renderAppointmentStatusControls(appointmentId, currentStatus, appointme
   return `<div class="apt-status-grid"><span class="apt-status-grid-label">Durum değiştir</span><div class="apt-status-grid-btns">${buttons}</div></div>`;
 }
 
+const APPT_STATUS_UPDATING_TITLES = {
+  completed: 'Randevu Tamamlanıyor',
+  cancelled: 'Randevu İptal Ediliyor',
+  no_show: 'Gelmedi Olarak İşaretleniyor',
+};
+
+function showApptStatusUpdatingOverlay(newStatus) {
+  const overlay = $('appt-status-updating-overlay');
+  const title = $('appt-status-updating-title');
+  if (title) title.textContent = APPT_STATUS_UPDATING_TITLES[newStatus] || 'Durum Güncelleniyor';
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function hideApptStatusUpdatingOverlay() {
+  const overlay = $('appt-status-updating-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
 async function updateAppointmentStatus(appointmentId, newStatus, extra) {
-  const body = Object.assign({ status: newStatus }, extra || {});
-  const { ok, data } = await apiCall(`/admin/appointments/${appointmentId}/status`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
-  if (!ok || !data.success) {
-    showToast(data?.message || 'Durum güncellenemedi', 'error');
-    return false;
+  showApptStatusUpdatingOverlay(newStatus);
+  try {
+    const body = Object.assign({ status: newStatus }, extra || {});
+    const { ok, data } = await apiCall(`/admin/appointments/${appointmentId}/status`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    if (!ok || !data.success) {
+      showToast(data?.message || 'Durum güncellenemedi', 'error');
+      return false;
+    }
+    showToast('Durum güncellendi', 'success');
+    return true;
+  } finally {
+    hideApptStatusUpdatingOverlay();
   }
-  showToast('Durum güncellendi', 'success');
-  return true;
 }
 
 async function reloadActiveAdminAppointments() {

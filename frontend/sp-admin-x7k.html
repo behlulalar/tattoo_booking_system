@@ -1552,6 +1552,17 @@
         </div>
     </div>
 
+    <!-- Randevu durumu guncellenirken bekleme modali -->
+    <div id="appt-status-updating-overlay" class="modal-overlay" style="display:none;">
+        <div class="profile-modal" style="max-width:360px;text-align:center;">
+            <div class="modal-body" style="padding:36px 28px;">
+                <i class="fas fa-spinner fa-spin" style="font-size:2.2rem;color:rgba(255,255,255,0.8);margin-bottom:18px;display:block;"></i>
+                <h2 id="appt-status-updating-title" style="font-family:inherit;font-weight:400;font-size:1.2rem;letter-spacing:1px;margin-bottom:8px;">Durum Güncelleniyor</h2>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin:0;">Lütfen bekleyin…</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Session Timeout Warning Modal -->
     <div id="session-timeout-overlay" class="modal-overlay" style="display:none;">
         <div class="profile-modal" style="max-width:400px;text-align:center;">
@@ -1570,7 +1581,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260912150821"></script>
+    <script src="admin.js?v=20260912153006"></script>
 </body>
 
 </html>
