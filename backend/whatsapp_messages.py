@@ -77,6 +77,16 @@ def _tattoo_detail_lines(
     return lines
 
 
+def format_try(value) -> str:
+    """Turkce para bicimi: binlik ayirici nokta, ondalik virgul (ör. 10.000,00)."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError):
+        v = 0.0
+    # f'{v:,.2f}' -> '10,000.00' (ABD bicimi); nokta/virgul yerini degistirir.
+    return f'{v:,.2f}'.translate(str.maketrans(',.', '.,'))
+
+
 def _price_line(price, prefix='\n💰 Ücret: ') -> str:
     if price is None:
         return ''
@@ -86,7 +96,7 @@ def _price_line(price, prefix='\n💰 Ücret: ') -> str:
         return ''
     if value <= 0:
         return ''
-    return f'{prefix}{value:.2f} ₺'
+    return f'{prefix}{format_try(value)} ₺'
 
 
 def _contact_footer(b: dict) -> str:
