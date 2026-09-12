@@ -1536,6 +1536,29 @@ def _handle_whatsapp_welcome_inbound(
         logger.info("Otomatik karsilama mesaji kapali, gonderilmedi | phone=%s", phone)
         return jsonify({'success': True, 'message': 'Karşılama mesajı devre dışı'}), 200
 
+    # Numara sistemimizde zaten kayitli bir musteriye aitse (booking akisindan
+    # gecmis) karsilama mesaji GONDERILMEZ. Boyle bir musterinin ilk mesaji
+    # genelde randevu/teklif referansiyla ilgili gercek bir talep oluyor —
+    # otomatik karsilama mesaji bunu gozden kacirtabiliyordu.
+    conn_lookup = None
+    existing_customer = None
+    try:
+        conn_lookup = get_db_connection()
+        cursor_lookup = conn_lookup.cursor()
+        existing_customer = find_customer_by_phone(cursor_lookup, phone)
+        cursor_lookup.close()
+    except Exception as e:
+        # Kontrol basarisiz olursa fail-open: karsilama mesaji eskisi gibi
+        # gonderilir, gecici bir DB hatasi yuzunden gercekten yeni bir
+        # musteri karsilamasiz kalmasin.
+        logger.warning(f"Mevcut musteri kontrolu basarisiz (fail-open): {e}")
+    finally:
+        release_db_connection(conn_lookup)
+
+    if existing_customer:
+        logger.info("Karsilama mesaji atlandi — numara zaten kayitli musteri | phone=%s", phone)
+        return jsonify({'success': True, 'message': 'Mevcut musteri, karsilama atlandi'}), 200
+
     # Cooldown penceresi ATOMIK olarak talep edilir (INSERT ... ON CONFLICT
     # ... WHERE ... RETURNING): eski kod once SELECT ile kontrol edip mesaji
     # gonderdikten SONRA yaziyordu — iki es zamanli webhook teslimati (Evolution
