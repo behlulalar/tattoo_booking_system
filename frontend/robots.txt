@@ -1,5 +1,8 @@
 User-agent: *
 Allow: /
 Disallow: /sp-admin-x7k.html
+Disallow: /customer-login.html
+Disallow: /customer-panel.html
+Disallow: /slot-select.html
 
 Sitemap: https://randevu-rooftattoogallery.com/sitemap.xml
