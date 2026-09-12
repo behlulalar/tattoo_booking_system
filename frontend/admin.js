@@ -757,6 +757,14 @@ async function submitChangePassword(e) {
     return;
   }
 
+  // Sunucu, sifre degisince eski token'lari gecersiz kilar (token_version++)
+  // ve bu istegin kendi oturumu kopmasin diye taze bir token doner —
+  // mevcut depoya (localStorage/sessionStorage) yerinde yazilir.
+  if (data.token) {
+    const store = getAdminSessionStorage();
+    if (store) store.setItem(ADMIN_TOKEN_KEY, data.token);
+  }
+
   showToast(data.message || 'Şifre başarıyla değiştirildi', 'success');
   closeProfileModal();
 }
@@ -2144,8 +2152,14 @@ async function handleAdminLoginSubmit(e) {
   await login(phone, password, rememberMe);
 }
 
-function logout({ soft = false } = {}) {
+async function logout({ soft = false } = {}) {
   stopInactivityWatcher();
+  // Bilinçli çıkışta (soft değil) sunucudaki token_version artırılır —
+  // bu hesaba ait eski token'lar (başka cihaz/sızıntı) anında geçersiz olur.
+  // Yanıtı beklemek istemli çıkışı yavaşlatmasın diye sonucu beklemiyoruz.
+  if (!soft && getAdminToken()) {
+    apiCall('/admin/logout', { method: 'POST' }).catch(() => {});
+  }
   const remember = isAdminRememberMe();
   if (soft && remember) {
     clearAdminSession({ keepRememberPrefs: true, softLogout: true });
