@@ -1128,6 +1128,8 @@ def _build_event_body(row):
         summary = f"✓ {summary}"
     elif status == 'pending':
         summary = f"⏳ {summary}"
+    elif status == 'no_show':
+        summary = f"🚫 Gelmedi — {summary}"
 
     lines = [
         f"📅 Tarih: {_as_date(appointment_date).strftime('%d.%m.%Y')}  ⏰ Saat: {time_label}",
