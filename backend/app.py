@@ -3840,6 +3840,17 @@ def admin_offer_slots(tattoo_request_id):
             discount_applied = True
             loyalty_code = loyalty_discount['code']
 
+        # Yeni link gonderilirken bu talebin daha once gonderilmis, henuz
+        # kullanilmamis eski linkleri gecersiz kilinir — aksi halde musteri
+        # eski ve yeni linkten ayni anda saat secebiliyordu.
+        cursor.execute("""
+            UPDATE slot_offers
+               SET expires_at = NOW()
+             WHERE tattoo_request_id = %s
+               AND used_at IS NULL
+               AND (expires_at IS NULL OR expires_at > NOW())
+        """, (tattoo_request_id,))
+
         token = secrets.token_urlsafe(32)
         expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
 
