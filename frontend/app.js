@@ -607,12 +607,15 @@ function showTattooRequestSuccess(data, defaultMessage, onClose = null, whatsapp
   if (ref && successRefBlock && successRefCode) {
     successRefCode.textContent = ref;
     successRefBlock.style.display = 'flex';
+    // Sabit, sadece bizim yazdigimiz statik metin — kullanici girdisi
+    // icermedigi icin innerHTML burada guvenli. Vurgu icin renk.
+    const waEmphasis = '<strong style="color:var(--danger);">Lütfen bize WhatsApp\'tan ulaşın.</strong>';
     if (summary.preConsultation) {
-      successMessage.textContent = 'Ön görüşme talebiniz alındı. Lütfen bize WhatsApp\'tan ulaşın.';
+      successMessage.innerHTML = `Ön görüşme talebiniz alındı. ${waEmphasis}`;
     } else if (summary.undecided) {
-      successMessage.textContent = 'Talebiniz alındı. Lütfen bize WhatsApp\'tan ulaşın.';
+      successMessage.innerHTML = `Talebiniz alındı. ${waEmphasis}`;
     } else {
-      successMessage.textContent = 'Talebiniz alındı. Sanatçı inceleyip size randevu linki gönderecek. Lütfen bize WhatsApp\'tan ulaşın.';
+      successMessage.innerHTML = `Talebiniz alındı. Sanatçı inceleyip size randevu linki gönderecek. ${waEmphasis}`;
     }
 
     if (successRefCopyBtn) {
@@ -1187,9 +1190,9 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
       defaultMessage += ` İndirim kodunuz (${data.loyalty_discount.code}) talebe eklendi.`;
     }
     if (preConsultation) {
-      defaultMessage = 'Ön görüşme talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
+      defaultMessage = 'Ön görüşme talebiniz alındı. Lütfen bize WhatsApp\'tan ulaşın.';
     } else if (undecided) {
-      defaultMessage = 'Talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
+      defaultMessage = 'Talebiniz alındı. Lütfen bize WhatsApp\'tan ulaşın.';
     }
 
     showTattooRequestSuccess(data, defaultMessage, () => location.reload(), waCtx);
