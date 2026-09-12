@@ -679,12 +679,26 @@ def is_real_customer_phone(phone):
 
 
 def _is_real_customer_phone(phone):
+    """Gercek bir musteri numarasi mi (sentetik gcal numarasi degil).
+
+    Sentetik numara her zaman 10 hane ve '1' ile baslar (bkz.
+    _synthetic_gcal_phone). Once onu eliyoruz; gerisi TR cep numarasi VEYA
+    yurt disi numarasi (8-15 hane) olarak kabul edilir — aksi halde yurt
+    disindan gercek musterilerin iptal bildirimleri sessizce atlaniyordu.
+    """
     digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
-    if digits.startswith('90') and len(digits) > 10:
-        digits = digits[2:]
-    if digits.startswith('0'):
-        digits = digits.lstrip('0')
-    return len(digits) == 10 and digits.startswith('5')
+    if not digits:
+        return False
+    if len(digits) == 10 and digits.startswith('1'):
+        return False
+    normalized = digits
+    if normalized.startswith('90') and len(normalized) > 10:
+        normalized = normalized[2:]
+    elif normalized.startswith('0'):
+        normalized = normalized.lstrip('0')
+    if len(normalized) == 10 and normalized.startswith('5'):
+        return True
+    return 8 <= len(digits) <= 15
 
 
 def _pick_unique_customer_row(rows):
