@@ -608,11 +608,11 @@ function showTattooRequestSuccess(data, defaultMessage, onClose = null, whatsapp
     successRefCode.textContent = ref;
     successRefBlock.style.display = 'flex';
     if (summary.preConsultation) {
-      successMessage.textContent = 'Ön görüşme talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
+      successMessage.textContent = 'Ön görüşme talebiniz alındı. Lütfen bize WhatsApp\'tan ulaşın.';
     } else if (summary.undecided) {
-      successMessage.textContent = 'Talebiniz alındı. Lütfen sanatçıya aşağıdaki butondan mesajınızı gönderiniz.';
+      successMessage.textContent = 'Talebiniz alındı. Lütfen bize WhatsApp\'tan ulaşın.';
     } else {
-      successMessage.textContent = 'Sanatçı inceleyince size randevu linki gönderilecek.';
+      successMessage.textContent = 'Talebiniz alındı. Sanatçı inceleyip size randevu linki gönderecek. Lütfen bize WhatsApp\'tan ulaşın.';
     }
 
     if (successRefCopyBtn) {
