@@ -1136,15 +1136,13 @@ def _build_event_body(row):
         lines.append(f"Not: {str(request_description).strip()}")
     if price is not None and float(price or 0) > 0:
         lines.append(f"Ücret: {float(price):.2f} ₺")
+    # Isletme adi/telefon/adres etkinlik aciklamasinda gereksiz tekrar
+    # oluyordu (zaten kendi takvimleri, kime ait oldugu belli) — kaldirildi.
+    # Adres, ayri bir alan olarak asagida 'location'a hala yaziliyor.
     lines.extend([
         '',
         f"Randevu ID: {appointment_id}",
-        SITE_CONFIG.get('business_name', ''),
     ])
-    if SITE_CONFIG.get('business_phone'):
-        lines.append(f"Stüdyo tel: {SITE_CONFIG['business_phone']}")
-    if SITE_CONFIG.get('business_address'):
-        lines.append(f"Adres: {SITE_CONFIG['business_address']}")
 
     start_iso, end_iso, tz = _appointment_window(
         appointment_date, appointment_time, duration_minutes
@@ -1202,7 +1200,6 @@ def _build_time_off_event_body(row):
         f"Açıklama: {reason_text or '-'}",
         '',
         f"Off Day ID: {time_off_id}",
-        SITE_CONFIG.get('business_name', ''),
     ]
     window = _time_off_window(off_date, start_time, end_time)
     body = {
