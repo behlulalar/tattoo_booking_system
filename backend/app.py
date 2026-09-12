@@ -217,14 +217,18 @@ CORS(app, resources={r"/api/*": {
 # =============================================
 # RATE LIMITING
 # =============================================
+# "memory://" her gunicorn worker'inda ayri bir sayac tutar — birden fazla
+# worker'da giris/OTP gibi hassas endpoint'lerin dakikalik limiti fiilen
+# worker sayisiyla katlanir. REDIS_URL tanimliysa paylasimli sayac icin
+# Redis kullanilir; tanimli degilse (yerel gelistirme) memory'ye duser.
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
     default_limits=["10000 per day", "2000 per hour"],
-    storage_uri="memory://",
+    storage_uri=os.getenv("REDIS_URL") or "memory://",
     strategy="fixed-window"
 )
-logger.info("Rate limiter initialized") 
+logger.info("Rate limiter initialized (storage=%s)", "redis" if os.getenv("REDIS_URL") else "memory")
 
 # JWT Secret Key — .env'de zorunlu; eksik/placeholder/kısa ise prod'da admin
 # token'ları sahtelenebilir hale gelir, bu yüzden başlangıçta sert şekilde durdurur.
@@ -263,10 +267,6 @@ VERIFICATION_CODES_MAX_SIZE = 10000  # Maksimum entry sayısı (memory leak önl
 verification_stats = []  # List of {'timestamp': float, 'success': bool}
 verification_stats_lock = Lock()  # Thread safety için Lock
 VERIFICATION_STATS_MAX_AGE = 600  # 10 dakika (sadece son 10 dakikanın istatistikleri tutulur)
-
-admin_tokens = {}  # token -> {'staff_id': int, 'expires_at': float} mapping
-admin_tokens_lock = Lock()  # Thread safety için Lock
-ADMIN_TOKEN_EXPIRY_HOURS = 168  # 7 gün (hafta)
 
 # Generic error messages - never expose system details to users
 ERROR_MESSAGES = {
@@ -875,42 +875,6 @@ def cleanup_old_cancelled_appointments():
         release_db_connection(conn)
 
 
-def cleanup_expired_admin_tokens():
-    """Expired admin token'ları temizle (memory leak önleme)"""
-    current_time = time.time()
-    expired_count = 0
-    
-    with admin_tokens_lock:
-        # Expired token'ları bul
-        expired_tokens = [
-            token for token, data in admin_tokens.items()
-            if isinstance(data, dict) and current_time > data.get('expires_at', 0)
-        ]
-        
-        # Expired token'ları sil
-        for token in expired_tokens:
-            admin_tokens.pop(token, None)
-            expired_count += 1
-        
-        # Eğer dictionary çok büyüdüyse (memory leak önleme), en eski token'ları sil
-        if len(admin_tokens) > 1000:
-            # En eski token'ları bul ve sil
-            sorted_items = sorted(
-                admin_tokens.items(),
-                key=lambda x: x[1].get('expires_at', 0) if isinstance(x[1], dict) else 0
-            )
-            items_to_remove = sorted_items[:len(admin_tokens) - 1000 + 100]
-            for token, _ in items_to_remove:
-                admin_tokens.pop(token, None)
-                expired_count += 1
-            logger.warning(f"Admin tokens dict çok büyüdü, en eski {len(items_to_remove)} token temizlendi")
-    
-    if expired_count > 0:
-        logger.info(f"Expired admin tokens cleaned: {expired_count} (remaining: {len(admin_tokens)})")
-    
-    return expired_count
-
-
 # Takvim kuyruğu tablosu, randevu silen temizlik işinden önce hazır olmalı
 try:
     ensure_gcal_queue_table()
@@ -1325,6 +1289,7 @@ def token_required(f):
 
             data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
             staff_id = data['staff_id']
+            token_version = int(data.get('token_version') or 1)
         except jwt.ExpiredSignatureError:
             return jsonify({'success': False, 'message': 'Token süresi dolmuş'}), 401
         except jwt.InvalidTokenError:
@@ -1333,11 +1298,16 @@ def token_required(f):
         # Personel silinmiş/rolü değişmişse eski token'ın süresi dolana kadar
         # (remember_me ile 30 güne kadar) çalışmaya devam etmesin — role her
         # istekte DB'den taze okunur, token içindeki değer güvenilmez.
+        # token_version da ayni sekilde kontrol edilir: cikis yapinca veya
+        # sifre degisince DB'deki deger artirilir, bu token gecersiz olur.
         conn = None
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute('SELECT role FROM artists WHERE id = %s', (staff_id,))
+            cursor.execute(
+                'SELECT role, token_version, is_active FROM artists WHERE id = %s',
+                (staff_id,),
+            )
             row = cursor.fetchone()
             cursor.close()
         except Exception as e:
@@ -1346,8 +1316,11 @@ def token_required(f):
         finally:
             release_db_connection(conn)
 
-        if not row:
+        if not row or row[2] is False:
             return jsonify({'success': False, 'message': 'Hesap bulunamadı, tekrar giriş yapın'}), 401
+
+        if int(row[1] or 1) != token_version:
+            return jsonify({'success': False, 'message': 'Oturum sona erdi, tekrar giriş yapın'}), 401
 
         request.staff_id = staff_id
         request.staff_role = row[0]
@@ -2664,6 +2637,42 @@ def ensure_artist_is_active_column():
         release_db_connection(conn)
 
 
+def ensure_artist_token_version_column():
+    """artists.token_version: admin JWT'lerini gecersiz kilmak icin.
+
+    Token'lar stateless JWT oldugundan (imza+sure disinda sunucu tarafinda
+    hicbir kayit tutulmuyordu) cikis yapmak veya sifre degistirmek eski
+    token'i asla gecersiz kilmiyordu — token calinirsa/sizarsa "remember me"
+    ile 30 gune kadar hicbir sekilde iptal edilemiyordu. Cozum: JWT'ye
+    olusturuldugu andaki token_version damgalanir, her istekte guncel DB
+    degeriyle karsilastirilir; deger artinca o kisinin butun eski
+    token'lari tek seferde gecersiz olur (bkz. token_required, admin_logout).
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'artists'
+              AND column_name = 'token_version'
+            """
+        )
+        if not cursor.fetchone():
+            cursor.execute('ALTER TABLE artists ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1')
+            conn.commit()
+            logger.info('artists.token_version kolonu eklendi')
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_artist_token_version_column: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
 def ensure_customer_phone_length():
     """customers.phone eskiden VARCHAR(10) idi (yalniz Turk numaralari
     icin yetiyordu) — yurt disi musteri numaralari (ulke kodu dahil,
@@ -3411,15 +3420,18 @@ def admin_login():
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, name, password, role, profile_photo
+            SELECT id, name, password, role, profile_photo, token_version, is_active
             FROM artists WHERE phone = %s
         """, (phone,))
         staff = cursor.fetchone()
         cursor.close()
-        
+
         if not staff:
             return jsonify({'success': False, 'message': 'Kullanıcı bulunamadı'}), 401
-        
+
+        if staff[6] is False:
+            return jsonify({'success': False, 'message': 'Bu hesap devre dışı bırakılmış'}), 401
+
         stored_password = staff[2]
         # Check password using verify_password (supports bcrypt and legacy)
         if not verify_password(password, stored_password):
@@ -3450,6 +3462,7 @@ def admin_login():
             'name': staff[1],
             'role': staff[3],
             'remember': remember_me,
+            'token_version': int(staff[5] or 1),
             'exp': datetime.utcnow() + timedelta(hours=token_hours)
         }, JWT_SECRET, algorithm='HS256')
         
@@ -3469,6 +3482,32 @@ def admin_login():
     except Exception as e:
         log_error(logger, E_AUTH_001, "Admin girisi sirasinda beklenmeyen hata", exc=e)
         return jsonify({'success': False, 'message': 'Giriş sırasında hata oluştu'}), 500
+    finally:
+        release_db_connection(conn)
+
+
+@app.route('/api/admin/logout', methods=['POST'])
+@token_required
+def admin_logout():
+    """Cikis yapinca token_version artirilir — bu hesaba ait butun eski
+    JWT'ler (baska cihazlarda/sizmis kopyalar dahil) aninda gecersiz olur.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'UPDATE artists SET token_version = token_version + 1 WHERE id = %s',
+            (request.staff_id,),
+        )
+        conn.commit()
+        cursor.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"admin_logout token_version artirilamadi: {e}")
+        return jsonify({'success': True})
     finally:
         release_db_connection(conn)
 
@@ -5057,6 +5096,9 @@ def update_staff(staff_id):
                 return jsonify({'success': False, 'message': 'Şifre en az 6 karakter olmalı'}), 400
             updates.append("password = %s")
             params.append(hash_password_bcrypt(password))
+            # Admin baska bir personelin sifresini sifirlarsa o kisinin eski
+            # token'lari (calinmis/sizmis olabilir) aninda gecersiz olsun.
+            updates.append("token_version = token_version + 1")
         if role:
             updates.append("role = %s")
             params.append(role)
@@ -5204,7 +5246,10 @@ def delete_staff(staff_id):
         cursor.execute("DELETE FROM time_off WHERE staff_id = %s", (staff_id,))
 
         if any_appointments:
-            cursor.execute("UPDATE artists SET is_active = FALSE WHERE id = %s", (staff_id,))
+            cursor.execute(
+                "UPDATE artists SET is_active = FALSE, token_version = token_version + 1 WHERE id = %s",
+                (staff_id,),
+            )
             conn.commit()
             cursor.close()
             reset_gcal_artists_cache()
@@ -6187,14 +6232,30 @@ def change_password():
             cursor.close()
             return jsonify({'success': False, 'message': 'Mevcut şifre yanlış'}), 400
 
-        # Yeni şifreyi hash'le ve güncelle
+        # Yeni şifreyi hash'le ve güncelle. token_version da artırılır ki
+        # şifre sızmışsa/başka bir cihazda açık kalmışsa eski token'lar
+        # aninda geçersiz olsun — bu isteğin kendi oturumu kopmasın diye
+        # güncel version ile imzalanmış taze bir token da geri döndürülür.
         new_hash = hash_password_bcrypt(yeni_sifre)
-        cursor.execute("UPDATE artists SET password = %s WHERE id = %s", (new_hash, request.staff_id))
+        cursor.execute(
+            "UPDATE artists SET password = %s, token_version = token_version + 1 WHERE id = %s RETURNING token_version, name, role",
+            (new_hash, request.staff_id),
+        )
+        new_token_version, staff_name, staff_role = cursor.fetchone()
         conn.commit()
         cursor.close()
-        
+
+        new_token = jwt.encode({
+            'staff_id': request.staff_id,
+            'name': staff_name,
+            'role': staff_role,
+            'remember': False,
+            'token_version': int(new_token_version),
+            'exp': datetime.utcnow() + timedelta(hours=8),
+        }, JWT_SECRET, algorithm='HS256')
+
         logger.info(f"Şifre değiştirildi: staff_id={request.staff_id}")
-        return jsonify({'success': True, 'message': 'Şifre başarıyla değiştirildi'})
+        return jsonify({'success': True, 'message': 'Şifre başarıyla değiştirildi', 'token': new_token})
     except Exception as e:
         if conn:
             conn.rollback()
@@ -7303,7 +7364,6 @@ def start_scheduler_if_master():
             scheduler.add_job(func=cleanup_expired_verification_codes, trigger="interval", minutes=5, id='cleanup_verification_codes', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_expired_webhook_messages, trigger="interval", hours=1, id='cleanup_webhook_messages', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_old_cancelled_appointments, trigger="interval", days=7, id='cleanup_cancelled_appointments', replace_existing=True, max_instances=1)
-            scheduler.add_job(func=cleanup_expired_admin_tokens, trigger="interval", hours=24, id='cleanup_admin_tokens', replace_existing=True, max_instances=1)
             # WhatsApp kuyruğu: Evolution gecici kapaliyken kaybolan mesajlari tekrar dener
             scheduler.add_job(func=drain_whatsapp_queue, trigger="interval", minutes=2, id='whatsapp_queue_drain', replace_existing=True, max_instances=1)
             # Takvim kuyruğu: anlık tetikleme kaçırırsa/başarısız olursa telafi eder
@@ -7323,7 +7383,6 @@ def start_scheduler_if_master():
             logger.info("   - Verification codes cleanup: her 5 dakikada bir")
             logger.info("   - Webhook messages cleanup: her 1 saatte bir")
             logger.info("   - Cancelled appointments cleanup: her 7 günde bir")
-            logger.info("   - Admin tokens cleanup: her 24 saatte bir")
             logger.info("   - WhatsApp retry kuyrugu: her 2 dakikada bir")
             logger.info("   - UptimeRobot heartbeat: her 2 dakikada bir (URL varsa)")
             logger.info(f"   - Database backup: Her gün saat {backup_hour:02d}:{backup_minute:02d}'da (max_instances=1)")
@@ -7397,6 +7456,7 @@ ensure_whatsapp_bulk_send_log_table()
 start_scheduler_if_master()
 ensure_artist_instagram_column()
 ensure_artist_is_active_column()
+ensure_artist_token_version_column()
 ensure_customer_phone_length()
 
 def _shutdown_scheduler_and_lock():
