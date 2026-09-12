@@ -1536,16 +1536,30 @@ def _handle_whatsapp_welcome_inbound(
         logger.info("Otomatik karsilama mesaji kapali, gonderilmedi | phone=%s", phone)
         return jsonify({'success': True, 'message': 'Karşılama mesajı devre dışı'}), 200
 
-    # Numara sistemimizde zaten kayitli bir musteriye aitse (booking akisindan
-    # gecmis) karsilama mesaji GONDERILMEZ. Boyle bir musterinin ilk mesaji
-    # genelde randevu/teklif referansiyla ilgili gercek bir talep oluyor —
-    # otomatik karsilama mesaji bunu gozden kacirtabiliyordu.
+    # Numara kayitli bir musteriye aitse VE son 24 saat icinde yeni bir
+    # talep olusturmussa karsilama mesaji GONDERILMEZ — boyle bir musterinin
+    # mesaji genelde az once aldigi referans numarasiyla ilgili gercek bir
+    # takip mesaji oluyor, otomatik karsilama bunu gozden kacirtabiliyor.
+    # ESKI/pasif musteriler (son 24 saatte yeni bir talep olusturmamis) icin
+    # bu atlama YAPILMAZ — haftalar sonra tekrar yazip site linkini isteyen
+    # bir musteri hala normal karsilama mesajini almali.
     conn_lookup = None
-    existing_customer = None
+    recent_customer_activity = False
     try:
         conn_lookup = get_db_connection()
         cursor_lookup = conn_lookup.cursor()
         existing_customer = find_customer_by_phone(cursor_lookup, phone)
+        if existing_customer:
+            customer_id = existing_customer[0]
+            cursor_lookup.execute(
+                """
+                SELECT 1 FROM tattoo_requests
+                 WHERE customer_id = %s AND created_at > NOW() - INTERVAL '24 hours'
+                 LIMIT 1
+                """,
+                (customer_id,),
+            )
+            recent_customer_activity = cursor_lookup.fetchone() is not None
         cursor_lookup.close()
     except Exception as e:
         # Kontrol basarisiz olursa fail-open: karsilama mesaji eskisi gibi
@@ -1555,9 +1569,9 @@ def _handle_whatsapp_welcome_inbound(
     finally:
         release_db_connection(conn_lookup)
 
-    if existing_customer:
-        logger.info("Karsilama mesaji atlandi — numara zaten kayitli musteri | phone=%s", phone)
-        return jsonify({'success': True, 'message': 'Mevcut musteri, karsilama atlandi'}), 200
+    if recent_customer_activity:
+        logger.info("Karsilama mesaji atlandi — musterinin yakin zamanda talebi var | phone=%s", phone)
+        return jsonify({'success': True, 'message': 'Yakin zamanli musteri, karsilama atlandi'}), 200
 
     # Cooldown penceresi ATOMIK olarak talep edilir (INSERT ... ON CONFLICT
     # ... WHERE ... RETURNING): eski kod once SELECT ile kontrol edip mesaji
