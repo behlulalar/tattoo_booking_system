@@ -196,6 +196,23 @@ let _offerFormResolve = null;
 let _offerFormLoyalty = null;
 let _offerPriceInputHandler = null;
 
+function formatPriceDigitsWithDots(digits) {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function parseOfferPriceInputValue(raw) {
+  return parseFloat(String(raw || '0').replace(/\./g, '')) || 0;
+}
+
+function handleOfferPriceInputFormatting(e) {
+  const input = e.target;
+  const cursorFromEnd = input.value.length - input.selectionStart;
+  const digits = input.value.replace(/\D/g, '');
+  input.value = formatPriceDigitsWithDots(digits);
+  const pos = Math.max(0, input.value.length - cursorFromEnd);
+  input.setSelectionRange(pos, pos);
+}
+
 function updateOfferDiscountPreview() {
   const preview = $('offer-form-discount-preview');
   const priceInput = $('offer-form-price');
@@ -203,7 +220,7 @@ function updateOfferDiscountPreview() {
     if (preview) preview.hidden = true;
     return;
   }
-  const listPrice = parseFloat(priceInput?.value || '0') || 0;
+  const listPrice = parseOfferPriceInputValue(priceInput?.value);
   if (listPrice <= 0) {
     preview.hidden = true;
     return;
@@ -229,7 +246,9 @@ function openOfferFormModal(desc = '', defaultPrice = null, loyaltyDiscount = nu
     $('offer-form-desc').textContent = desc;
     $('offer-form-duration').value   = '120';
     $('offer-form-price').value      =
-      defaultPrice != null && Number(defaultPrice) > 0 ? String(Number(defaultPrice)) : '';
+      defaultPrice != null && Number(defaultPrice) > 0
+        ? formatPriceDigitsWithDots(String(Math.round(Number(defaultPrice))))
+        : '';
 
     if (banner) {
       if (loyaltyDiscount && !loyaltyDiscount.used) {
@@ -257,7 +276,7 @@ function openOfferFormModal(desc = '', defaultPrice = null, loyaltyDiscount = nu
       if (_offerPriceInputHandler) {
         priceInput.removeEventListener('input', _offerPriceInputHandler);
       }
-      _offerPriceInputHandler = () => updateOfferDiscountPreview();
+      _offerPriceInputHandler = (e) => { handleOfferPriceInputFormatting(e); updateOfferDiscountPreview(); };
       priceInput.addEventListener('input', _offerPriceInputHandler);
     }
     updateOfferDiscountPreview();
@@ -274,7 +293,7 @@ function closeOfferFormModal() {
 
 function resolveOfferForm() {
   const durationRaw = parseInt($('offer-form-duration')?.value || '0', 10);
-  const priceRaw    = parseFloat($('offer-form-price')?.value  || '0') || 0;
+  const priceRaw    = parseOfferPriceInputValue($('offer-form-price')?.value);
   if (!durationRaw || durationRaw < 60 || durationRaw % 60 !== 0) {
     alert('Süre 60\'ın katı olmalı (örn: 60, 120, 180)');
     return;
@@ -3786,7 +3805,7 @@ async function loadStaff() {
 
 function fmtMoney(value) {
   const n = Number(value || 0);
-  return `${n.toFixed(2)} ₺`;
+  return `${n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`;
 }
 
 let _staffStatsTargetId = null;

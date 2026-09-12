@@ -43,6 +43,7 @@ from whatsapp_messages import (
     get_webhook_cooldown_seconds,
     get_webhook_url,
     get_webhook_secret,
+    format_try,
 )
 from google_calendar_sync import (
     enqueue_appointment_sync,
@@ -3864,12 +3865,12 @@ def admin_offer_slots(tattoo_request_id):
 
         if discount_applied:
             price_line = (
-                f"💰 Ücret: *{final_price:.2f} ₺*\n"
-                f"   _(Liste fiyatı {original_price:.2f} ₺ — "
+                f"💰 Ücret: *{format_try(final_price)} ₺*\n"
+                f"   _(Liste fiyatı {format_try(original_price)} ₺ — "
                 f"%{discount_percent} sadakat indirimi: {loyalty_code})_\n\n"
             )
         elif final_price > 0:
-            price_line = f"💰 Ücret: *{final_price:.2f} ₺*\n\n"
+            price_line = f"💰 Ücret: *{format_try(final_price)} ₺*\n\n"
         else:
             price_line = ""
 
@@ -3899,7 +3900,7 @@ def admin_offer_slots(tattoo_request_id):
         if discount_applied and whatsapp_sent:
             status_msg = (
                 f'Link gönderildi — %{discount_percent} sadakat indirimi uygulandı '
-                f'({original_price:.2f} ₺ → {final_price:.2f} ₺, kod: {loyalty_code})'
+                f'({format_try(original_price)} ₺ → {format_try(final_price)} ₺, kod: {loyalty_code})'
             )
         elif discount_applied and not whatsapp_sent:
             status_msg = (
@@ -8045,7 +8046,7 @@ def cancel_customer_appointment(appointment_id):
         if tattoo_size:
             tattoo_info.append(f"Boyut: {tattoo_size}")
         tattoo_line = f"\n🖋️ Detay: {' | '.join(tattoo_info)}" if tattoo_info else ""
-        price_line = f"\n💰 Ücret: {price_value:.2f} ₺" if price_value > 0 else ""
+        price_line = f"\n💰 Ücret: {format_try(price_value)} ₺" if price_value > 0 else ""
         
         staff_message = build_staff_cancel_notification_message(
             customer_name,
