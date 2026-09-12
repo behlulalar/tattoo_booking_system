@@ -1136,9 +1136,8 @@ def _build_event_body(row):
         lines.append(f"Not: {str(request_description).strip()}")
     if price is not None and float(price or 0) > 0:
         lines.append(f"Ücret: {float(price):.2f} ₺")
-    # Isletme adi/telefon/adres etkinlik aciklamasinda gereksiz tekrar
-    # oluyordu (zaten kendi takvimleri, kime ait oldugu belli) — kaldirildi.
-    # Adres, ayri bir alan olarak asagida 'location'a hala yaziliyor.
+    # Isletme adi/telefon/adres etkinlik aciklamasinda ve location alaninda
+    # gereksiz tekrar oluyordu (zaten kendi takvimleri) — kaldirildi.
     lines.extend([
         '',
         f"Randevu ID: {appointment_id}",
@@ -1160,9 +1159,6 @@ def _build_event_body(row):
         ),
         'existing_event_id': google_event_id,
     }
-    address = (SITE_CONFIG.get('business_address') or '').strip()
-    if address:
-        body['location'] = address[:500]
     return body
 
 
@@ -1212,9 +1208,6 @@ def _build_time_off_event_body(row):
         'extendedProperties': _off_day_extended_properties(time_off_id),
         'existing_event_id': google_event_id,
     }
-    address = (SITE_CONFIG.get('business_address') or '').strip()
-    if address:
-        body['location'] = address[:500]
     return body
 
 
