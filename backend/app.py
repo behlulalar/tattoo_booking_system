@@ -2641,12 +2641,13 @@ def ensure_artist_token_version_column():
     """artists.token_version: admin JWT'lerini gecersiz kilmak icin.
 
     Token'lar stateless JWT oldugundan (imza+sure disinda sunucu tarafinda
-    hicbir kayit tutulmuyordu) cikis yapmak veya sifre degistirmek eski
-    token'i asla gecersiz kilmiyordu — token calinirsa/sizarsa "remember me"
-    ile 30 gune kadar hicbir sekilde iptal edilemiyordu. Cozum: JWT'ye
-    olusturuldugu andaki token_version damgalanir, her istekte guncel DB
-    degeriyle karsilastirilir; deger artinca o kisinin butun eski
-    token'lari tek seferde gecersiz olur (bkz. token_required, admin_logout).
+    hicbir kayit tutulmuyordu) sifre degistirmek/personel deaktivasyonu eski
+    token'i asla gecersiz kilmiyordu. Cozum: JWT'ye olusturuldugu andaki
+    token_version damgalanir, her istekte guncel DB degeriyle karsilastirilir;
+    deger artinca o kisinin butun eski token'lari tek seferde gecersiz olur
+    (bkz. token_required, change_password, update_staff, delete_staff).
+    Normal "Cikis Yap" butonu BILEREK bunu artirmaz — sadece bu cihazdaki
+    oturumu kapatir, baska cihazdaki "Beni Hatirla" oturumunu etkilemez.
     """
     conn = None
     try:
@@ -3482,32 +3483,6 @@ def admin_login():
     except Exception as e:
         log_error(logger, E_AUTH_001, "Admin girisi sirasinda beklenmeyen hata", exc=e)
         return jsonify({'success': False, 'message': 'Giriş sırasında hata oluştu'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/logout', methods=['POST'])
-@token_required
-def admin_logout():
-    """Cikis yapinca token_version artirilir — bu hesaba ait butun eski
-    JWT'ler (baska cihazlarda/sizmis kopyalar dahil) aninda gecersiz olur.
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            'UPDATE artists SET token_version = token_version + 1 WHERE id = %s',
-            (request.staff_id,),
-        )
-        conn.commit()
-        cursor.close()
-        return jsonify({'success': True})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.warning(f"admin_logout token_version artirilamadi: {e}")
-        return jsonify({'success': True})
     finally:
         release_db_connection(conn)
 

@@ -2152,14 +2152,12 @@ async function handleAdminLoginSubmit(e) {
   await login(phone, password, rememberMe);
 }
 
-async function logout({ soft = false } = {}) {
+function logout({ soft = false } = {}) {
   stopInactivityWatcher();
-  // Bilinçli çıkışta (soft değil) sunucudaki token_version artırılır —
-  // bu hesaba ait eski token'lar (başka cihaz/sızıntı) anında geçersiz olur.
-  // Yanıtı beklemek istemli çıkışı yavaşlatmasın diye sonucu beklemiyoruz.
-  if (!soft && getAdminToken()) {
-    apiCall('/admin/logout', { method: 'POST' }).catch(() => {});
-  }
+  // Bilerek sadece bu cihazda oturumu kapatir — baska bir cihazdaki
+  // "Beni Hatirla" oturumunu etkilemez (token_version sunucu tarafinda
+  // artirilmaz). Sifre degistirme/personel deaktivasyonu gibi gercekten
+  // her yerden cikis gerektiren durumlar ayrica token_version'i artirir.
   const remember = isAdminRememberMe();
   if (soft && remember) {
     clearAdminSession({ keepRememberPrefs: true, softLogout: true });
