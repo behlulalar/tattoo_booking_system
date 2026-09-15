@@ -55,9 +55,16 @@ _GCAL_ADVISORY_NAMESPACE = 0x6743
 GCAL_EVENT_ORIGIN = 'roof'
 GCAL_EVENT_ORIGIN_OFF = 'roof_off'
 _GCAL_ADVISORY_NAMESPACE_OFF = 0x6744
-_BUSY_LOOKBACK_DAYS = 90
+_BUSY_LOOKBACK_DAYS = 3
 _BUSY_LOOKAHEAD_DAYS = 90
-# Tam ±90 gun listeleme her 2 dakikada yapilmasin; incremental inbound
+# Geriye sadece 3 gun bakilir (yakin zamanda duzenlenmis gecmis etkinligi
+# yakalamak yeterli) — eskiden 90 gun geriye kadar taranip, musterinin
+# takviminde AYLARCA oncesinden kalma, sadece sanatci adiyla yazilmis
+# gecmis randevular her tur (15 dk'da bir) yeniden "manuel randevu" olarak
+# ice aktarilmaya calisiliyordu; bu hem yanlis (gecmis randevunun musaitlik
+# hesabina etkisi olmamali) hem de gereksiz DB/customer sismesine yol
+# aciyordu. Ileriye 90 gun (booking ufku) aynen korunuyor.
+# Tam ±X gun listeleme her 2 dakikada yapilmasin; incremental inbound
 # eslesmeyen etkinlikleri busy tablosuna yazar. Tam yenileme emniyet agi.
 _BUSY_REFRESH_MIN_SECONDS = int(os.getenv('GOOGLE_CALENDAR_BUSY_REFRESH_SECONDS', '900'))
 # Studio slot izgarasi saatlik (app.py SLOT_STEP_MINUTES ile ayni). Randevu
@@ -3133,13 +3140,31 @@ def _import_manual_google_event(cursor, event, calendar_id):
     )
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
 
+    # Gecmis tarihli etkinlikler HICBIR sekilde randevu/Off Day olarak
+    # ice alinmaz — sync token'in tam/artimli calismasindan bagimsiz,
+    # kesin bir emniyet siniri. Gecmis gunler zaten rezerve edilemez,
+    # icine musaitlik hesabi acisindan da bir anlami yok; sadece
+    # musterinin takviminde AYLARCA once yazilmis, sanatci adiyla
+    # eslesen eski kayitlarin her sync turunde tekrar tekrar "yeni
+    # randevu" sanilip veritabanini sismesini onler.
+    if start_dt is not None:
+        today = datetime.now(start_dt.tzinfo).date() if start_dt.tzinfo else datetime.now().date()
+        if start_dt.date() < today:
+            return 'skip'
+
     # "sanatci eslesti + telefon yok" tek basina Off Day sayilmaz: elle
     # yazilmis, telefonu unutulmus gercek bir randevu olabilir (musteri adi
     # basliktan okunabiliyorsa). _resolve_or_create_gcal_customer boyle bir
     # durumda isme gore eslestirme/synthetic telefon ile randevuyu yine de
-    # olusturabiliyor, o yuzden burada erken davranip yutmayalim. All-day
-    # etkinliklerde zamanli randevu kurulamayacagindan (saat araligi yok)
-    # bu ayrim uygulanmaz, dogrudan Off Day kabul edilir.
+    # olusturabiliyor, o yuzden burada erken davranip yutmayalim.
+    #
+    # Saatli (all-day olmayan) etkinliklerde sadece sanatci adi yazip
+    # musteri adi/telefon girilmemesi Off Day sayilmaz — gercek stüdyo
+    # kullanimida (musteri once/sonra eklenmeden sadece "Tuncer" gibi
+    # yazilan saatli randevular) bu YANLIŞLIKLA sanatciyi o saatlerde
+    # "izinli" gosteriyordu, oysa aslinda dolu bir randevuydu. Sadece
+    # tüm-gun etkinliklerde (saat araligi yok, zamanli randevu kurulamaz)
+    # "sanatci adi + detay yok" hala Off Day sayilmaya devam eder.
     parsed_staff, _staff_name, cust_name, cust_surname, parsed_phone = _parse_manual_event_title(
         summary, artists
     )
@@ -3149,7 +3174,7 @@ def _import_manual_google_event(cursor, event, calendar_id):
 
     is_off_day = bool(
         has_keyword
-        or (staff_id and not phone and (all_day or not has_real_customer_name))
+        or (staff_id and not phone and all_day and not has_real_customer_name)
     )
     if is_off_day:
         if not staff_id:
