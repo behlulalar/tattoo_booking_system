@@ -3637,6 +3637,16 @@ def _handle_inbound_event(cursor, event, calendar_id, cancelled_ids=None):
     duration_minutes = _round_duration_minutes(start_dt, end_dt) if start_dt and end_dt else 0
     exact_minutes = _exact_duration_minutes(start_dt, end_dt)
 
+    # Google Calendar'da bir randevuyu suruklemek cogunlukla saat basina
+    # denk gelmeyen bir baslangic uretir (15/30 dk'lik izgaraya kilitli).
+    # Stüdyo izgarasi saatlik oldugundan bu durumda _inbound_slot_allowed
+    # reddediyor ve degisiklik sessizce eski saatine geri donduruluyor —
+    # kullaniciya "sistem izin vermiyor" gibi goruniyordu. Cozum: saat
+    # disi bir surukleme algilaninca, en yakin saat basina asagi
+    # yuvarlanir (14:20 -> 14:00) ve o saat uzerinden devam edilir.
+    if start_dt is not None and not all_day and (start_dt.minute or start_dt.second):
+        start_dt = start_dt.replace(minute=0, second=0, microsecond=0)
+
     if status == 'completed':
         if deleted:
             enqueue_appointment_sync(cursor, appointment_id)
