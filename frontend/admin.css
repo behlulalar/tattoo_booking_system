@@ -1414,6 +1414,28 @@ strong, b, th {
     cursor: not-allowed;
 }
 
+.apt-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.apt-edit-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(183, 122, 75, 0.08);
+}
+
 /* ── Tarih Gruplu Randevu Görünümü ── */
 .apt-date-group {
     margin-bottom: 40px;
