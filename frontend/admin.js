@@ -1100,10 +1100,13 @@ function isAppointmentStartInFuture(appointment) {
   return start.getTime() > Date.now();
 }
 
+let _apptDataById = {};
+
 function renderAppointmentStatusControls(appointmentId, currentStatus, appointment) {
   const futureStart = isAppointmentStartInFuture(appointment);
   const sourceKey = appointmentSourceKey(appointment && appointment.source);
   const price = parseFloat(appointment && appointment.price ? appointment.price : 0) || 0;
+  if (appointment) _apptDataById[appointmentId] = appointment;
   const buttons = APT_STATUS_OPTIONS.map((opt) => {
     const isCurrent = opt.value === currentStatus;
     const blockComplete = opt.value === 'completed' && futureStart && !isCurrent;
@@ -1114,7 +1117,11 @@ function renderAppointmentStatusControls(appointmentId, currentStatus, appointme
       : '';
     return `<button type="button" class="apt-status-btn${isCurrent ? ' is-current' : ''}${extraClass}" data-status-id="${appointmentId}" data-status-val="${opt.value}" data-apt-source="${escapeHtml(sourceKey)}" data-apt-price="${price}" ${disabled ? 'disabled' : ''}${title}>${opt.label}</button>`;
   }).join('');
-  return `<div class="apt-status-grid"><span class="apt-status-grid-label">Durum değiştir</span><div class="apt-status-grid-btns">${buttons}</div></div>`;
+  const editable = currentStatus === 'pending' || currentStatus === 'confirmed';
+  const editBtn = editable
+    ? `<button type="button" class="apt-edit-btn" data-apt-id="${appointmentId}"><i class="fas fa-pen"></i> Düzenle</button>`
+    : '';
+  return `<div class="apt-status-grid"><span class="apt-status-grid-label">Durum değiştir</span><div class="apt-status-grid-btns">${buttons}</div></div>${editBtn}`;
 }
 
 const APPT_STATUS_UPDATING_TITLES = {
@@ -1610,6 +1617,247 @@ async function submitManualAppointment(e) {
   await reloadActiveAdminAppointments();
 }
 
+// =============================================
+// RANDEVU DÜZENLEME
+// =============================================
+let editApptDatePicker = null;
+let _editApptOriginalStaffId = null;
+
+function getEditApptStaffId() {
+  const staff = getLoggedInStaff();
+  const group = $('edit-appt-staff-group');
+  const sel = $('edit-appt-staff');
+  if (hasStudioAccess(staff?.role) && group?.style.display !== 'none' && sel?.value) {
+    return parseInt(sel.value, 10);
+  }
+  return _editApptOriginalStaffId;
+}
+
+async function populateEditApptStaffSelect(currentStaffId) {
+  const staff = getLoggedInStaff();
+  const group = $('edit-appt-staff-group');
+  const sel = $('edit-appt-staff');
+  if (!group || !sel) return;
+  if (!hasStudioAccess(staff?.role)) {
+    group.style.display = 'none';
+    return;
+  }
+  group.style.display = 'block';
+  const { ok, data } = await apiCall('/admin/staff', { method: 'GET' });
+  if (!ok || !data.success) return;
+  const list = (data.staff || []).filter((s) => isBookableStaffRole(s.role));
+  sel.innerHTML = list.map((s) =>
+    `<option value="${s.id}">${escapeHtml(s.name || '')}</option>`
+  ).join('');
+  const preferred = list.find((s) => String(s.id) === String(currentStaffId)) || list[0];
+  if (preferred) sel.value = String(preferred.id);
+}
+
+function initEditApptDatePicker() {
+  const el = $('edit-appt-date');
+  if (!el || typeof flatpickr === 'undefined') return;
+  if (editApptDatePicker) {
+    editApptDatePicker.destroy();
+    editApptDatePicker = null;
+  }
+  editApptDatePicker = flatpickr(el, {
+    locale: 'tr',
+    dateFormat: 'Y-m-d',
+    altInput: true,
+    altFormat: 'd.m.Y',
+    minDate: 'today',
+    disableMobile: true,
+    allowInput: false,
+    clickOpens: true,
+    onChange: () => loadEditApptTimeSlots(),
+  });
+}
+
+async function loadEditApptTimeSlots(preserveTime) {
+  const timeSel = $('edit-appt-time');
+  const errEl = $('edit-appt-error');
+  if (!timeSel) return;
+
+  const dateIso = editApptDatePicker?.selectedDates?.[0]
+    ? editApptDatePicker.formatDate(editApptDatePicker.selectedDates[0], 'Y-m-d')
+    : ($('edit-appt-date')?.value || '');
+  const duration = parseInt($('edit-appt-duration')?.value || '0', 10);
+  const staffId = getEditApptStaffId();
+  const apptId = $('edit-appt-id')?.value;
+
+  if (!dateIso || !staffId || !duration || duration < 60) {
+    timeSel.innerHTML = '<option value="">Önce tarih ve süre seçin</option>';
+    timeSel.disabled = true;
+    return;
+  }
+
+  timeSel.disabled = true;
+  timeSel.innerHTML = '<option value="">Saatler yükleniyor...</option>';
+  if (errEl) errEl.style.display = 'none';
+
+  const dateTr = isoDateToTr(dateIso);
+  const qs = new URLSearchParams({
+    staff_id: String(staffId),
+    date: dateTr,
+    duration_minutes: String(duration),
+    exclude_appointment_id: String(apptId || ''),
+  });
+
+  try {
+    const { ok, data } = await apiCall(`/admin/manual-appointment/available-slots?${qs.toString()}`, {
+      method: 'GET',
+    });
+    if (!ok || !data.success) {
+      timeSel.innerHTML = '<option value="">Uygun saat bulunamadı</option>';
+      return;
+    }
+    if (data.is_day_closed) {
+      timeSel.innerHTML = '<option value="">Bu gün kapalı</option>';
+      return;
+    }
+    const slots = data.available_start_slots || [];
+    if (!slots.length) {
+      timeSel.innerHTML = '<option value="">Bu gün için uygun saat yok</option>';
+      return;
+    }
+    timeSel.innerHTML = `<option value="">Saat seçin</option>` +
+      slots.map((t) => `<option value="${t}">${t}</option>`).join('');
+    timeSel.disabled = false;
+    if (preserveTime && slots.includes(preserveTime)) {
+      timeSel.value = preserveTime;
+    }
+  } catch (e) {
+    console.error(e);
+    timeSel.innerHTML = '<option value="">Yükleme hatası</option>';
+  }
+}
+
+function openEditAppointmentModal(appointment) {
+  const overlay = $('edit-appointment-overlay');
+  if (!overlay || !appointment) return;
+  $('edit-appointment-form')?.reset();
+  const errEl = $('edit-appt-error');
+  if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
+
+  _editApptOriginalStaffId = appointment.staff?.id != null ? parseInt(appointment.staff.id, 10) : null;
+  if ($('edit-appt-id')) $('edit-appt-id').value = appointment.id;
+  if ($('edit-appt-phone')) $('edit-appt-phone').value = appointment.customer?.phone || '';
+  if ($('edit-appt-name')) $('edit-appt-name').value = formatPersonName(appointment.customer?.name || '');
+  if ($('edit-appt-surname')) $('edit-appt-surname').value = formatPersonName(appointment.customer?.surname || '');
+  if ($('edit-appt-duration')) $('edit-appt-duration').value = appointment.duration_minutes || 60;
+  if ($('edit-appt-price')) $('edit-appt-price').value = parseFloat(appointment.price || 0) || '';
+
+  overlay.style.display = 'flex';
+  document.documentElement.classList.add('manual-appt-modal-open');
+  document.body.classList.add('manual-appt-modal-open');
+
+  const [d, m, y] = (appointment.date || '').split('.');
+  const dateIso = (d && m && y) ? `${y}-${m}-${d}` : localIsoDate();
+
+  initEditApptDatePicker();
+  if (editApptDatePicker) {
+    editApptDatePicker.setDate(dateIso, false);
+  } else if ($('edit-appt-date')) {
+    $('edit-appt-date').value = dateIso;
+  }
+
+  populateEditApptStaffSelect(_editApptOriginalStaffId).then(() => {
+    loadEditApptTimeSlots(appointment.time);
+  });
+}
+
+function closeEditAppointmentModal() {
+  const overlay = $('edit-appointment-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.documentElement.classList.remove('manual-appt-modal-open');
+  document.body.classList.remove('manual-appt-modal-open');
+}
+
+async function submitEditAppointment(e) {
+  e.preventDefault();
+  const errEl = $('edit-appt-error');
+  const apptId = $('edit-appt-id')?.value;
+  const rawPhone = ($('edit-appt-phone')?.value || '').trim();
+  const isIntlPhone = rawPhone.startsWith('+');
+  const phone = isIntlPhone
+    ? (isPlausibleIntlPhoneAdmin(rawPhone) ? rawPhone.replace(/\D/g, '') : '')
+    : normalizePhone10(rawPhone);
+  const name = formatPersonName($('edit-appt-name')?.value || '');
+  const surname = formatPersonName($('edit-appt-surname')?.value || '');
+  const dateIso = editApptDatePicker?.selectedDates?.[0]
+    ? editApptDatePicker.formatDate(editApptDatePicker.selectedDates[0], 'Y-m-d')
+    : ($('edit-appt-date')?.value || '');
+  const time = $('edit-appt-time')?.value;
+  const duration = parseInt($('edit-appt-duration')?.value || '0', 10);
+  const price = parseFloat($('edit-appt-price')?.value || '0') || 0;
+  const staffId = getEditApptStaffId();
+
+  if (!apptId) return;
+  if (!phone) {
+    if (errEl) {
+      errEl.textContent = isIntlPhone
+        ? 'Geçerli bir numara girin, ülke koduyla birlikte (ör. +44 7911 123456)'
+        : 'Geçerli cep numarası girin (5XX XXX XX XX)';
+      errEl.style.display = 'block';
+    }
+    return;
+  }
+  if (!name || !surname) {
+    if (errEl) { errEl.textContent = 'Ad ve soyad zorunludur'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!dateIso || !time) {
+    if (errEl) { errEl.textContent = 'Tarih ve saat seçin'; errEl.style.display = 'block'; }
+    return;
+  }
+  if (!duration || duration < 60 || duration % 60 !== 0) {
+    if (errEl) { errEl.textContent = 'Süre 60\'ın katı olmalı'; errEl.style.display = 'block'; }
+    return;
+  }
+
+  const btn = $('submit-edit-appointment-btn');
+  if (btn) btn.disabled = true;
+  if (errEl) errEl.style.display = 'none';
+
+  const body = {
+    phone,
+    name,
+    surname,
+    date: isoDateToTr(dateIso),
+    time,
+    duration_minutes: duration,
+    price,
+  };
+  if (staffId) body.staff_id = staffId;
+
+  closeEditAppointmentModal();
+  const savingOverlay = $('edit-appt-saving-overlay');
+  if (savingOverlay) savingOverlay.style.display = 'flex';
+
+  let ok, data;
+  try {
+    ({ ok, data } = await apiCall(`/admin/appointments/${apptId}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }));
+  } finally {
+    if (savingOverlay) savingOverlay.style.display = 'none';
+    if (btn) btn.disabled = false;
+  }
+
+  if (!ok || !data.success) {
+    $('edit-appointment-overlay') && ($('edit-appointment-overlay').style.display = 'flex');
+    if (errEl) {
+      errEl.textContent = data?.message || 'Randevu güncellenemedi';
+      errEl.style.display = 'block';
+    }
+    return;
+  }
+
+  showToast('Randevu güncellendi', 'success');
+  await reloadActiveAdminAppointments();
+}
+
 function googleAppointmentNeedsPrice(appointment) {
   if (!appointment) return false;
   if (appointmentSourceKey(appointment.source) !== 'google') return false;
@@ -1697,6 +1945,13 @@ function bindAppointmentStatusControls(container, afterSuccess) {
       if (!ok) return;
       if (typeof afterSuccess === 'function') await afterSuccess();
       else await reloadActiveAdminAppointments();
+    });
+  });
+  container.querySelectorAll('.apt-edit-btn[data-apt-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-apt-id');
+      const appointment = _apptDataById[id];
+      if (appointment) openEditAppointmentModal(appointment);
     });
   });
 }
@@ -4472,6 +4727,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('manual-appt-date-btn')?.addEventListener('click', () => manualApptDatePicker?.open());
   ['manual-appt-duration', 'manual-appt-staff'].forEach((id) => {
     $(id)?.addEventListener('change', loadManualAppointmentTimeSlots);
+  });
+
+  // Randevu düzenleme modalı
+  bindManualApptPhoneInput($('edit-appt-phone'));
+  $('close-edit-appointment-btn')?.addEventListener('click', closeEditAppointmentModal);
+  $('cancel-edit-appointment-btn')?.addEventListener('click', closeEditAppointmentModal);
+  $('edit-appointment-overlay')?.addEventListener('click', (e) => {
+    if (e.target === $('edit-appointment-overlay')) closeEditAppointmentModal();
+  });
+  $('edit-appointment-form')?.addEventListener('submit', submitEditAppointment);
+  $('edit-appt-date-btn')?.addEventListener('click', () => editApptDatePicker?.open());
+  ['edit-appt-duration', 'edit-appt-staff'].forEach((id) => {
+    $(id)?.addEventListener('change', () => loadEditApptTimeSlots());
+  });
+  ['edit-appt-name', 'edit-appt-surname'].forEach((id) => {
+    $(id)?.addEventListener('blur', (e) => {
+      e.target.value = formatPersonName(e.target.value);
+    });
   });
 
   document.querySelectorAll('.nav-item').forEach((item) => {

@@ -4151,6 +4151,7 @@ def admin_manual_appointment_available_slots():
     staff_id = request.args.get('staff_id', type=int)
     date_str = (request.args.get('date') or '').strip()
     duration_minutes = request.args.get('duration_minutes', type=int)
+    exclude_appointment_id = request.args.get('exclude_appointment_id', type=int)
 
     if not staff_id or not date_str:
         return jsonify({'success': False, 'message': 'staff_id ve date gerekli'}), 400
@@ -4174,6 +4175,7 @@ def admin_manual_appointment_available_slots():
             return_details=True,
             skip_past_filter=False,
             past_filter_mode='strict',
+            exclude_appointment_id=exclude_appointment_id,
         )
         cursor.close()
         return jsonify({
@@ -4475,6 +4477,192 @@ def admin_create_manual_appointment():
         if 'value too long' in err_msg or 'varchar' in err_msg:
             return jsonify({'success': False, 'message': 'Telefon veya alan uzunluğu geçersiz'}), 400
         return jsonify({'success': False, 'message': 'Randevu oluşturulamadı'}), 500
+    finally:
+        release_db_connection(conn)
+
+
+@app.route('/api/admin/appointments/<int:appointment_id>', methods=['PUT'])
+@limiter.exempt
+@token_required
+def admin_edit_appointment(appointment_id):
+    """Var olan randevuyu duzenle: saat/tarih, sanatci, musteri adi/telefonu,
+    sure, ucret. Degisiklik Google Calendar'a enqueue_appointment_sync ile
+    otomatik yansir (mevcut kuyruk mekanizmasi, ayrica bir sey gerekmez).
+    """
+    data = request.get_json() or {}
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT a.staff_id, a.appointment_date, a.appointment_time, a.duration_minutes,
+                   a.status, a.customer_id, c.phone
+              FROM appointments a
+              JOIN customers c ON c.id = a.customer_id
+             WHERE a.id = %s
+        """, (appointment_id,))
+        row = cursor.fetchone()
+        if not row:
+            cursor.close()
+            return jsonify({'success': False, 'message': 'Randevu bulunamadı'}), 404
+
+        (current_staff_id, current_date, current_time, current_duration,
+         current_status, current_customer_id, current_phone) = row
+
+        if not is_studio_admin() and current_staff_id != int(request.staff_id):
+            cursor.close()
+            return jsonify({'success': False, 'message': 'Bu randevu için yetkiniz yok'}), 403
+
+        if current_status in ('completed', 'cancelled'):
+            cursor.close()
+            return jsonify({
+                'success': False,
+                'message': 'Tamamlanmış veya iptal edilmiş randevu düzenlenemez',
+            }), 400
+
+        # Sadece gonderilen alanlar degisir; gonderilmeyenler mevcut degerinde kalir.
+        staff_id = current_staff_id
+        if 'staff_id' in data and data.get('staff_id') is not None:
+            if not is_studio_admin():
+                cursor.close()
+                return jsonify({'success': False, 'message': 'Sanatçıyı yalnızca yönetici değiştirebilir'}), 403
+            staff_id = int(data['staff_id'])
+
+        formatted_date = current_date.strftime('%Y-%m-%d')
+        if data.get('date'):
+            formatted_date = parse_tr_date(data['date'])
+            if not formatted_date:
+                cursor.close()
+                return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
+
+        time_str = str(current_time)[:5]
+        if data.get('time'):
+            time_str = data['time'].strip()[:5]
+
+        duration_minutes = int(current_duration or 60)
+        if data.get('duration_minutes'):
+            duration_minutes = int(data['duration_minutes'])
+            if duration_minutes < 60 or duration_minutes % 60 != 0:
+                cursor.close()
+                return jsonify({'success': False, 'message': 'Süre 60 dakikanın katı olmalı (örn. 60, 120, 180)'}), 400
+
+        price = None
+        if 'price' in data and data.get('price') is not None:
+            price = float(data['price'])
+            if price < 0:
+                price = 0
+
+        cursor.execute("SELECT id, name FROM artists WHERE id = %s", (staff_id,))
+        staff_row = cursor.fetchone()
+        if not staff_row:
+            cursor.close()
+            return jsonify({'success': False, 'message': 'Personel bulunamadı'}), 404
+
+        slot_changed = (
+            staff_id != current_staff_id
+            or formatted_date != current_date.strftime('%Y-%m-%d')
+            or time_str != str(current_time)[:5]
+            or duration_minutes != int(current_duration or 60)
+        )
+
+        if slot_changed:
+            available_starts, is_day_closed = compute_available_start_slots(
+                cursor, staff_id, formatted_date, duration_minutes,
+                exclude_appointment_id=appointment_id,
+            )
+            if is_day_closed:
+                cursor.close()
+                return jsonify({'success': False, 'message': 'Seçilen gün kapalı (izin / kapalı gün)'}), 400
+            if time_str not in available_starts:
+                cursor.close()
+                return jsonify({
+                    'success': False,
+                    'message': 'Seçilen saat takvimde uygun değil veya dolu. Lütfen başka saat seçin.',
+                }), 409
+
+            lock_staff_day(cursor, staff_id, formatted_date)
+            if appointment_slot_conflicts(
+                cursor, staff_id, formatted_date, time_str, duration_minutes,
+                exclude_appointment_id=appointment_id,
+            ):
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'message': 'Bu saat aralığında başka randevu var. Süreyi veya saati değiştirin.',
+                }), 409
+
+        # Musteri adi/soyadi/telefonu — telefon degistiyse baska bir musteriye
+        # (var olan ya da yeni olusturulan) baglanir; degismediyse ayni
+        # musteri kaydi guncellenir (bu musterinin TUM randevularina yansir,
+        # bilerek boyle — bkz. konusma).
+        customer_id = current_customer_id
+        name = data.get('name')
+        surname = data.get('surname')
+        phone_raw = (data.get('phone') or '').strip() if data.get('phone') is not None else None
+
+        if phone_raw:
+            phone = parse_mobile_number(phone_raw)
+            if not phone:
+                cursor.close()
+                return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
+            if phone != current_phone:
+                existing = find_customer_by_phone(cursor, phone)
+                if existing:
+                    customer_id = existing[0]
+                    if name or surname:
+                        cursor.execute(
+                            "UPDATE customers SET name = COALESCE(%s, name), surname = COALESCE(%s, surname) WHERE id = %s",
+                            (format_person_name(name) if name else None, format_person_name(surname) if surname else None, customer_id),
+                        )
+                else:
+                    cursor.execute(
+                        "INSERT INTO customers (phone, name, surname) VALUES (%s, %s, %s) RETURNING id",
+                        (phone, format_person_name(name) or '', format_person_name(surname) or ''),
+                    )
+                    customer_id = cursor.fetchone()[0]
+            elif name or surname:
+                cursor.execute(
+                    "UPDATE customers SET name = COALESCE(%s, name), surname = COALESCE(%s, surname) WHERE id = %s",
+                    (format_person_name(name) if name else None, format_person_name(surname) if surname else None, customer_id),
+                )
+        elif name or surname:
+            cursor.execute(
+                "UPDATE customers SET name = COALESCE(%s, name), surname = COALESCE(%s, surname) WHERE id = %s",
+                (format_person_name(name) if name else None, format_person_name(surname) if surname else None, customer_id),
+            )
+
+        update_fields = [
+            "staff_id = %s", "customer_id = %s", "appointment_date = %s",
+            "appointment_time = %s", "duration_minutes = %s",
+        ]
+        params = [staff_id, customer_id, formatted_date, time_str, duration_minutes]
+        if price is not None:
+            update_fields.append("price = %s")
+            params.append(price)
+        params.append(appointment_id)
+
+        cursor.execute(
+            f"UPDATE appointments SET {', '.join(update_fields)} WHERE id = %s",
+            params,
+        )
+        enqueue_appointment_sync(cursor, appointment_id)
+        conn.commit()
+        kick_gcal_queue()
+        cursor.close()
+
+        logger.info(f"Randevu düzenlendi: apt={appointment_id} by staff_id={request.staff_id}")
+        return jsonify({'success': True, 'message': 'Randevu güncellendi'})
+    except psycopg2.IntegrityError as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"admin_edit_appointment IntegrityError: {e}")
+        return jsonify({'success': False, 'message': 'Bu saat takvimde dolu. Lütfen başka saat seçin.'}), 409
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"admin_edit_appointment hatası: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': 'Randevu güncellenemedi'}), 500
     finally:
         release_db_connection(conn)
 

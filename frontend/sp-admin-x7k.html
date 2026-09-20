@@ -17,7 +17,7 @@
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20260912022040" />
+    <link rel="stylesheet" href="admin.css?v=20260920185826" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="vendor/flatpickr/flatpickr.min.css" />
     <script src="vendor/flatpickr/flatpickr.min.js"></script>
@@ -1333,6 +1333,86 @@
         </div>
     </div>
 
+    <!-- ===== RANDEVU DÜZENLE MODAL ===== -->
+    <div id="edit-appointment-overlay" class="modal-overlay" style="display:none;">
+        <div class="profile-modal manual-appointment-modal">
+            <div class="modal-header">
+                <h2><i class="fas fa-pen"></i> Randevuyu Düzenle</h2>
+                <button type="button" class="close-btn" id="close-edit-appointment-btn"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-appointment-form">
+                    <input type="hidden" id="edit-appt-id" />
+                    <div class="form-row-2">
+                        <div class="form-group">
+                            <label for="edit-appt-phone">Telefon <span>*</span></label>
+                            <input type="tel" id="edit-appt-phone" maxlength="20" required autocomplete="off" />
+                        </div>
+                        <div class="form-group" id="edit-appt-staff-group" style="display:none;">
+                            <label for="edit-appt-staff">Sanatçı</label>
+                            <select id="edit-appt-staff"></select>
+                        </div>
+                    </div>
+                    <div class="form-row-2">
+                        <div class="form-group">
+                            <label for="edit-appt-name">Ad <span>*</span></label>
+                            <input type="text" id="edit-appt-name" required autocomplete="off" />
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-appt-surname">Soyad <span>*</span></label>
+                            <input type="text" id="edit-appt-surname" required />
+                        </div>
+                    </div>
+                    <div class="form-row-2">
+                        <div class="form-group">
+                            <label for="edit-appt-duration">Süre (dk) <span>*</span></label>
+                            <input type="number" id="edit-appt-duration" min="60" step="60" required />
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-appt-price">Ücret (₺)</label>
+                            <input type="number" id="edit-appt-price" min="0" step="50" placeholder="0" />
+                        </div>
+                    </div>
+                    <div class="form-row-2">
+                        <div class="form-group manual-appt-date-group">
+                            <label for="edit-appt-date">Tarih <span>*</span></label>
+                            <div class="manual-appt-date-wrap">
+                                <input type="text" id="edit-appt-date" placeholder="Takvimden seçin" required autocomplete="off" />
+                                <button type="button" class="manual-appt-date-btn" id="edit-appt-date-btn" title="Takvim" aria-label="Takvimden tarih seç">
+                                    <i class="fas fa-calendar-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-appt-time">Saat <span>*</span></label>
+                            <select id="edit-appt-time" required disabled>
+                                <option value="">Önce tarih ve süre seçin</option>
+                            </select>
+                        </div>
+                    </div>
+                    <p id="edit-appt-error" class="error-message" style="display:none;"></p>
+                    <div class="manual-appt-actions">
+                        <button type="button" class="btn-secondary" id="cancel-edit-appointment-btn">İptal</button>
+                        <button type="submit" class="btn-primary" id="submit-edit-appointment-btn">
+                            <i class="fas fa-check"></i> Kaydet
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Randevu duzenlenirken bekleme modali -->
+    <div id="edit-appt-saving-overlay" class="modal-overlay" style="display:none;">
+        <div class="profile-modal" style="max-width:360px;text-align:center;">
+            <div class="modal-body" style="padding:36px 28px;">
+                <i class="fas fa-spinner fa-spin" style="font-size:2.2rem;color:rgba(255,255,255,0.8);margin-bottom:18px;display:block;"></i>
+                <h2 style="font-family:inherit;font-weight:400;font-size:1.2rem;letter-spacing:1px;margin-bottom:8px;">Randevu Güncelleniyor</h2>
+                <p style="color:var(--text-secondary);font-size:0.85rem;margin:0;">Lütfen bekleyin…</p>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== CUSTOM PROMPT MODAL ===== -->
     <!-- ===== TEKLIF GÖNDER MODAL (Süre + Fiyat) ===== -->
     <div id="offer-form-overlay" class="modal-overlay" style="display:none;">
@@ -1582,7 +1662,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260913123137"></script>
+    <script src="admin.js?v=20260920185826"></script>
 </body>
 
 </html>
