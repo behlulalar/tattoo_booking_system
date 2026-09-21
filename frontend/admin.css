@@ -2128,19 +2128,22 @@ strong, b, th {
     border: 1px solid var(--border);
     border-radius: 50%;
     cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     color: var(--text-secondary);
     font-size: 14px;
-    line-height: 1;
     transition: all 0.2s ease;
 }
 
+/* Flex/line-height tabanli ortalama, miras alinan buton/ikon kurallarindan
+   (ör. "button i { margin-right: 8px }") etkilenebiliyor — bunun yerine
+   mutlak konumlandirma ile geometrik olarak tam merkeze sabitliyoruz,
+   miras alinan hicbir kuraldan etkilenmez. */
 .notif-bell-btn i {
-    display: block;
-    line-height: 1;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
     margin: 0;
+    line-height: 1;
 }
 
 .notif-bell-btn:hover {
@@ -2279,11 +2282,7 @@ strong, b, th {
 
 @media (max-width: 600px) {
     .notif-panel {
-        position: fixed;
-        top: 75px;
-        right: 15px;
-        left: 15px;
-        width: auto;
+        width: calc(100vw - 30px);
     }
 }
 
