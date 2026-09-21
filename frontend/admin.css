@@ -2111,29 +2111,27 @@ strong, b, th {
     transform: rotate(-45deg) translate(5px, -6px);
 }
 
-/* Bildirim zili */
+/* Bildirim zili — dashboard section-header-actions icinde, tarih rozetinin yaninda */
 .notif-bell-wrap {
-    position: fixed;
-    top: 15px;
-    right: 15px;
-    z-index: 210;
+    position: relative;
+    display: inline-flex;
+    z-index: 20;
 }
 
 .notif-bell-btn {
     position: relative;
-    width: 50px;
-    height: 50px;
+    width: 36px;
+    height: 36px;
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 12px;
+    border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-primary);
-    font-size: 18px;
-    box-shadow: var(--shadow);
-    transition: all 0.3s ease;
+    color: var(--text-secondary);
+    font-size: 14px;
+    transition: all 0.2s ease;
 }
 
 .notif-bell-btn:hover {
@@ -2161,7 +2159,7 @@ strong, b, th {
 
 .notif-panel {
     position: absolute;
-    top: 60px;
+    top: calc(100% + 10px);
     right: 0;
     width: 340px;
     max-width: calc(100vw - 30px);
