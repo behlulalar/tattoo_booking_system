@@ -2332,7 +2332,100 @@ async function enterAdminDashboard(staff) {
   sessionStorage.setItem(ADMIN_SESSION_ACTIVE_KEY, '1');
   setPage(true);
   startInactivityWatcher();
+  startNotificationsPolling();
   await loadDashboard();
+}
+
+// ---- Bildirimler ----
+let notifPollTimer = null;
+const NOTIF_POLL_MS = 60000;
+
+function notifRelativeTime(iso) {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffMin = Math.max(0, Math.round((Date.now() - then) / 60000));
+  if (diffMin < 1) return 'az önce';
+  if (diffMin < 60) return `${diffMin} dk önce`;
+  const diffH = Math.round(diffMin / 60);
+  if (diffH < 24) return `${diffH} sa önce`;
+  const diffD = Math.round(diffH / 24);
+  return `${diffD} gün önce`;
+}
+
+function renderNotifBadge(count) {
+  const badge = $('notif-bell-badge');
+  if (!badge) return;
+  if (count > 0) {
+    badge.textContent = count > 99 ? '99+' : String(count);
+    badge.style.display = 'flex';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function renderNotifList(notifications, isStudioAdmin) {
+  const list = $('notif-panel-list');
+  if (!list) return;
+  if (!notifications.length) {
+    list.innerHTML = '<p class="notif-empty">Bildirim yok</p>';
+    return;
+  }
+  list.innerHTML = notifications.map((n) => {
+    const who = isStudioAdmin && n.staff_name ? `${escapeHtml(n.staff_name)} — ` : '';
+    return `
+      <div class="notif-item ${n.read ? '' : 'unread'}" data-id="${n.id}">
+        <div class="notif-item-title">${who}${escapeHtml(n.title)}</div>
+        <div class="notif-item-message">${escapeHtml(n.message)}</div>
+        <div class="notif-item-meta">${notifRelativeTime(n.created_at)}</div>
+      </div>`;
+  }).join('');
+}
+
+async function fetchNotifications() {
+  try {
+    const { ok, data } = await apiCall('/admin/notifications?limit=30', { method: 'GET' });
+    if (!ok || !data.success) return;
+    renderNotifBadge(data.unread_count || 0);
+    const currentStaff = getAdminStaff();
+    const isStudioAdmin = (currentStaff?.role === 'super_admin' || currentStaff?.role === 'tech_support');
+    renderNotifList(data.notifications || [], isStudioAdmin);
+  } catch (e) {
+    console.error('fetchNotifications hata:', e);
+  }
+}
+
+async function markNotificationRead(id) {
+  try {
+    await apiCall(`/admin/notifications/${id}/read`, { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+function toggleNotifPanel(forceOpen) {
+  const panel = $('notif-panel');
+  const overlay = $('notif-panel-overlay');
+  if (!panel) return;
+  const willOpen = forceOpen !== undefined ? forceOpen : panel.style.display === 'none';
+  panel.style.display = willOpen ? 'flex' : 'none';
+  if (overlay) overlay.style.display = willOpen ? 'block' : 'none';
+  if (willOpen) fetchNotifications();
+}
+
+function startNotificationsPolling() {
+  fetchNotifications();
+  if (notifPollTimer) clearInterval(notifPollTimer);
+  notifPollTimer = setInterval(fetchNotifications, NOTIF_POLL_MS);
+}
+
+function stopNotificationsPolling() {
+  if (notifPollTimer) {
+    clearInterval(notifPollTimer);
+    notifPollTimer = null;
+  }
+  renderNotifBadge(0);
+  toggleNotifPanel(false);
 }
 
 async function validateStoredAdminSession() {
@@ -2421,6 +2514,7 @@ async function handleAdminLoginSubmit(e) {
 
 function logout({ soft = false } = {}) {
   stopInactivityWatcher();
+  stopNotificationsPolling();
   // Bilerek sadece bu cihazda oturumu kapatir — baska bir cihazdaki
   // "Beni Hatirla" oturumunu etkilemez (token_version sunucu tarafinda
   // artirilmaz). Sifre degistirme/personel deaktivasyonu gibi gercekten
@@ -5413,6 +5507,32 @@ $('hamburger-btn')?.addEventListener('click', (e) => {
 $('sidebar-overlay')?.addEventListener('click', (e) => {
   e.preventDefault();
   toggleSidebar();
+});
+
+$('notif-bell-btn')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  toggleNotifPanel();
+});
+
+$('notif-panel-overlay')?.addEventListener('click', () => {
+  toggleNotifPanel(false);
+});
+
+$('notif-mark-all-read-btn')?.addEventListener('click', async () => {
+  await apiCall('/admin/notifications/read-all', { method: 'POST' });
+  await fetchNotifications();
+});
+
+$('notif-panel-list')?.addEventListener('click', async (e) => {
+  const item = e.target.closest('.notif-item');
+  if (!item) return;
+  const id = item.dataset.id;
+  if (!id || !item.classList.contains('unread')) return;
+  item.classList.remove('unread');
+  await markNotificationRead(id);
+  const badge = $('notif-bell-badge');
+  const current = parseInt(badge?.textContent || '0', 10) || 0;
+  renderNotifBadge(Math.max(0, current - 1));
 });
 
 function syncPwaOfflineBanner() {
