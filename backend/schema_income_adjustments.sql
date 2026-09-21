@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS income_adjustments (
     amount DECIMAL(10, 2) NOT NULL,  -- Pozitif: gelir ekle, Negatif: gider çıkar
     description TEXT NOT NULL,
     adjustment_date DATE NOT NULL,    -- Hangi ay/yıla ait
-    created_by INTEGER REFERENCES staff(id),
+    created_by INTEGER REFERENCES artists(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

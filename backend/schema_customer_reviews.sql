@@ -6,7 +6,7 @@ CREATE TABLE reviews (
     id SERIAL PRIMARY KEY,
     appointment_id INTEGER NOT NULL UNIQUE REFERENCES appointments(id) ON DELETE CASCADE,
     customer_id INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    staff_id INTEGER NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+    staff_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
     rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
     comment TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
