@@ -2140,6 +2140,7 @@ strong, b, th {
 .notif-bell-btn i {
     display: block;
     line-height: 1;
+    margin: 0;
 }
 
 .notif-bell-btn:hover {
