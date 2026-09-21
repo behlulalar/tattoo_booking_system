@@ -4,6 +4,19 @@ Roof Tattoo Gallery - Randevu Sistemi
 
 Bu modül kritik hatalarda e-posta bildirimi gönderir.
 Rate limiting ile spam önlenir (aynı hata için saatte 1 e-posta).
+
+Rate limit kaydı database'deki error_notification_cooldown tablosunda
+tutulur (webhook_cooldown ile aynı desen: atomik INSERT ... ON CONFLICT
+... WHERE ... RETURNING claim). Böylece Gunicorn'un birden fazla worker
+process'i olsa da aynı hata için tüm sistemde saatte en fazla 1 e-posta
+gider — önceden bu kayıt sadece bellekte (worker başına ayrı) tutulduğu
+için her worker kendi saatlik hakkını kullanıyor, aynı hata için worker
+sayısı kadar e-posta gidebiliyordu.
+
+Database'e erişilemezse (ör. DB'nin kendisi çökmüşse), o an tam da
+haber verilmesi gereken durum olduğu için bildirim engellenmez; bu
+process'in kendi bellek içi kaydına düşülür (sadece bu worker için
+doğru çalışır, ama e-postanın hiç gitmemesinden iyidir).
 """
 
 import os
@@ -15,6 +28,10 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dotenv import load_dotenv
 import logging
+
+import psycopg2
+
+from config import DATABASE_CONFIG
 
 load_dotenv()
 
@@ -32,8 +49,58 @@ EMAIL_RECIPIENT = os.getenv('EMAIL_RECIPIENT', '')
 # Rate limiting - aynı hata için minimum bekleme süresi (saniye)
 ERROR_COOLDOWN_SECONDS = 3600  # 1 saat
 
-# Son gönderilen hataların kaydı: {error_key: timestamp}
+# DB'ye erişilemediğinde kullanılan bellek içi yedek kayıt: {error_key: timestamp}
+# (sadece o anki worker process'i için geçerlidir, bkz. modül docstring'i)
 _sent_errors = {}
+
+
+def _claim_send_db(error_key):
+    """DB'de atomik rate-limit claim'i dener.
+
+    Dönüş: True (gönderilebilir, claim alındı), False (cooldown aktif),
+    None (DB'ye erişilemedi, çağıran bellek içi fallback'e düşmeli).
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(connect_timeout=5, **DATABASE_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS error_notification_cooldown (
+                error_key VARCHAR(255) PRIMARY KEY,
+                last_sent_at TIMESTAMP NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO error_notification_cooldown (error_key, last_sent_at)
+            VALUES (%s, NOW())
+            ON CONFLICT (error_key) DO UPDATE
+               SET last_sent_at = NOW()
+             WHERE error_notification_cooldown.last_sent_at < NOW() - (%s || ' seconds')::interval
+            RETURNING error_key
+            """,
+            (error_key, ERROR_COOLDOWN_SECONDS),
+        )
+        claimed = cursor.fetchone() is not None
+        conn.commit()
+        cursor.close()
+        return claimed
+    except Exception as e:
+        logger.warning(f"error_notification_cooldown DB claim başarısız, bellek içi fallback kullanılacak: {e}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def is_configured():
@@ -47,14 +114,22 @@ def _get_error_key(error_type, error_message):
 
 
 def _should_send(error_key):
-    """Rate limiting kontrolü - bu hata için e-posta gönderilmeli mi?"""
+    """Rate limiting kontrolü - bu hata için e-posta gönderilmeli mi?
+
+    Önce DB'deki paylaşımlı cooldown tablosu üzerinden atomik claim
+    denenir (tüm worker'lar için doğru sonuç verir). DB'ye erişilemezse
+    bu process'in kendi bellek içi kaydına düşülür.
+    """
+    claimed = _claim_send_db(error_key)
+    if claimed is not None:
+        return claimed
+
     current_time = time.time()
-    
-    if error_key in _sent_errors:
-        last_sent = _sent_errors[error_key]
-        if current_time - last_sent < ERROR_COOLDOWN_SECONDS:
-            return False
-    
+    last_sent = _sent_errors.get(error_key)
+    if last_sent and current_time - last_sent < ERROR_COOLDOWN_SECONDS:
+        return False
+
+    _sent_errors[error_key] = current_time
     return True
 
 
@@ -142,9 +217,6 @@ def send_error_notification(error_type, error_message, details=None):
             server.starttls()
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
             server.send_message(msg)
-        
-        # Rate limiting kaydı
-        _sent_errors[error_key] = time.time()
         
         logger.info("Hata bildirimi gonderildi | error_type=%s", error_type)
         return True
