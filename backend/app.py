@@ -1934,6 +1934,18 @@ def compute_available_start_slots(
         available_slots = _slots_from_working_hour_row(wh_start, wh_end)
         if not is_available:
             is_day_closed = True
+        elif allow_outside_working_hours:
+            # Mesai disina izin verilirken sadece bitis siniri degil, baslangic
+            # adaylari da aksama dogru genisler (ör. mesai 14-18 ise 22:00'a
+            # kadar baslangic secenegi sunulur) — 23:00'ten sonrasi/gece yarisini
+            # asan baslangiclar disarida tutuluyor, gunluk cakisma hesabinin
+            # (busy_intervals) ayni takvim gunune bagli kalmasi icin.
+            wh_end_minutes = wh_end.hour * 60 + wh_end.minute
+            extended_cap = 23 * 60
+            if extended_cap > wh_end_minutes:
+                available_slots += _generate_half_hour_slots(
+                    wh_end_minutes, extended_cap, step=SLOT_STEP_MINUTES
+                )
     elif _staff_has_working_hours(cursor, staff_id):
         # Sanatçı saatlerini kaydetmiş ama bu gün için satır yok → kapalı
         available_slots = []
@@ -1998,6 +2010,11 @@ def compute_available_start_slots(
     for start in available_slots:
         start_m = _time_str_to_minutes(start)
         end_m = start_m + req
+        # Gun asimi (gece yarisini gecme) her zaman engellenir — override bile
+        # olsa appointment_date/appointment_time tek bir takvim gunune ait
+        # kabul edilir, cakisma hesabi (busy_intervals) da ayni gune bakar.
+        if end_m > 24 * 60:
+            continue
         # allow_outside_working_hours: admin, o gunun mesai bitisini asan (ama
         # yine de gun icinde baslayan) bir randevuya bilerek izin veriyor —
         # cakisma kontrolu (asagidaki overlap kontrolu + DB'deki
