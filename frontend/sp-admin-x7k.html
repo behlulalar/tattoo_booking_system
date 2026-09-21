@@ -17,7 +17,7 @@
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20260920185826" />
+    <link rel="stylesheet" href="admin.css?v=20260921142039" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="vendor/flatpickr/flatpickr.min.css" />
     <script src="vendor/flatpickr/flatpickr.min.js"></script>
@@ -1390,6 +1390,19 @@
                             </select>
                         </div>
                     </div>
+                    <div class="form-group manual-appt-notify-group">
+                        <label class="manual-appt-notify" for="edit-appt-allow-outside-hours">
+                            <input type="checkbox" id="edit-appt-allow-outside-hours" />
+                            <span class="manual-appt-notify-content">
+                                <span class="manual-appt-notify-icon"><i class="fas fa-business-time"></i></span>
+                                <span class="manual-appt-notify-copy">
+                                    <strong>Mesai saati dışına izin ver</strong>
+                                    <small>Bu randevu mesai bitişini aşabilir, çakışma kontrolü yine de geçerlidir</small>
+                                </span>
+                            </span>
+                            <span class="manual-appt-notify-switch" aria-hidden="true"></span>
+                        </label>
+                    </div>
                     <p id="edit-appt-error" class="error-message" style="display:none;"></p>
                     <div class="manual-appt-actions">
                         <button type="button" class="btn-secondary" id="cancel-edit-appointment-btn">İptal</button>
@@ -1662,7 +1675,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260920185826"></script>
+    <script src="admin.js?v=20260921142039"></script>
 </body>
 
 </html>

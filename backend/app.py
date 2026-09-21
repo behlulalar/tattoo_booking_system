@@ -1912,6 +1912,7 @@ def compute_available_start_slots(
     skip_past_filter=False,
     past_filter_mode='buffer',
     exclude_appointment_id=None,
+    allow_outside_working_hours=False,
 ):
     """Belirli gün/personel için uygun başlangıç saatlerini döndürür."""
     from datetime import datetime as dt
@@ -1997,7 +1998,11 @@ def compute_available_start_slots(
     for start in available_slots:
         start_m = _time_str_to_minutes(start)
         end_m = start_m + req
-        if end_m > work_end_m:
+        # allow_outside_working_hours: admin, o gunun mesai bitisini asan (ama
+        # yine de gun icinde baslayan) bir randevuya bilerek izin veriyor —
+        # cakisma kontrolu (asagidaki overlap kontrolu + DB'deki
+        # appointments_no_overlap EXCLUDE constraint) hala tam calisir.
+        if not allow_outside_working_hours and end_m > work_end_m:
             continue
         if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
             continue
@@ -4150,6 +4155,7 @@ def admin_manual_appointment_available_slots():
     date_str = (request.args.get('date') or '').strip()
     duration_minutes = request.args.get('duration_minutes', type=int)
     exclude_appointment_id = request.args.get('exclude_appointment_id', type=int)
+    allow_outside_working_hours = (request.args.get('allow_outside_working_hours') or '').lower() in ('1', 'true', 'yes')
 
     if not staff_id or not date_str:
         return jsonify({'success': False, 'message': 'staff_id ve date gerekli'}), 400
@@ -4174,6 +4180,7 @@ def admin_manual_appointment_available_slots():
             skip_past_filter=False,
             past_filter_mode='strict',
             exclude_appointment_id=exclude_appointment_id,
+            allow_outside_working_hours=allow_outside_working_hours,
         )
         cursor.close()
         return jsonify({
@@ -4565,9 +4572,11 @@ def admin_edit_appointment(appointment_id):
         )
 
         if slot_changed:
+            allow_outside_working_hours = bool(data.get('allow_outside_working_hours'))
             available_starts, is_day_closed = compute_available_start_slots(
                 cursor, staff_id, formatted_date, duration_minutes,
                 exclude_appointment_id=appointment_id,
+                allow_outside_working_hours=allow_outside_working_hours,
             )
             if is_day_closed:
                 cursor.close()
