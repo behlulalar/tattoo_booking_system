@@ -258,10 +258,8 @@ if JWT_SECRET.strip().lower() in _JWT_SECRET_PLACEHOLDERS or len(JWT_SECRET.stri
 # Bot Phone Number (webhook filtreleme için)
 BOT_PHONE_NUMBER = os.getenv('BOT_PHONE_NUMBER', '5359708001')
 
-# Verification codes storage (thread-safe dictionary with automatic cleanup)
-verification_codes = {}
-verification_lock = Lock()  # Thread safety için Lock
-VERIFICATION_CODES_MAX_SIZE = 10000  # Maksimum entry sayısı (memory leak önleme)
+# Doğrulama kodları artık database'de saklanıyor (verification_codes tablosu),
+# worker'lar arası paylaşımlı. Bkz: verify_phone_code_from_db(), send_whatsapp_code().
 
 # Doğrulama kodu gönderme istatistikleri (Uptime Robot monitoring için)
 verification_stats = []  # List of {'timestamp': float, 'success': bool}
