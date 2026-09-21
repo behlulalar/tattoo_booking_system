@@ -1,3 +1,9 @@
+> ⚠️ Bu klasörde `DANGER_` önekli dosyalar (ör. `DANGER_clear_tables.sql`) vardır.
+> Bunlar normal migration'lar DEĞİLDİR — geri alınamaz `TRUNCATE`/`DROP`/toplu
+> `DELETE` işlemleri içerirler, sadece elle ve bilerek, tek seferlik
+> çalıştırılmak için tutulur. `add_*.sql` gibi normal migration'larla
+> karıştırmayın, production'a karşı yanlışlıkla çalıştırmayın.
+
 # Database Migration - Webhook Cooldown Tablosu
 
 ## Problem
