@@ -1696,12 +1696,14 @@ async function loadEditApptTimeSlots(preserveTime) {
   if (errEl) errEl.style.display = 'none';
 
   const dateTr = isoDateToTr(dateIso);
+  const allowOutsideHours = !!$('edit-appt-allow-outside-hours')?.checked;
   const qs = new URLSearchParams({
     staff_id: String(staffId),
     date: dateTr,
     duration_minutes: String(duration),
     exclude_appointment_id: String(apptId || ''),
   });
+  if (allowOutsideHours) qs.set('allow_outside_working_hours', '1');
 
   try {
     const { ok, data } = await apiCall(`/admin/manual-appointment/available-slots?${qs.toString()}`, {
@@ -1827,6 +1829,7 @@ async function submitEditAppointment(e) {
     time,
     duration_minutes: duration,
     price,
+    allow_outside_working_hours: !!$('edit-appt-allow-outside-hours')?.checked,
   };
   if (staffId) body.staff_id = staffId;
 
@@ -4738,8 +4741,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   $('edit-appointment-form')?.addEventListener('submit', submitEditAppointment);
   $('edit-appt-date-btn')?.addEventListener('click', () => editApptDatePicker?.open());
-  ['edit-appt-duration', 'edit-appt-staff'].forEach((id) => {
-    $(id)?.addEventListener('change', () => loadEditApptTimeSlots());
+  ['edit-appt-duration', 'edit-appt-staff', 'edit-appt-allow-outside-hours'].forEach((id) => {
+    $(id)?.addEventListener('change', () => loadEditApptTimeSlots($('edit-appt-time')?.value));
   });
   ['edit-appt-name', 'edit-appt-surname'].forEach((id) => {
     $(id)?.addEventListener('blur', (e) => {
