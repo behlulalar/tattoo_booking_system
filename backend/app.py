@@ -118,6 +118,7 @@ from loyalty_points import (
     redeem_loyalty_discount,
     validate_loyalty_code_for_customer,
 )
+from notifications import create_notification
 import os
 import json
 import random
@@ -981,6 +982,52 @@ WHATSAPP_BULK_SEND_MAX_DELAY = float(os.getenv('WHATSAPP_BULK_SEND_MAX_DELAY_SEC
 # OTP gibi musteri bekleyen tekil gonderimler bu tavana dahil DEGILDIR.
 WHATSAPP_BULK_HOURLY_CAP = int(os.getenv('WHATSAPP_BULK_HOURLY_CAP', '15'))
 WHATSAPP_BULK_DAILY_CAP = int(os.getenv('WHATSAPP_BULK_DAILY_CAP', '60'))
+
+
+def ensure_notifications_table():
+    """Panel ici bildirim merkezi icin tabloyu olusturur (yoksa).
+
+    Google Calendar'da mesai/cakisma nedeniyle geri alinan bir surukleme
+    gibi "sistemin sessizce yaptigi" degisiklikleri gorunur kilmak icin.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                staff_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+                type VARCHAR(40) NOT NULL,
+                title VARCHAR(200) NOT NULL,
+                message TEXT NOT NULL,
+                appointment_id INTEGER REFERENCES appointments(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                read_at TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_notifications_staff_unread
+            ON notifications(staff_id, read_at) WHERE read_at IS NULL
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_notifications_staff_created
+            ON notifications(staff_id, created_at DESC)
+            """
+        )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_notifications_table: %s', e)
+    finally:
+        release_db_connection(conn)
 
 
 def _bulk_send_delay():
@@ -6303,6 +6350,140 @@ def delete_income_adjustment(adjustment_id):
 
 
 
+@app.route('/api/admin/notifications', methods=['GET'])
+@limiter.exempt
+@token_required
+def get_admin_notifications():
+    """Panel ici bildirimler. Studio admin (super_admin/tech_support) tum
+    personelin bildirimlerini gorur, diger personel sadece kendininkileri.
+    """
+    limit = request.args.get('limit', type=int) or 30
+    limit = max(1, min(limit, 100))
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if is_studio_admin():
+            cursor.execute(
+                """
+                SELECT n.id, n.staff_id, a.name, n.type, n.title, n.message,
+                       n.appointment_id, n.created_at, n.read_at
+                  FROM notifications n
+                  JOIN artists a ON a.id = n.staff_id
+                 ORDER BY n.created_at DESC
+                 LIMIT %s
+                """,
+                (limit,),
+            )
+            unread_query = "SELECT COUNT(*) FROM notifications WHERE read_at IS NULL"
+            unread_params = ()
+        else:
+            cursor.execute(
+                """
+                SELECT n.id, n.staff_id, a.name, n.type, n.title, n.message,
+                       n.appointment_id, n.created_at, n.read_at
+                  FROM notifications n
+                  JOIN artists a ON a.id = n.staff_id
+                 WHERE n.staff_id = %s
+                 ORDER BY n.created_at DESC
+                 LIMIT %s
+                """,
+                (request.staff_id, limit),
+            )
+            unread_query = "SELECT COUNT(*) FROM notifications WHERE read_at IS NULL AND staff_id = %s"
+            unread_params = (request.staff_id,)
+
+        rows = cursor.fetchall()
+        cursor.execute(unread_query, unread_params)
+        unread_count = cursor.fetchone()[0]
+        cursor.close()
+
+        notifications = [{
+            'id': r[0],
+            'staff_id': r[1],
+            'staff_name': r[2],
+            'type': r[3],
+            'title': r[4],
+            'message': r[5],
+            'appointment_id': r[6],
+            'created_at': r[7].isoformat() if r[7] else None,
+            'read': r[8] is not None,
+        } for r in rows]
+
+        return jsonify({
+            'success': True,
+            'notifications': notifications,
+            'unread_count': unread_count,
+        })
+    except Exception as e:
+        logger.error(f"get_admin_notifications hatası: {e}")
+        return jsonify({'success': False, 'message': 'Bildirimler alınamadı'}), 500
+    finally:
+        release_db_connection(conn)
+
+
+@app.route('/api/admin/notifications/<int:notification_id>/read', methods=['POST'])
+@limiter.exempt
+@token_required
+def mark_admin_notification_read(notification_id):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if is_studio_admin():
+            cursor.execute(
+                "UPDATE notifications SET read_at = NOW() WHERE id = %s AND read_at IS NULL RETURNING id",
+                (notification_id,),
+            )
+        else:
+            cursor.execute(
+                """
+                UPDATE notifications SET read_at = NOW()
+                 WHERE id = %s AND staff_id = %s AND read_at IS NULL
+                RETURNING id
+                """,
+                (notification_id, request.staff_id),
+            )
+        updated = cursor.fetchone() is not None
+        conn.commit()
+        cursor.close()
+        return jsonify({'success': True, 'updated': updated})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"mark_admin_notification_read hatası: {e}")
+        return jsonify({'success': False, 'message': 'Bildirim güncellenemedi'}), 500
+    finally:
+        release_db_connection(conn)
+
+
+@app.route('/api/admin/notifications/read-all', methods=['POST'])
+@limiter.exempt
+@token_required
+def mark_all_admin_notifications_read():
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if is_studio_admin():
+            cursor.execute("UPDATE notifications SET read_at = NOW() WHERE read_at IS NULL")
+        else:
+            cursor.execute(
+                "UPDATE notifications SET read_at = NOW() WHERE staff_id = %s AND read_at IS NULL",
+                (request.staff_id,),
+            )
+        conn.commit()
+        cursor.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"mark_all_admin_notifications_read hatası: {e}")
+        return jsonify({'success': False, 'message': 'Bildirimler güncellenemedi'}), 500
+    finally:
+        release_db_connection(conn)
+
+
 @app.route('/api/admin/me', methods=['GET'])
 @token_required
 def get_admin_me():
@@ -7638,6 +7819,7 @@ def start_scheduler_if_master():
 
 ensure_whatsapp_queue_table()
 ensure_whatsapp_bulk_send_log_table()
+ensure_notifications_table()
 
 # Scheduler'ı başlat (sadece bir process başlatacak)
 start_scheduler_if_master()

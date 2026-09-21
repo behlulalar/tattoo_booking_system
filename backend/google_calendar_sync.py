@@ -28,6 +28,7 @@ from config import DATABASE_CONFIG, SITE_CONFIG, get_google_calendar_config
 from error_codes import E_GCAL_001, E_GCAL_002, E_GCAL_003, E_GCAL_004
 from logging_setup import log_error
 from whatsapp_messages import format_try
+from notifications import create_notification
 
 logger = logging.getLogger(__name__)
 
@@ -3697,6 +3698,22 @@ def _handle_inbound_event(cursor, event, calendar_id, cancelled_ids=None):
     )
     if not allowed:
         enqueue_appointment_sync(cursor, appointment_id)
+        create_notification(
+            cursor,
+            staff_id,
+            'gcal_move_reverted',
+            'Google Calendar taşıması geri alındı',
+            (
+                'Randevu Google Calendar\'da %s %s\'e taşınmak istendi ama mesai '
+                'saati dışında veya çakışma nedeniyle uygun olmadığı için eski '
+                'saatine (%s) geri alındı.'
+            ) % (
+                local_date.strftime('%d.%m.%Y'),
+                local_time,
+                str(apt_time)[:5],
+            ),
+            appointment_id,
+        )
         return 'revert'
 
     if _apply_inbound_move(
