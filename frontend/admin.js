@@ -1673,6 +1673,15 @@ function initEditApptDatePicker() {
   });
 }
 
+function slotEndLabel(startTime, durationMinutes) {
+  const [h, m] = String(startTime || '').split(':').map((n) => parseInt(n, 10) || 0);
+  const dur = parseInt(durationMinutes, 10) || 0;
+  let total = ((h * 60 + m + dur) % 1440 + 1440) % 1440;
+  const eh = String(Math.floor(total / 60)).padStart(2, '0');
+  const em = String(total % 60).padStart(2, '0');
+  return `${eh}:${em}`;
+}
+
 async function loadEditApptTimeSlots(preserveTime) {
   const timeSel = $('edit-appt-time');
   const errEl = $('edit-appt-error');
@@ -1723,7 +1732,7 @@ async function loadEditApptTimeSlots(preserveTime) {
       return;
     }
     timeSel.innerHTML = `<option value="">Saat seçin</option>` +
-      slots.map((t) => `<option value="${t}">${t}</option>`).join('');
+      slots.map((t) => `<option value="${t}">${t} - ${slotEndLabel(t, duration)}</option>`).join('');
     timeSel.disabled = false;
     if (preserveTime && slots.includes(preserveTime)) {
       timeSel.value = preserveTime;
