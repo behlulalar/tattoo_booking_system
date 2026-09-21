@@ -1,3 +1,7 @@
+-- ============================================================
+-- ⚠️  TEHLİKELİ / GERİ ALINAMAZ — normal migration akışının PARÇASI DEĞİLDİR
+-- Sadece elle, bilerek ve tek seferlik çalıştırılmak içindir.
+-- ============================================================
 -- Çoklu tablo temizleme scripti
 -- DİKKAT: Bu işlem geri alınamaz!
 -- Temizlenecek tablolar: appointments, income_adjustments, customers, reviews

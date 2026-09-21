@@ -1,3 +1,7 @@
+-- ============================================================
+-- ⚠️  TEHLİKELİ — normal migration akışının PARÇASI DEĞİLDİR
+-- Sadece elle, bilerek ve tek seferlik çalıştırılmak içindir.
+-- ============================================================
 -- =============================================
 -- RESET WEBHOOK COOLDOWN
 -- Tarih: 2026-01-05

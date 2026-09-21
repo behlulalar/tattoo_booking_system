@@ -1,3 +1,7 @@
+-- ============================================================
+-- ⚠️  TEHLİKELİ / GERİ ALINAMAZ — normal migration akışının PARÇASI DEĞİLDİR
+-- Sadece elle, bilerek ve tek seferlik çalıştırılmak içindir.
+-- ============================================================
 -- Nihal Karagöz (şimdi Berke Uzun, staff_id=1) demo randevu/talep temizliği.
 -- Sanatçı kaydı silinmez.
 
