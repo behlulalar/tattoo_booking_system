@@ -2122,6 +2122,8 @@ strong, b, th {
     position: relative;
     width: 36px;
     height: 36px;
+    padding: 0;
+    margin: 0;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 50%;
@@ -2131,7 +2133,13 @@ strong, b, th {
     justify-content: center;
     color: var(--text-secondary);
     font-size: 14px;
+    line-height: 1;
     transition: all 0.2s ease;
+}
+
+.notif-bell-btn i {
+    display: block;
+    line-height: 1;
 }
 
 .notif-bell-btn:hover {
