@@ -4871,6 +4871,10 @@ def update_appointment_status(appointment_id):
         apt_source = (appointment[13] or 'admin').lower()
         apt_staff = appointment[14]
 
+        if not is_studio_admin() and int(apt_staff or 0) != int(request.staff_id):
+            cursor.close()
+            return jsonify({'success': False, 'message': 'Bu randevu için yetkiniz yok'}), 403
+
         if old_status != new_status and new_status == 'completed':
             if not _appointment_has_started(appointment[0], appointment[1]):
                 cursor.close()
