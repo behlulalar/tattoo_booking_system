@@ -2130,7 +2130,13 @@ strong, b, th {
 .notif-bell-wrap {
     position: relative;
     display: inline-flex;
-    z-index: 20;
+    /* .notif-panel-overlay z-index:205 ile tam ekran kapliyor (disari
+       tiklayinca paneli kapatmak icin). Bu wrap'in z-index'i overlay'den
+       DUSUK oldugunda, icindeki .notif-panel gorsel olarak ustte gorunse
+       bile gercek tiklamalar overlay'e gidiyordu — "Tumunu okundu
+       isaretle" butonu hicbir zaman tetiklenmiyordu. Overlay'in ustune
+       cikariyoruz. */
+    z-index: 210;
 }
 
 .notif-bell-btn {

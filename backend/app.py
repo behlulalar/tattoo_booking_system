@@ -74,6 +74,7 @@ from google_calendar_sync import (
     reset_artists_cache as reset_gcal_artists_cache,
     set_cancel_notifier as set_gcal_cancel_notifier,
     set_reschedule_notifier as set_gcal_reschedule_notifier,
+    set_import_notifier as set_gcal_import_notifier,
     is_real_customer_phone,
 )
 from whatsapp_provider import (
@@ -2321,8 +2322,86 @@ def _gcal_notify_moved_from_google(moved):
             )
 
 
+def _gcal_notify_imported_from_google(appointment_ids):
+    """Google Takvim'e elle yazilip (site/admin panelden degil) sisteme
+    randevu olarak alinan etkinlikler icin musteri/sanatci WhatsApp'i.
+
+    poll_inbound_changes / refresh_external_busy commit ettikten SONRA arka
+    plan thread'inden cagrilir; buradaki hata senkronu etkilemez. Admin
+    panelden manuel randevuda kullanilan ayni "olusturuldu" sablonlari
+    kullanilir (manual=True) — kaynagin Google Takvim olmasi, musteriye
+    giden mesajin icerigini degistirmez.
+    """
+    if not appointment_ids:
+        return
+
+    conn = None
+    rows = []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT a.id, a.appointment_date, a.appointment_time, a.duration_minutes, a.price,
+                   c.phone, COALESCE(c.name, ''), COALESCE(c.surname, ''),
+                   s.name, s.phone
+              FROM appointments a
+              JOIN customers c ON c.id = a.customer_id
+              JOIN artists s ON s.id = a.staff_id
+             WHERE a.id = ANY(%s) AND a.status NOT IN ('cancelled', 'completed')
+            """,
+            (list(int(i) for i in appointment_ids),),
+        )
+        rows = cursor.fetchall() or []
+        cursor.close()
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.warning(f"Google manuel randevu bildirimi icin randevu okunamadi: {e}")
+        return
+    finally:
+        release_db_connection(conn)
+
+    for apt_id, apt_date, apt_time, duration_minutes, price, phone, name, surname, staff_name, staff_phone in rows:
+        date_str = apt_date.strftime('%d.%m.%Y')
+        time_str = str(apt_time)[:5]
+        customer_name = f"{name} {surname}".strip()
+        try:
+            if is_real_customer_phone(phone):
+                send_wapio_message(
+                    phone,
+                    build_appointment_created_customer_message(
+                        date_str, time_str, duration_minutes, price,
+                        staff_name=staff_name,
+                        customer_name=customer_name or None,
+                    ),
+                )
+            if staff_phone:
+                send_wapio_message(
+                    staff_phone,
+                    build_appointment_created_staff_message(
+                        phone, date_str, time_str, duration_minutes, price,
+                        customer_name=customer_name or _phone_display_for_message(phone),
+                        manual=True,
+                    ),
+                )
+            logger.info(
+                "Google manuel randevu bildirimi gonderildi | apt=%s %s %s",
+                apt_id, date_str, time_str,
+            )
+        except Exception as send_err:
+            logger.warning(
+                f"Google manuel randevu bildirimi gonderilemedi apt={apt_id}: {send_err}"
+            )
+
+
 set_gcal_cancel_notifier(_gcal_notify_cancelled_from_google)
 set_gcal_reschedule_notifier(_gcal_notify_moved_from_google)
+set_gcal_import_notifier(_gcal_notify_imported_from_google)
 
 
 def _minutes_from_time_value(t):
