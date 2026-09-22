@@ -93,6 +93,36 @@ window.visualViewport?.addEventListener('scroll', applyKeyboardInset);
 const phoneInput = document.getElementById('phone');
 const phoneForm = document.getElementById('phone-form');
 const phoneCheckBtn = document.getElementById('phone-check-btn');
+const phoneSubmitBtn = document.getElementById('phone-submit-btn');
+const consentKvkkInput = document.getElementById('consent-kvkk');
+const consentMarketingInput = document.getElementById('consent-marketing');
+
+// KVKK zorunlu onaylanmadan telefon adımına devam edilemez (elektronik
+// ileti onayı isteğe bağlı). Devam Et / ▶ butonu buna göre kilitlenir.
+function updateConsentGateState() {
+  const accepted = !!consentKvkkInput?.checked;
+  if (phoneSubmitBtn) phoneSubmitBtn.disabled = !accepted;
+  if (phoneCheckBtn) phoneCheckBtn.disabled = !accepted;
+}
+consentKvkkInput?.addEventListener('change', updateConsentGateState);
+updateConsentGateState();
+
+function openLegalModal(overlayEl) {
+  if (!overlayEl) return;
+  overlayEl.style.display = 'flex';
+}
+function closeLegalModal(overlayEl) {
+  if (!overlayEl) return;
+  overlayEl.style.display = 'none';
+}
+const kvkkOverlay = document.getElementById('kvkk-overlay');
+const marketingOverlay = document.getElementById('marketing-overlay');
+document.getElementById('kvkk-link')?.addEventListener('click', () => openLegalModal(kvkkOverlay));
+document.getElementById('marketing-link')?.addEventListener('click', () => openLegalModal(marketingOverlay));
+document.getElementById('kvkk-modal-close')?.addEventListener('click', () => closeLegalModal(kvkkOverlay));
+document.getElementById('marketing-modal-close')?.addEventListener('click', () => closeLegalModal(marketingOverlay));
+kvkkOverlay?.addEventListener('click', (e) => { if (e.target === kvkkOverlay) closeLegalModal(kvkkOverlay); });
+marketingOverlay?.addEventListener('click', (e) => { if (e.target === marketingOverlay) closeLegalModal(marketingOverlay); });
 
 const verifyOverlay = document.getElementById('verify-overlay');
 const verifyForm = document.getElementById('verify-form');
@@ -732,6 +762,14 @@ phoneForm?.addEventListener('submit', async (e) => {
   // devam ederken yeni gonderimi engelle.
   if (sendCodeInFlight) return;
 
+  if (!consentKvkkInput?.checked) {
+    showInlineError(
+      document.getElementById('phone-form-error'),
+      'Devam etmek için Kişisel Verilerin Korunması metnini onaylamanız gerekiyor.',
+    );
+    return;
+  }
+
   // Uluslararasi numarada backend'in sakladigi formatla (ulke kodu dahil,
   // + ve bosluksuz rakamlar) birebir eslesmesi lazim — sonraki dogrulama
   // adiminda (verify-code) ayni "phone" degeri geri gonderiliyor.
@@ -1122,6 +1160,8 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
     config_undecided: undecided,
     reference_image: '',
     description: '',
+    kvkk_accepted: !!consentKvkkInput?.checked,
+    marketing_consent: !!consentMarketingInput?.checked,
   };
 
   if (loyaltyCodeRaw) {

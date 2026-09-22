@@ -31,7 +31,7 @@
     <link rel="icon" type="image/png" sizes="192x192" href="img/pwa/maskable-192.png" />
     <link rel="shortcut icon" type="image/png" href="img/pwa/maskable-192.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
-    <link rel="stylesheet" href="style.css?v=20260912015130" />
+    <link rel="stylesheet" href="style.css?v=20260922132128" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260826183000" />
     <!-- Google Font -->
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -174,12 +174,79 @@
                             5 ile başlayan 10 haneli cep numarası girin (ör. 530 123 45 67). Başında 0 olmasın.
                         </p>
                         <button type="button" id="phone-intl-toggle" class="phone-intl-toggle">Yurt dışı numaram var</button>
+
+                        <div class="consent-group">
+                            <label class="consent-check">
+                                <input type="checkbox" id="consent-kvkk" />
+                                <span><button type="button" class="consent-link" id="kvkk-link">Kişisel Verilerin Korunması</button> metnini okudum ve kabul ediyorum.</span>
+                            </label>
+                            <label class="consent-check">
+                                <input type="checkbox" id="consent-marketing" />
+                                <span>Kampanyalardan haberdar olmak için <button type="button" class="consent-link" id="marketing-link">elektronik ileti</button> almak istiyorum.</span>
+                            </label>
+                        </div>
+
                         <div id="phone-form-error" class="customer-error-message" style="display: none; margin-top: 12px;"></div>
 
-                        <button type="submit" class="primary-btn">
+                        <button type="submit" class="primary-btn" id="phone-submit-btn" disabled>
                             Numarayı Doğrula
                         </button>
                     </form>
+                </div>
+            </div>
+
+            <!-- KVKK Aydınlatma Metni -->
+            <div id="kvkk-overlay" class="legal-modal-overlay" style="display: none;">
+                <div class="legal-modal" role="dialog" aria-modal="true" aria-labelledby="kvkk-modal-title">
+                    <button type="button" class="legal-modal-close" id="kvkk-modal-close" aria-label="Kapat">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    <h2 id="kvkk-modal-title">Kişisel Verilerin Korunması Hakkında Aydınlatma Metni</h2>
+                    <div class="legal-modal-body">
+                        <p>6698 sayılı Kişisel Verilerin Korunması Kanunu ("KVKK") uyarınca, veri sorumlusu sıfatıyla Tuncer Ürer (Roof Tattoo Gallery) tarafından, aşağıda açıklanan kapsamda kişisel verileriniz işlenmektedir.</p>
+
+                        <h3>1. Veri Sorumlusu</h3>
+                        <p>Roof Tattoo Gallery<br>
+                        Hüseyin Rahmi Sokak, Cumhuriyet Mahallesi No:42, 54100 Adapazarı/Sakarya<br>
+                        İletişim: +90 537 912 18 41</p>
+
+                        <h3>2. İşlenen Kişisel Veriler</h3>
+                        <p>Bu randevu sistemi üzerinden; ad, soyad, telefon numarası, dövme talebinize ilişkin bilgiler (vücut bölgesi, tarz, boyut, varsa referans görsel/açıklama), randevu ve iptal geçmişiniz ile sadakat programı kapsamındaki puan/indirim bilgileriniz işlenmektedir.</p>
+
+                        <h3>3. İşlenme Amaçları</h3>
+                        <p>Kişisel verileriniz; kimliğinizin doğrulanması (WhatsApp ile tek kullanımlık doğrulama kodu gönderimi), randevu talebinizin oluşturulması, planlanması ve yürütülmesi, randevu hatırlatma ve bakım/krem hatırlatma mesajlarının gönderilmesi, sadakat puanı ve indirim işlemlerinin yürütülmesi, müşteri ilişkilerinin yönetimi ve yasal yükümlülüklerimizin yerine getirilmesi amaçlarıyla işlenmektedir.</p>
+
+                        <h3>4. Hukuki Sebep</h3>
+                        <p>Kişisel verileriniz; bir sözleşmenin kurulması veya ifasıyla doğrudan ilgili olması, hukuki yükümlülüğümüzün yerine getirilmesi ve meşru menfaatlerimiz (KVKK m.5/2) hukuki sebeplerine dayanılarak işlenmektedir.</p>
+
+                        <h3>5. Kişisel Verilerin Aktarılması</h3>
+                        <p>Randevu ve bildirim süreçlerinin yürütülebilmesi amacıyla telefon numaranız, mesajlaşma altyapısı sağlayıcımız (WhatsApp) ile paylaşılmaktadır. Randevularınızın takvim üzerinde yönetilebilmesi amacıyla (bu özellik aktifse) randevu bilgileriniz Google LLC'ye ait Google Takvim hizmetine aktarılabilir; bu aktarım yurt dışına veri aktarımı niteliğinde olup KVKK'nın ilgili hükümlerine uygun şekilde gerçekleştirilir. Ayrıca bu randevu sisteminin teknik altyapısını sağlayan yazılım hizmet sağlayıcımız BehTech, veri işleyen sıfatıyla kişisel verilerinize sınırlı ve gerekli ölçüde erişebilir.</p>
+
+                        <h3>6. Toplama Yöntemi</h3>
+                        <p>Kişisel verileriniz, bu internet sitesi üzerinden doldurduğunuz form ve verdiğiniz bilgiler yoluyla elektronik ortamda toplanmaktadır.</p>
+
+                        <h3>7. Saklama Süresi</h3>
+                        <p>Kişisel verileriniz, işlenme amaçlarının gerektirdiği süre boyunca ve ilgili mevzuatta öngörülen zamanaşımı süreleri saklı kalmak kaydıyla saklanmaktadır.</p>
+
+                        <h3>8. Haklarınız</h3>
+                        <p>KVKK'nın 11. maddesi uyarınca; kişisel verinizin işlenip işlenmediğini öğrenme, işlenmişse buna ilişkin bilgi talep etme, işlenme amacını ve amacına uygun kullanılıp kullanılmadığını öğrenme, yurt içinde/yurt dışında aktarıldığı üçüncü kişileri bilme, eksik/yanlış işlenmişse düzeltilmesini isteme, KVKK'da öngörülen şartlar çerçevesinde silinmesini/yok edilmesini isteme, düzeltme/silme işlemlerinin aktarılan üçüncü kişilere bildirilmesini isteme, işlenen verilerin münhasıran otomatik sistemlerle analiz edilmesi suretiyle aleyhinize bir sonucun ortaya çıkmasına itiraz etme ve kanuna aykırı işlenmesi sebebiyle zarara uğramanız hâlinde zararın giderilmesini talep etme haklarına sahipsiniz.</p>
+                        <p>Bu haklarınızı kullanmak için <strong>+90 537 912 18 41</strong> numaralı hattımız üzerinden bizimle iletişime geçebilirsiniz.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ticari Elektronik İleti Onay Metni -->
+            <div id="marketing-overlay" class="legal-modal-overlay" style="display: none;">
+                <div class="legal-modal" role="dialog" aria-modal="true" aria-labelledby="marketing-modal-title">
+                    <button type="button" class="legal-modal-close" id="marketing-modal-close" aria-label="Kapat">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    <h2 id="marketing-modal-title">Ticari Elektronik İleti Onay Metni</h2>
+                    <div class="legal-modal-body">
+                        <p>İşbu metni onaylamanız hâlinde, Roof Tattoo Gallery tarafından; kampanya, indirim, yeni hizmet duyuruları ve benzeri tanıtım/pazarlama amaçlı ticari elektronik iletilerin (WhatsApp mesajı, SMS ve/veya diğer elektronik iletişim kanalları aracılığıyla) tarafınıza gönderilmesine, 6563 sayılı Elektronik Ticaretin Düzenlenmesi Hakkında Kanun ve ilgili Ticari İletişim ve Ticari Elektronik İleti Yönetmeliği kapsamında açık rıza vermiş olursunuz.</p>
+                        <p>Bu onay tamamen isteğe bağlıdır; onay vermemeniz randevu talebinizin oluşturulmasına engel değildir.</p>
+                        <p>Vermiş olduğunuz onayı istediğiniz zaman, tarafımıza <strong>+90 537 912 18 41</strong> numarasından ulaşarak veya tarafınıza gönderilen iletilerdeki ret bildirimi yollarını kullanarak, herhangi bir gerekçe göstermeksizin ücretsiz olarak geri alabilirsiniz. Onayın geri alınması, daha önce gönderilmiş iletilerin hukuka uygunluğunu etkilemez.</p>
+                    </div>
                 </div>
             </div>
 
@@ -505,7 +572,7 @@
     </footer>
 
     <script src="otp-autofill.js?v=20260826183000"></script>
-    <script src="app.js?v=20260912145727"></script>
+    <script src="app.js?v=20260922132128"></script>
 </body>
 
 </html>

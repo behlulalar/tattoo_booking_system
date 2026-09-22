@@ -1109,6 +1109,135 @@ label {
 }
 
 
+/* Onay kutucukları (KVKK / elektronik ileti) */
+.consent-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 18px;
+    text-align: left;
+}
+
+.consent-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.consent-check input[type="checkbox"] {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    accent-color: var(--gold, #c9a227);
+    cursor: pointer;
+}
+
+.consent-link {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font: inherit;
+    font-weight: 600;
+    color: var(--gold, #c9a227);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.consent-link:hover {
+    color: var(--gold-hover, #d4af37);
+}
+
+/* Yasal metin modalları (KVKK / elektronik ileti) */
+.legal-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    z-index: 600 !important;
+    padding: max(12px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
+}
+
+.legal-modal {
+    background: #0a0a0a;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 40px 28px 32px;
+    border-radius: 20px;
+    width: min(92vw, 560px);
+    max-width: 560px;
+    box-sizing: border-box;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.65);
+    animation: modalPop 0.3s ease;
+    position: relative;
+    color: rgba(255, 255, 255, 0.85);
+    margin: auto;
+    flex-shrink: 0;
+}
+
+.legal-modal h2 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #ffffff;
+    font-size: 20px;
+    margin: 0 0 18px;
+    padding-right: 28px;
+}
+
+.legal-modal h3 {
+    color: var(--gold, #c9a227);
+    font-size: 14px;
+    margin: 20px 0 6px;
+}
+
+.legal-modal-body {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-right: 6px;
+    font-size: 13px;
+    line-height: 1.7;
+}
+
+.legal-modal-body p {
+    margin: 0 0 10px;
+}
+
+.legal-modal-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.7);
+    transition: all 0.2s ease;
+}
+
+.legal-modal-close:hover {
+    background: var(--danger);
+    color: white;
+}
+
 /* Doğrulama Modal Overlay */
 #verify-overlay {
     position: fixed;

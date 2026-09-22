@@ -3050,6 +3050,11 @@ def create_tattoo_request():
 
     config_undecided = data.get('config_undecided') in (True, 'true', 1, '1')
     pre_consultation = data.get('pre_consultation') in (True, 'true', 1, '1')
+    kvkk_accepted = data.get('kvkk_accepted') in (True, 'true', 1, '1')
+    marketing_consent = data.get('marketing_consent') in (True, 'true', 1, '1')
+
+    if not kvkk_accepted:
+        return jsonify({'success': False, 'message': 'Kişisel Verilerin Korunması metnini onaylamanız gerekiyor'}), 400
 
     if not phone or not staff_id:
         return jsonify({'success': False, 'message': 'phone ve staff_id gerekli'}), 400
@@ -3106,6 +3111,21 @@ def create_tattoo_request():
                 (phone_stored, None, None)
             )
             customer_id = cursor.fetchone()[0]
+
+        # KVKK onayi zorunlu (yukarida dogrulandi) — her talepte tazelenir.
+        # Pazarlama onayi (elektronik ileti) sadece verildiginde zaman
+        # damgasi guncellenir; geri cekilmis olabilecegi icin False
+        # gonderildiginde eski onay tarihi silinmez, sadece bayrak kapatilir.
+        cursor.execute(
+            """
+            UPDATE customers
+               SET kvkk_accepted_at = NOW(),
+                   marketing_consent = %s,
+                   marketing_consent_at = CASE WHEN %s THEN NOW() ELSE marketing_consent_at END
+             WHERE id = %s
+            """,
+            (marketing_consent, marketing_consent, customer_id),
+        )
 
         reference_number = generate_tattoo_reference_number(cursor)
 
