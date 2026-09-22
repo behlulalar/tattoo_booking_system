@@ -71,6 +71,12 @@ _BUSY_REFRESH_MIN_SECONDS = int(os.getenv('GOOGLE_CALENDAR_BUSY_REFRESH_SECONDS'
 # Studio slot izgarasi saatlik (app.py SLOT_STEP_MINUTES ile ayni). Randevu
 # olusturan iki uc nokta da duration_minutes % 60 == 0 sartini dayatiyor.
 SLOT_GRID_MINUTES = 60
+# Google Calendar'dan gelen (surukle-birak ile degistirilen) randevu
+# baslangiclari icin izin verilen dakika hassasiyeti. Musteri/admin randevu
+# ekranlari hala saat basi slot gosterir (SLOT_GRID_MINUTES=60) — bu sadece
+# Google'dan gelen bir surukleme "gecerli" sayilip GERCEK dakikasiyla
+# kaydedilsin mi, yoksa reddedilip eski saatine mi donsun karari icin.
+INBOUND_START_STEP_MINUTES = 15
 # Google client-supplied event id: ^[a-v0-9]{5,1024}$
 # Timeout sonrasi tekrar insert mukerrer etkinlik uretmesin diye sabit id.
 _STABLE_EVENT_ID_RE = re.compile(r'^[a-v0-9]{5,1024}$')
@@ -2424,10 +2430,10 @@ def _exact_duration_minutes(start_dt, end_dt):
 
 
 def _studio_slot_grid_ok(start_dt, duration_minutes):
-    """Stüdyo slotu: saat başı başlangıç, süre 60/120/180…"""
+    """Stüdyo slotu: başlangıç INBOUND_START_STEP_MINUTES'in katı, süre 60/120/180…"""
     if not start_dt:
         return False
-    if int(getattr(start_dt, 'minute', 0) or 0) != 0:
+    if int(getattr(start_dt, 'minute', 0) or 0) % INBOUND_START_STEP_MINUTES != 0:
         return False
     if int(getattr(start_dt, 'second', 0) or 0) != 0:
         return False
@@ -3640,13 +3646,16 @@ def _handle_inbound_event(cursor, event, calendar_id, cancelled_ids=None):
 
     # Google Calendar'da bir randevuyu suruklemek cogunlukla saat basina
     # denk gelmeyen bir baslangic uretir (15/30 dk'lik izgaraya kilitli).
-    # Stüdyo izgarasi saatlik oldugundan bu durumda _inbound_slot_allowed
-    # reddediyor ve degisiklik sessizce eski saatine geri donduruluyor —
-    # kullaniciya "sistem izin vermiyor" gibi goruniyordu. Cozum: saat
-    # disi bir surukleme algilaninca, en yakin saat basina asagi
-    # yuvarlanir (14:20 -> 14:00) ve o saat uzerinden devam edilir.
+    # Once bu INBOUND_START_STEP_MINUTES'in (15 dk) katiysa GERCEK dakikasiyla
+    # kabul edilir (14:15 -> 14:15, mesaj/panel de dogru saati gosterir).
+    # Yine de hizaya gelmeyen bir deger gelirse (ör. saniye tasmasi, farkli
+    # bir istemciden 7dk gibi degerler) eskiden oldugu gibi asagi yuvarlanir
+    # ki _inbound_slot_allowed sessizce reddedip degisikligi eski saatine
+    # geri dondurmesin.
     if start_dt is not None and not all_day and (start_dt.minute or start_dt.second):
-        start_dt = start_dt.replace(minute=0, second=0, microsecond=0)
+        if start_dt.minute % INBOUND_START_STEP_MINUTES != 0 or start_dt.second:
+            floored_minute = (start_dt.minute // INBOUND_START_STEP_MINUTES) * INBOUND_START_STEP_MINUTES
+            start_dt = start_dt.replace(minute=floored_minute, second=0, microsecond=0)
 
     if status == 'completed':
         if deleted:

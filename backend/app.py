@@ -1953,15 +1953,17 @@ def _slots_from_working_hour_row(wh_start, wh_end):
     return _generate_half_hour_slots(start_total_minutes, end_total_minutes)
 
 
-def compute_available_start_slots(
-    cursor, staff_id, formatted_date, duration_minutes,
-    return_details=False,
-    skip_past_filter=False,
-    past_filter_mode='buffer',
-    exclude_appointment_id=None,
+def _staff_day_schedule(
+    cursor, staff_id, formatted_date,
     allow_outside_working_hours=False,
+    exclude_appointment_id=None,
 ):
-    """Belirli gün/personel için uygun başlangıç saatlerini döndürür."""
+    """Belirli gün/personel için çalışma penceresi + meşgul aralıklar.
+
+    compute_available_start_slots (saatlik buton listesi) ve Google'dan
+    gelen izgara-dışı (ör. 14:15) saatleri doğrulayan _gcal_inbound_time_free
+    tarafından ortak kullanılır, ikisi de aynı çakışma verisine bakar.
+    """
     from datetime import datetime as dt
 
     date_obj = dt.strptime(formatted_date, '%Y-%m-%d')
@@ -2036,6 +2038,53 @@ def compute_available_start_slots(
     if is_day_closed:
         busy_intervals.append((0, 24 * 60))
 
+    work_end_m = (
+        _time_str_to_minutes(available_slots[-1]) + SLOT_STEP_MINUTES
+        if available_slots else 0
+    )
+    return available_slots, is_day_closed, busy_intervals, work_end_m
+
+
+def _gcal_inbound_time_free(
+    cursor, staff_id, formatted_date, time_str, duration_minutes,
+    exclude_appointment_id=None,
+):
+    """Google'dan gelen, saatlik izgaraya denk gelmeyebilen (ör. 14:15) bir
+    başlangıcın gerçekten boş olup olmadığını kontrol eder.
+
+    compute_available_start_slots'un ürettiği sabit saat-başı buton listesine
+    ("starts" içinde birebir eşleşme) BAKMAZ — çünkü 14:15 o listede hiç
+    olmayacaktır. Bunun yerine doğrudan çalışma penceresi + çakışma
+    aralıklarına (aynı _staff_day_schedule verisi) bakar.
+    """
+    available_slots, is_day_closed, busy_intervals, work_end_m = _staff_day_schedule(
+        cursor, staff_id, formatted_date, exclude_appointment_id=exclude_appointment_id,
+    )
+    if is_day_closed or not available_slots:
+        return False
+    start_m = _time_str_to_minutes(str(time_str or '')[:5])
+    work_start_m = _time_str_to_minutes(available_slots[0])
+    end_m = start_m + int(duration_minutes or 0)
+    if start_m < work_start_m or end_m > work_end_m:
+        return False
+    return not any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals)
+
+
+def compute_available_start_slots(
+    cursor, staff_id, formatted_date, duration_minutes,
+    return_details=False,
+    skip_past_filter=False,
+    past_filter_mode='buffer',
+    exclude_appointment_id=None,
+    allow_outside_working_hours=False,
+):
+    """Belirli gün/personel için uygun başlangıç saatlerini döndürür."""
+    available_slots, is_day_closed, busy_intervals, work_end_m = _staff_day_schedule(
+        cursor, staff_id, formatted_date,
+        allow_outside_working_hours=allow_outside_working_hours,
+        exclude_appointment_id=exclude_appointment_id,
+    )
+
     booked = []
     for t in available_slots:
         slot_start = _time_str_to_minutes(t)
@@ -2049,10 +2098,6 @@ def compute_available_start_slots(
     if req % 30 != 0:
         req = ((req // 30) + 1) * 30
     booked_set = set(booked)
-    work_end_m = (
-        _time_str_to_minutes(available_slots[-1]) + SLOT_STEP_MINUTES
-        if available_slots else 0
-    )
     starts = []
     for start in available_slots:
         start_m = _time_str_to_minutes(start)
@@ -2101,17 +2146,15 @@ def compute_available_start_slots(
 def _gcal_inbound_slot_allowed(
     cursor, staff_id, formatted_date, time_str, duration_minutes, exclude_id, body_area=None,
 ):
-    starts, is_day_closed = compute_available_start_slots(
-        cursor,
-        staff_id,
-        formatted_date,
-        duration_minutes,
+    # compute_available_start_slots'un sabit saat-basi buton listesindeki
+    # birebir esleseme yerine (14:15 o listede hic olmaz), dogrudan calisma
+    # penceresi + cakisma araliklarina bakan _gcal_inbound_time_free kullanilir
+    # — boylece Google'dan gelen izgara-disi (15 dk'nin kati) saatler de
+    # gercek dakikasiyla kabul edilebilir.
+    return _gcal_inbound_time_free(
+        cursor, staff_id, formatted_date, time_str, duration_minutes,
         exclude_appointment_id=exclude_id,
-        skip_past_filter=True,
     )
-    if is_day_closed:
-        return False
-    return str(time_str or '')[:5] in starts
 
 
 set_gcal_slot_validator(_gcal_inbound_slot_allowed)
