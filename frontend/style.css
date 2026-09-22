@@ -30,7 +30,7 @@
     /* Dock ikonlarinin (40px) + uzerlerinde acilan ipucu balonunun (~30px + 8px bosluk)
        kapladigi alani da kapsayacak sekilde — aksi halde balon, altta biriken
        form icerigiyle (ör. onay kutucuklari sonrasi buton) cakisiyordu. */
-    --page-footer-phone-clearance: max(150px, calc(134px + env(safe-area-inset-bottom)));
+    --page-footer-phone-clearance: max(130px, calc(114px + env(safe-area-inset-bottom)));
 }
 
 body {
@@ -1914,10 +1914,71 @@ label {
         padding: 18px 14px 16px;
     }
 
+    /* Telefon adimi (ilk ekran) tek ekrana sigsin diye sikistirilmis
+       bosluklar — kaydirma ihtiyacini asgariye indirir. */
+    .booking-page.is-phone-step .stepper {
+        margin-bottom: 16px;
+    }
+
+    .booking-page.is-phone-step .divider {
+        margin-bottom: 12px;
+    }
+
+    .booking-page.is-phone-step .help-text {
+        margin-top: 4px;
+    }
+
+    .booking-page.is-phone-step .phone-intl-toggle {
+        margin-top: 6px;
+    }
+
+    .booking-page.is-phone-step .consent-group {
+        margin-top: 10px;
+        gap: 6px;
+    }
+
+    .booking-page.is-phone-step #phone-submit-btn.primary-btn {
+        margin-top: 12px;
+    }
+
     .tattoo-config-section {
         max-width: 100% !important;
     }
+}
 
+/* Kisa boylu telefonlar (ör. iPhone SE) — telefon adimini daha da sikistir */
+@media (max-width: 600px) and (max-height: 720px) {
+    .booking-page.is-phone-step .step {
+        width: 32px;
+        height: 32px;
+    }
+
+    .booking-page.is-phone-step .stepper {
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .booking-page.is-phone-step .step-content h2 {
+        font-size: 16px;
+        margin-bottom: 6px;
+    }
+
+    .booking-page.is-phone-step .divider {
+        margin-bottom: 8px;
+    }
+
+    .booking-page.is-phone-step .consent-check {
+        font-size: 12px;
+        line-height: 1.35;
+    }
+
+    .booking-page.is-phone-step .consent-check input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+    }
+}
+
+@media (max-width: 600px) {
     .size-btn,
     .region-btn {
         font-size: 15px;
