@@ -2353,9 +2353,9 @@ def _cancel_notify_grace_seconds():
     aninda durum tekrar kontrol edilir).
     """
     try:
-        return max(0, int(os.getenv('GCAL_CANCEL_NOTIFY_GRACE_SECONDS', '600')))
+        return max(0, int(os.getenv('GCAL_CANCEL_NOTIFY_GRACE_SECONDS', '300')))
     except (TypeError, ValueError):
-        return 600
+        return 300
 
 
 def _dispatch_cancel_notifications(appointment_ids):
@@ -3788,10 +3788,23 @@ def _handle_inbound_event(
         if source in ('customer', 'admin', 'google'):
             if _soft_cancel_from_google(cursor, appointment_id):
                 logger.info('Google silme -> soft iptal apt #%s', appointment_id)
-                # Musteri iptalden habersiz stüdyoya gelmesin. Bildirim commit
-                # sonrasi toplu gonderilir; burada sadece kuyruklanir.
+                # Musteriye giden WhatsApp'i, yanlislikla silme durumunda geri
+                # alinabilsin diye bir bekleme suresinden sonra gonderiyoruz
+                # (bkz. _cancel_notify_grace_seconds) — bu yuzden commit
+                # sonrasi toplu gonderilmek uzere sadece kuyruklanir.
                 if cancelled_ids is not None:
                     cancelled_ids.append(appointment_id)
+                # Sanatciya push/panel bildirimi ise beklemeden, aninda gider —
+                # kendi takviminden sildigi icin zaten haberdar, ama farkli bir
+                # cihazdan/personelden gelen silmeyi hemen gormesi istendi.
+                if push_events is not None:
+                    push_events.append((
+                        staff_id,
+                        'Randevu İptal Edildi (Google Takvim)',
+                        '%s %s randevusu Google Takvim\'den silindi.' % (
+                            apt_date.strftime('%d.%m.%Y'), str(apt_time)[:5],
+                        ),
+                    ))
                 return 'cancel'
         return 'skip'
 

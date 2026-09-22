@@ -2255,10 +2255,10 @@ def _gcal_notify_cancelled_from_google(appointment_ids):
         date_str = apt_date.strftime('%d.%m.%Y')
         time_str = str(apt_time)[:5]
         customer_name = f"{name} {surname}".strip() or _phone_display_for_message(phone)
-        push_notif.push_to_staff(
-            staff_id, 'Randevu İptal Edildi (Google Takvim)',
-            f'{customer_name} — {date_str} {time_str}',
-        )
+        # Sanatciya push bildirimi burada DEGIL — silme algilanir algilanmaz
+        # (bekleme suresi olmadan) _handle_inbound_event'teki push_events
+        # kanaliyla zaten gonderildi. Burasi sadece musteriye giden, bekleme
+        # suresine tabi WhatsApp icin.
         if not is_real_customer_phone(phone):
             logger.info(
                 "Google iptal bildirimi atlandi (sentetik numara) | apt=%s", apt_id
