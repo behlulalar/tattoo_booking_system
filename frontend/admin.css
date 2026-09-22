@@ -51,7 +51,8 @@ button i {
    !important: asagida mobil medya sorgusunda ayni butona ayrica
    margin-right tanimlanmis (#dashboard-page button i, .modal-overlay
    button i, .action-btn i), bu istisna onlari da kapsamali. */
-.close-btn i {
+.close-btn i,
+.manual-appt-date-btn i {
     margin-right: 0 !important;
 }
 
