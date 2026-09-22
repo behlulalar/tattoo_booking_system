@@ -1181,8 +1181,21 @@ def _whatsapp_session_ready_for_bulk_send():
     denemek hem sonuc vermez hem de (oturum kismen ayaktaysa) ban riskini
     artirir. Saglik kontrolunun kendisi hata verirse fail-closed davranir
     (bu turu atlar) — cunku amaci zaten temkinli olmak.
+
+    Ilk olcum "kopuk" derse HEMEN e-posta atilmaz: Evolution API'ye anlik
+    bir agi/gecikme hiccup'i (ör. VPS'te kisa bir yuk artisi) tek seferlik
+    yanlis "kopuk" raporuna yol acabiliyordu (2026-09-22 17:35'te tam
+    boyle bir yanlis pozitif yasandi — WhatsApp aslinda baglantiliydi).
+    Bu yuzden ilk olcum basarisizsa kisa bir bekleme sonrasi IKINCI bir
+    olcum yapilir; e-posta ve "bu turu atla" karari sadece iki olcum de
+    basarisizsa (gercekten surekli kopuksa) verilir.
     """
     try:
+        result = check_whatsapp_health()
+        if bool(result.get('healthy')):
+            return True
+
+        time.sleep(5)
         result = check_whatsapp_health()
         healthy = bool(result.get('healthy'))
         if not healthy:
