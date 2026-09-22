@@ -3050,9 +3050,12 @@ def create_tattoo_request():
 
     config_undecided = data.get('config_undecided') in (True, 'true', 1, '1')
     pre_consultation = data.get('pre_consultation') in (True, 'true', 1, '1')
+    age_confirmed = data.get('age_confirmed') in (True, 'true', 1, '1')
     kvkk_accepted = data.get('kvkk_accepted') in (True, 'true', 1, '1')
     marketing_consent = data.get('marketing_consent') in (True, 'true', 1, '1')
 
+    if not age_confirmed:
+        return jsonify({'success': False, 'message': '18 yaşından büyük olduğunuzu onaylamanız gerekiyor'}), 400
     if not kvkk_accepted:
         return jsonify({'success': False, 'message': 'Kişisel Verilerin Korunması metnini onaylamanız gerekiyor'}), 400
 
@@ -3120,6 +3123,7 @@ def create_tattoo_request():
             """
             UPDATE customers
                SET kvkk_accepted_at = NOW(),
+                   age_confirmed_at = NOW(),
                    marketing_consent = %s,
                    marketing_consent_at = CASE WHEN %s THEN NOW() ELSE marketing_consent_at END
              WHERE id = %s
