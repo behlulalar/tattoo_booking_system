@@ -26,6 +26,8 @@ from whatsapp_messages import (
     build_appointment_created_customer_message,
     build_appointment_created_staff_message,
     build_appointment_reminder_message,
+    build_appointment_rescheduled_customer_message,
+    build_appointment_rescheduled_staff_message,
     build_customer_cancel_confirmation_message,
     build_staff_cancel_notification_message,
     build_tattoo_request_received_message,
@@ -71,6 +73,7 @@ from google_calendar_sync import (
     merge_calendar_aliases,
     reset_artists_cache as reset_gcal_artists_cache,
     set_cancel_notifier as set_gcal_cancel_notifier,
+    set_reschedule_notifier as set_gcal_reschedule_notifier,
     is_real_customer_phone,
 )
 from whatsapp_provider import (
@@ -2233,7 +2236,93 @@ def _phone_display_for_message(phone):
     return f"0{digits}" if len(digits) == 10 else (digits or 'Müşterimiz')
 
 
+def _gcal_notify_moved_from_google(moved):
+    """Google Takvim'de sürüklenerek saati değişen randevular için müşteri
+    ve sanatçıya WhatsApp bildirimi.
+
+    poll_inbound_changes commit ettikten SONRA arka plan thread'inden
+    çağrılır; buradaki hata senkronu etkilemez. moved: [(apt_id, old_date,
+    old_time_str), ...] — eski saat taşıma anında yakalanmış değerlerdir,
+    yeni saat/müşteri/sanatçı bilgisi burada DB'den taze okunur.
+    """
+    if not moved:
+        return
+    old_by_id = {int(apt_id): (old_date, old_time) for apt_id, old_date, old_time in moved}
+
+    conn = None
+    rows = []
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT a.id, a.appointment_date, a.appointment_time, a.duration_minutes,
+                   c.phone, COALESCE(c.name, ''), COALESCE(c.surname, ''),
+                   s.name, s.phone
+              FROM appointments a
+              JOIN customers c ON c.id = a.customer_id
+              JOIN artists s ON s.id = a.staff_id
+             WHERE a.id = ANY(%s) AND a.status NOT IN ('cancelled', 'completed')
+            """,
+            (list(old_by_id.keys()),),
+        )
+        rows = cursor.fetchall() or []
+        cursor.close()
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.warning(f"Google tasima bildirimi icin randevu okunamadi: {e}")
+        return
+    finally:
+        release_db_connection(conn)
+
+    for apt_id, new_date, new_time, duration_minutes, phone, name, surname, staff_name, staff_phone in rows:
+        old_date, old_time = old_by_id.get(int(apt_id), (None, None))
+        if old_date is None:
+            continue
+        new_date_str = new_date.strftime('%d.%m.%Y')
+        new_time_str = str(new_time)[:5]
+        old_date_str = old_date.strftime('%d.%m.%Y') if hasattr(old_date, 'strftime') else str(old_date)
+        customer_name = f"{name} {surname}".strip()
+        try:
+            if is_real_customer_phone(phone):
+                send_wapio_message(
+                    phone,
+                    build_appointment_rescheduled_customer_message(
+                        customer_name or _phone_display_for_message(phone),
+                        staff_name,
+                        old_date_str, old_time,
+                        new_date_str, new_time_str,
+                        duration_minutes,
+                    ),
+                )
+            if staff_phone:
+                send_wapio_message(
+                    staff_phone,
+                    build_appointment_rescheduled_staff_message(
+                        customer_name or _phone_display_for_message(phone),
+                        phone,
+                        old_date_str, old_time,
+                        new_date_str, new_time_str,
+                        duration_minutes,
+                    ),
+                )
+            logger.info(
+                "Google tasima bildirimi gonderildi | apt=%s %s %s -> %s %s",
+                apt_id, old_date_str, old_time, new_date_str, new_time_str,
+            )
+        except Exception as send_err:
+            logger.warning(
+                f"Google tasima bildirimi gonderilemedi apt={apt_id}: {send_err}"
+            )
+
+
 set_gcal_cancel_notifier(_gcal_notify_cancelled_from_google)
+set_gcal_reschedule_notifier(_gcal_notify_moved_from_google)
 
 
 def _minutes_from_time_value(t):

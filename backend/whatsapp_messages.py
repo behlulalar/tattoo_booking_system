@@ -575,6 +575,59 @@ Yeni randevu almak için iletişime geçin.
 {b['name']}"""
 
 
+def build_appointment_rescheduled_customer_message(
+    customer_name: str,
+    staff_name: str,
+    old_date_str: str,
+    old_time_str: str,
+    new_date_str: str,
+    new_time_str: str,
+    duration_minutes: int,
+) -> str:
+    """Müşteriye: randevu saati Google Takvim üzerinden değişti."""
+    b = _biz()
+    return f"""🔄 *Randevu Saatiniz Güncellendi*
+
+Sayın {customer_name},
+
+Randevunuzun tarih/saati güncellenmiştir.
+
+📋 *Yeni Randevu Detayları:*
+🖋️ Sanatçı: {staff_name}
+📅 Tarih: {new_date_str}
+⏰ Saat: {new_time_str}
+🕒 Süre: {duration_minutes} dk
+
+_(Önceki randevu: {old_date_str}, saat {old_time_str})_
+
+Uygun değilse lütfen bize haber verin.
+
+{_contact_footer(b)}"""
+
+
+def build_appointment_rescheduled_staff_message(
+    customer_name: str,
+    customer_phone: str,
+    old_date_str: str,
+    old_time_str: str,
+    new_date_str: str,
+    new_time_str: str,
+    duration_minutes: int,
+) -> str:
+    """Sanatçıya: Google Takvim üzerinden randevu saati değişti."""
+    b = _biz()
+    return f"""🔄 *Randevu Saati Değişti (Google Takvim)*
+
+{_customer_line(customer_phone, customer_name)}
+📅 Yeni Tarih: {new_date_str}
+⏰ Yeni Saat: {new_time_str}
+🕒 Süre: {duration_minutes} dk
+
+_(Önceki saat: {old_date_str} {old_time_str})_
+
+{b['name']}"""
+
+
 def build_customer_cancel_confirmation_message(
     customer_name: str,
     staff_name: str,
