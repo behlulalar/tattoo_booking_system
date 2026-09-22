@@ -4196,7 +4196,7 @@ async function loadStaff() {
     container.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(data.message || 'Yüklenemedi')}</p>`;
     return;
   }
-  renderStaff(data.staff || []);
+  renderStaff((data.staff || []).filter((s) => isBookableStaffRole(s.role)));
 }
 
 function fmtMoney(value) {
