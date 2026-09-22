@@ -52,7 +52,8 @@ button i {
    margin-right tanimlanmis (#dashboard-page button i, .modal-overlay
    button i, .action-btn i), bu istisna onlari da kapsamali. */
 .close-btn i,
-.manual-appt-date-btn i {
+.manual-appt-date-btn i,
+#wapio-session-status-btn i {
     margin-right: 0 !important;
 }
 
