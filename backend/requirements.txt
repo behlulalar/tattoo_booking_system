@@ -36,3 +36,6 @@ gunicorn>=21.2.0
 # Optional: Monitoring & Performance
 psutil>=5.9.6  # System monitoring
 # python-json-logger>=2.0.7  # Structured logging
+
+# PWA Push Notifications (Web Push / VAPID)
+pywebpush>=2.0.0

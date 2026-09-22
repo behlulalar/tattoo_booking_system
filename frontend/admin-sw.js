@@ -1,9 +1,9 @@
 /* Roof Tattoo admin PWA — API asla cache'lenmez; müşteri sitesine dokunulmaz. */
-const CACHE_VERSION = 'roof-admin-20260907180000';
+const CACHE_VERSION = 'roof-admin-20260922173000';
 const ADMIN_SHELL = [
   '/sp-admin-x7k.html',
-  '/admin.js?v=20260907180000',
-  '/admin.css?v=20260907180000',
+  '/admin.js?v=20260922173000',
+  '/admin.css?v=20260922173000',
   '/mobile-safe.css?v=20260818131000',
   '/admin.webmanifest',
   '/img/logo.png',
@@ -19,6 +19,38 @@ const ADMIN_SHELL = [
 
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
+self.addEventListener('push', (event) => {
+  let payload = { title: 'Roof Tattoo Gallery', body: 'Yeni bildirim', url: '/sp-admin-x7k.html' };
+  try {
+    if (event.data) payload = { ...payload, ...event.data.json() };
+  } catch {
+    /* JSON degilse varsayilan metin kullanilir */
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: '/img/pwa/icon-192.png',
+      badge: '/img/pwa/icon-192.png',
+      data: { url: payload.url || '/sp-admin-x7k.html' },
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || '/sp-admin-x7k.html';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if (client.url.includes('sp-admin-x7k.html') && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    })
+  );
 });
 
 self.addEventListener('install', (event) => {

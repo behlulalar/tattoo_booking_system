@@ -2239,6 +2239,38 @@ strong, b, th {
     padding: 6px;
 }
 
+.notif-panel-footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+}
+
+.notif-push-toggle-btn {
+    width: 100%;
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    padding: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.notif-push-toggle-btn i {
+    margin-right: 6px;
+}
+
+.notif-push-toggle-btn:hover {
+    border-color: var(--accent);
+    color: var(--text-primary);
+}
+
+.notif-push-toggle-btn.active {
+    border-style: solid;
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 .notif-empty {
     text-align: center;
     color: var(--text-muted);

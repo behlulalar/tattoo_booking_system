@@ -75,6 +75,7 @@ from google_calendar_sync import (
     set_cancel_notifier as set_gcal_cancel_notifier,
     set_reschedule_notifier as set_gcal_reschedule_notifier,
     set_import_notifier as set_gcal_import_notifier,
+    set_push_notifier as set_gcal_push_notifier,
     is_real_customer_phone,
 )
 from whatsapp_provider import (
@@ -123,6 +124,7 @@ from loyalty_points import (
     validate_loyalty_code_for_customer,
 )
 from notifications import create_notification
+import push_notifications as push_notif
 import os
 import json
 import random
@@ -1030,6 +1032,48 @@ def ensure_notifications_table():
         if conn:
             conn.rollback()
         logger.warning('ensure_notifications_table: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
+def ensure_push_subscriptions_table():
+    """PWA push bildirimleri icin personel cihaz aboneliklerini tutan tablo.
+
+    Bir personelin birden fazla cihazi (telefon + bilgisayar) ayri ayri
+    abone olabilir, o yuzden staff_id UNIQUE degil — endpoint UNIQUE'tir
+    (ayni cihaz/tarayici tekrar abone olursa eski kaydin uzerine yazilir).
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id SERIAL PRIMARY KEY,
+                staff_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+                endpoint TEXT NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                user_agent TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+                last_used_at TIMESTAMP,
+                UNIQUE (endpoint)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_push_subscriptions_staff_id
+            ON push_subscriptions(staff_id)
+            """
+        )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_push_subscriptions_table: %s', e)
     finally:
         release_db_connection(conn)
 
@@ -2185,7 +2229,7 @@ def _gcal_notify_cancelled_from_google(appointment_ids):
         # duzeltildiyse) musteriye artik yanlis iptal mesaji gitmez.
         cursor.execute(
             """
-            SELECT a.id, a.appointment_date, a.appointment_time,
+            SELECT a.id, a.appointment_date, a.appointment_time, a.staff_id,
                    c.phone, COALESCE(c.name, ''), COALESCE(c.surname, '')
               FROM appointments a
               JOIN customers c ON c.id = a.customer_id
@@ -2207,16 +2251,20 @@ def _gcal_notify_cancelled_from_google(appointment_ids):
     finally:
         release_db_connection(conn)
 
-    for apt_id, apt_date, apt_time, phone, name, surname in rows:
+    for apt_id, apt_date, apt_time, staff_id, phone, name, surname in rows:
+        date_str = apt_date.strftime('%d.%m.%Y')
+        time_str = str(apt_time)[:5]
+        customer_name = f"{name} {surname}".strip() or _phone_display_for_message(phone)
+        push_notif.push_to_staff(
+            staff_id, 'Randevu İptal Edildi (Google Takvim)',
+            f'{customer_name} — {date_str} {time_str}',
+        )
         if not is_real_customer_phone(phone):
             logger.info(
                 "Google iptal bildirimi atlandi (sentetik numara) | apt=%s", apt_id
             )
             continue
         try:
-            date_str = apt_date.strftime('%d.%m.%Y')
-            time_str = str(apt_time)[:5]
-            customer_name = f"{name} {surname}".strip() or _phone_display_for_message(phone)
             send_wapio_message(
                 phone,
                 build_appointment_cancelled_message(customer_name, date_str, time_str),
@@ -2258,7 +2306,7 @@ def _gcal_notify_moved_from_google(moved):
         cursor.execute(
             """
             SELECT a.id, a.appointment_date, a.appointment_time, a.duration_minutes,
-                   c.phone, COALESCE(c.name, ''), COALESCE(c.surname, ''),
+                   a.staff_id, c.phone, COALESCE(c.name, ''), COALESCE(c.surname, ''),
                    s.name, s.phone
               FROM appointments a
               JOIN customers c ON c.id = a.customer_id
@@ -2281,7 +2329,7 @@ def _gcal_notify_moved_from_google(moved):
     finally:
         release_db_connection(conn)
 
-    for apt_id, new_date, new_time, duration_minutes, phone, name, surname, staff_name, staff_phone in rows:
+    for apt_id, new_date, new_time, duration_minutes, staff_id, phone, name, surname, staff_name, staff_phone in rows:
         old_date, old_time = old_by_id.get(int(apt_id), (None, None))
         if old_date is None:
             continue
@@ -2289,6 +2337,10 @@ def _gcal_notify_moved_from_google(moved):
         new_time_str = str(new_time)[:5]
         old_date_str = old_date.strftime('%d.%m.%Y') if hasattr(old_date, 'strftime') else str(old_date)
         customer_name = f"{name} {surname}".strip()
+        push_notif.push_to_staff(
+            staff_id, 'Randevu Saati Değişti (Google Takvim)',
+            f'{customer_name or _phone_display_for_message(phone)} — {old_time} → {new_time_str} ({new_date_str})',
+        )
         try:
             if is_real_customer_phone(phone):
                 send_wapio_message(
@@ -2343,7 +2395,7 @@ def _gcal_notify_imported_from_google(appointment_ids):
         cursor.execute(
             """
             SELECT a.id, a.appointment_date, a.appointment_time, a.duration_minutes, a.price,
-                   c.phone, COALESCE(c.name, ''), COALESCE(c.surname, ''),
+                   a.staff_id, c.phone, COALESCE(c.name, ''), COALESCE(c.surname, ''),
                    s.name, s.phone
               FROM appointments a
               JOIN customers c ON c.id = a.customer_id
@@ -2366,10 +2418,14 @@ def _gcal_notify_imported_from_google(appointment_ids):
     finally:
         release_db_connection(conn)
 
-    for apt_id, apt_date, apt_time, duration_minutes, price, phone, name, surname, staff_name, staff_phone in rows:
+    for apt_id, apt_date, apt_time, duration_minutes, price, staff_id, phone, name, surname, staff_name, staff_phone in rows:
         date_str = apt_date.strftime('%d.%m.%Y')
         time_str = str(apt_time)[:5]
         customer_name = f"{name} {surname}".strip()
+        push_notif.push_to_staff(
+            staff_id, 'Yeni Randevu (Google Takvim)',
+            f'{customer_name or _phone_display_for_message(phone)} — {date_str} {time_str}',
+        )
         try:
             if is_real_customer_phone(phone):
                 send_wapio_message(
@@ -2399,9 +2455,21 @@ def _gcal_notify_imported_from_google(appointment_ids):
             )
 
 
+def _gcal_notify_push_events(events):
+    """set_push_notifier icin: events=[(staff_id, title, message), ...].
+
+    Su an sadece gcal_move_reverted (mesai/cakisma nedeniyle geri alinan
+    surukleme) bunu kullaniyor — panel-ici bell kaydi zaten transaction
+    icinde yazildi, burada sadece PWA push'u tetikliyoruz.
+    """
+    for staff_id, title, message in (events or []):
+        push_notif.push_to_staff(staff_id, title, message)
+
+
 set_gcal_cancel_notifier(_gcal_notify_cancelled_from_google)
 set_gcal_reschedule_notifier(_gcal_notify_moved_from_google)
 set_gcal_import_notifier(_gcal_notify_imported_from_google)
+set_gcal_push_notifier(_gcal_notify_push_events)
 
 
 def _minutes_from_time_value(t):
@@ -6723,6 +6791,75 @@ def mark_all_admin_notifications_read():
         release_db_connection(conn)
 
 
+@app.route('/api/admin/push/vapid-public-key', methods=['GET'])
+@limiter.exempt
+@token_required
+def get_push_vapid_public_key():
+    """PWA push aboneligi baslatmak icin gereken genel anahtar."""
+    key = push_notif.get_vapid_public_key()
+    if not key:
+        return jsonify({'success': False, 'message': 'Push bildirimleri sunucuda ayarlanmamış'}), 503
+    return jsonify({'success': True, 'public_key': key})
+
+
+@app.route('/api/admin/push/subscribe', methods=['POST'])
+@limiter.exempt
+@token_required
+def subscribe_push():
+    """Tarayicidan alinan Web Push aboneligini kaydeder/gunceller."""
+    data = request.get_json() or {}
+    endpoint = (data.get('endpoint') or '').strip()
+    keys = data.get('keys') or {}
+    p256dh = (keys.get('p256dh') or '').strip()
+    auth = (keys.get('auth') or '').strip()
+    if not endpoint or not p256dh or not auth:
+        return jsonify({'success': False, 'message': 'Eksik abonelik bilgisi'}), 400
+
+    user_agent = request.headers.get('User-Agent', '')[:255]
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        push_notif.save_subscription(cursor, request.staff_id, endpoint, p256dh, auth, user_agent)
+        conn.commit()
+        cursor.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"subscribe_push hatası: {e}")
+        return jsonify({'success': False, 'message': 'Abonelik kaydedilemedi'}), 500
+    finally:
+        release_db_connection(conn)
+
+
+@app.route('/api/admin/push/unsubscribe', methods=['POST'])
+@limiter.exempt
+@token_required
+def unsubscribe_push():
+    """Push aboneligini siler (ör. personel bildirimleri kapattiginda)."""
+    data = request.get_json() or {}
+    endpoint = (data.get('endpoint') or '').strip()
+    if not endpoint:
+        return jsonify({'success': False, 'message': 'endpoint gerekli'}), 400
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        push_notif.remove_subscription(cursor, endpoint)
+        conn.commit()
+        cursor.close()
+        return jsonify({'success': True})
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"unsubscribe_push hatası: {e}")
+        return jsonify({'success': False, 'message': 'Abonelik silinemedi'}), 500
+    finally:
+        release_db_connection(conn)
+
+
 @app.route('/api/admin/me', methods=['GET'])
 @token_required
 def get_admin_me():
@@ -8104,6 +8241,8 @@ def start_scheduler_if_master():
 ensure_whatsapp_queue_table()
 ensure_whatsapp_bulk_send_log_table()
 ensure_notifications_table()
+ensure_push_subscriptions_table()
+push_notif.set_db_accessors(get_db_connection, release_db_connection)
 
 # Scheduler'ı başlat (sadece bir process başlatacak)
 start_scheduler_if_master()
