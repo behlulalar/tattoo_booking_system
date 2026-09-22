@@ -94,16 +94,18 @@ const phoneInput = document.getElementById('phone');
 const phoneForm = document.getElementById('phone-form');
 const phoneCheckBtn = document.getElementById('phone-check-btn');
 const phoneSubmitBtn = document.getElementById('phone-submit-btn');
+const consentAgeInput = document.getElementById('consent-age');
 const consentKvkkInput = document.getElementById('consent-kvkk');
 const consentMarketingInput = document.getElementById('consent-marketing');
 
-// KVKK zorunlu onaylanmadan telefon adımına devam edilemez (elektronik
-// ileti onayı isteğe bağlı). Devam Et / ▶ butonu buna göre kilitlenir.
+// Yaş beyanı ve KVKK zorunlu onaylanmadan telefon adımına devam edilemez
+// (elektronik ileti onayı isteğe bağlı). Devam Et / ▶ butonu buna göre kilitlenir.
 function updateConsentGateState() {
-  const accepted = !!consentKvkkInput?.checked;
+  const accepted = !!consentAgeInput?.checked && !!consentKvkkInput?.checked;
   if (phoneSubmitBtn) phoneSubmitBtn.disabled = !accepted;
   if (phoneCheckBtn) phoneCheckBtn.disabled = !accepted;
 }
+consentAgeInput?.addEventListener('change', updateConsentGateState);
 consentKvkkInput?.addEventListener('change', updateConsentGateState);
 updateConsentGateState();
 
@@ -762,6 +764,13 @@ phoneForm?.addEventListener('submit', async (e) => {
   // devam ederken yeni gonderimi engelle.
   if (sendCodeInFlight) return;
 
+  if (!consentAgeInput?.checked) {
+    showInlineError(
+      document.getElementById('phone-form-error'),
+      'Devam etmek için 18 yaşından büyük olduğunuzu onaylamanız gerekiyor.',
+    );
+    return;
+  }
   if (!consentKvkkInput?.checked) {
     showInlineError(
       document.getElementById('phone-form-error'),
@@ -1160,6 +1169,7 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
     config_undecided: undecided,
     reference_image: '',
     description: '',
+    age_confirmed: !!consentAgeInput?.checked,
     kvkk_accepted: !!consentKvkkInput?.checked,
     marketing_consent: !!consentMarketingInput?.checked,
   };
