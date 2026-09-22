@@ -2410,8 +2410,121 @@ function toggleNotifPanel(forceOpen) {
   const willOpen = forceOpen !== undefined ? forceOpen : panel.style.display === 'none';
   panel.style.display = willOpen ? 'flex' : 'none';
   if (overlay) overlay.style.display = willOpen ? 'block' : 'none';
-  if (willOpen) fetchNotifications();
+  if (willOpen) {
+    fetchNotifications();
+    refreshPushToggleState();
+  }
 }
+
+// =========================
+// PWA PUSH NOTIFICATIONS
+// =========================
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+async function getExistingPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return await reg.pushManager.getSubscription();
+  } catch {
+    return null;
+  }
+}
+
+async function refreshPushToggleState() {
+  const btn = $('notif-push-toggle-btn');
+  if (!btn) return;
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    btn.style.display = 'none';
+    return;
+  }
+  const sub = await getExistingPushSubscription();
+  const active = !!sub && Notification.permission === 'granted';
+  btn.classList.toggle('active', active);
+  btn.innerHTML = active
+    ? '<i class="fas fa-bell-slash"></i> Bu cihazda bildirimleri kapat'
+    : '<i class="fas fa-mobile-alt"></i> Bu cihaza bildirim gönder';
+}
+
+async function enablePushOnThisDevice() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    showToast('Bu cihaz/tarayıcı push bildirimlerini desteklemiyor', 'error');
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    showToast('Bildirim izni verilmedi', 'error');
+    return;
+  }
+  const { ok, data } = await apiCall('/admin/push/vapid-public-key', { method: 'GET' });
+  if (!ok || !data.success || !data.public_key) {
+    showToast('Push bildirimleri şu an kullanılamıyor', 'error');
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(data.public_key),
+    });
+    const json = sub.toJSON();
+    const res = await apiCall('/admin/push/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+    });
+    if (!res.ok || !res.data.success) throw new Error(res.data?.message || 'Kaydedilemedi');
+    showToast('Bu cihaz için bildirimler açıldı', 'success');
+  } catch (e) {
+    console.error('Push abonelik hatası:', e);
+    showToast('Bildirimler açılamadı', 'error');
+  }
+  refreshPushToggleState();
+}
+
+async function disablePushOnThisDevice() {
+  const sub = await getExistingPushSubscription();
+  if (!sub) {
+    refreshPushToggleState();
+    return;
+  }
+  const endpoint = sub.endpoint;
+  try {
+    await sub.unsubscribe();
+  } catch (e) {
+    console.error('Push unsubscribe hatası:', e);
+  }
+  await apiCall('/admin/push/unsubscribe', {
+    method: 'POST',
+    body: JSON.stringify({ endpoint }),
+  });
+  showToast('Bu cihazda bildirimler kapatıldı', 'success');
+  refreshPushToggleState();
+}
+
+$('notif-push-toggle-btn')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const btn = $('notif-push-toggle-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const sub = await getExistingPushSubscription();
+    const active = !!sub && Notification.permission === 'granted';
+    if (active) {
+      await disablePushOnThisDevice();
+    } else {
+      await enablePushOnThisDevice();
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
 
 function startNotificationsPolling() {
   fetchNotifications();

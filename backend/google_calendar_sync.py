@@ -2327,6 +2327,22 @@ def set_import_notifier(fn):
     _import_notifier = fn
 
 
+_push_notifier = None
+
+
+def set_push_notifier(fn):
+    """Panel-ici bildirim (bell) + PWA push icin genel kanca.
+
+    fn(events) transaction COMMIT edildikten sonra cagrilir. events:
+    [(staff_id, title, message), ...]. Su an sadece gcal_move_reverted
+    (mesai/cakisma nedeniyle geri alinan surukleme) bunu kullaniyor;
+    diger bildirimler (tasima/iptal/manuel import) zaten kendi WhatsApp
+    dispatcher'lari icinde push_to_staff'i ayrica cagiriyor.
+    """
+    global _push_notifier
+    _push_notifier = fn
+
+
 def _cancel_notify_grace_seconds():
     """Takvimden yanlislikla silinen bir etkinligin musteriye 'iptal edildi'
     mesaji gitmeden once duzeltilebilecegi bekleme suresi.
@@ -2414,6 +2430,26 @@ def _dispatch_import_notifications(appointment_ids):
             )
 
     threading.Thread(target=_run, name='gcal-import-notify', daemon=True).start()
+
+
+def _dispatch_push_events(push_events):
+    """Panel-ici bildirim + PWA push icin biriken olaylari commit sonrasi
+    arka planda gonder (bkz. set_push_notifier)."""
+    events = list(push_events or [])
+    notifier = _push_notifier
+    if not events or notifier is None:
+        return
+
+    def _run():
+        try:
+            notifier(events)
+        except Exception as exc:
+            logger.warning(
+                'Google push bildirimi gonderilemedi | hata=%s',
+                str(exc).strip()[:200],
+            )
+
+    threading.Thread(target=_run, name='gcal-push-notify', daemon=True).start()
 
 
 def _parse_event_datetimes(event):
@@ -3663,6 +3699,7 @@ def _handle_inbound_time_off(cursor, event, calendar_id, time_off_id):
 
 def _handle_inbound_event(
     cursor, event, calendar_id, cancelled_ids=None, moved_ids=None, imported_ids=None,
+    push_events=None,
 ):
     if _is_off_day_origin(event):
         time_off_id = _our_time_off_id_from_event(event)
@@ -3802,6 +3839,14 @@ def _handle_inbound_event(
             ),
             appointment_id,
         )
+        if push_events is not None:
+            push_events.append((
+                staff_id,
+                'Google Calendar taşıması geri alındı',
+                'Randevu %s %s\'e taşınmak istendi ama uygun olmadığı için eski saatine geri alındı.' % (
+                    local_date.strftime('%d.%m.%Y'), local_time,
+                ),
+            ))
         return 'revert'
 
     if _apply_inbound_move(
@@ -3905,6 +3950,7 @@ def poll_inbound_changes():
         cancelled_ids = []
         moved_ids = []
         imported_ids = []
+        push_events = []
         for event in items:
             if event.get('recurringEventId') and not event.get('start'):
                 summary['skip'] += 1
@@ -3912,10 +3958,12 @@ def poll_inbound_changes():
             marker = len(cancelled_ids)
             moved_marker = len(moved_ids)
             imported_marker = len(imported_ids)
+            push_marker = len(push_events)
             try:
                 cursor.execute('SAVEPOINT gcal_inbound_event')
                 action = _handle_inbound_event(
-                    cursor, event, calendar_id, cancelled_ids, moved_ids, imported_ids
+                    cursor, event, calendar_id, cancelled_ids, moved_ids, imported_ids,
+                    push_events,
                 ) or 'skip'
                 cursor.execute('RELEASE SAVEPOINT gcal_inbound_event')
             except Exception as exc:
@@ -3928,6 +3976,7 @@ def poll_inbound_changes():
                 del cancelled_ids[marker:]
                 del moved_ids[moved_marker:]
                 del imported_ids[imported_marker:]
+                del push_events[push_marker:]
                 logger.warning(
                     'Google inbound event atlandi | event=%s hata=%s',
                     (event.get('id') or '')[:80],
@@ -3964,6 +4013,7 @@ def poll_inbound_changes():
         _dispatch_cancel_notifications(cancelled_ids)
         _dispatch_reschedule_notifications(moved_ids)
         _dispatch_import_notifications(imported_ids)
+        _dispatch_push_events(push_events)
         if (
             summary['moved'] or summary['cancel'] or summary['revert']
             or summary['imported'] or summary['unmatched'] or summary['conflict']
