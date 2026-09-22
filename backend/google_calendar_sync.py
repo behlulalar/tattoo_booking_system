@@ -2285,6 +2285,7 @@ def inbound_sync_health(calendar_id=None):
 _slot_validator = None
 _cancel_notifier = None
 _reschedule_notifier = None
+_import_notifier = None
 
 
 def set_slot_validator(fn):
@@ -2313,6 +2314,17 @@ def set_reschedule_notifier(fn):
     """
     global _reschedule_notifier
     _reschedule_notifier = fn
+
+
+def set_import_notifier(fn):
+    """Google Takvim'e elle yazilan (bizim sistemden gelmeyen) yeni bir
+    randevu icin musteri/sanatci bildirimi (dongusel import yok).
+
+    fn(appointment_ids) transaction COMMIT edildikten sonra, arka plan
+    thread'inden cagrilir. Bildirim hatasi inbound senkronu asla dusurmez.
+    """
+    global _import_notifier
+    _import_notifier = fn
 
 
 def _cancel_notify_grace_seconds():
@@ -2382,6 +2394,26 @@ def _dispatch_reschedule_notifications(moved):
             )
 
     threading.Thread(target=_run, name='gcal-reschedule-notify', daemon=True).start()
+
+
+def _dispatch_import_notifications(appointment_ids):
+    """Google Takvim'e elle yazilip randevuya donusturulen etkinlikler icin
+    musteri/sanatci bildirimini commit sonrasi arka planda gonder."""
+    ids = [int(i) for i in (appointment_ids or [])]
+    notifier = _import_notifier
+    if not ids or notifier is None:
+        return
+
+    def _run():
+        try:
+            notifier(ids)
+        except Exception as exc:
+            logger.warning(
+                'Google manuel randevu bildirimi gonderilemedi | ids=%s hata=%s',
+                ids, str(exc).strip()[:200],
+            )
+
+    threading.Thread(target=_run, name='gcal-import-notify', daemon=True).start()
 
 
 def _parse_event_datetimes(event):
@@ -2683,10 +2715,12 @@ def refresh_external_busy(force=False):
         conn = _connect()
         cursor = conn.cursor()
         imported = 0
+        imported_ids = []
         for event in events:
+            imported_marker = len(imported_ids)
             try:
                 cursor.execute('SAVEPOINT gcal_busy_import')
-                result = _import_manual_google_event(cursor, event, calendar_id)
+                result = _import_manual_google_event(cursor, event, calendar_id, imported_ids)
                 cursor.execute('RELEASE SAVEPOINT gcal_busy_import')
                 if result == 'imported':
                     imported += 1
@@ -2695,6 +2729,7 @@ def refresh_external_busy(force=False):
                     cursor.execute('ROLLBACK TO SAVEPOINT gcal_busy_import')
                 except Exception:
                     pass
+                del imported_ids[imported_marker:]
                 logger.warning(
                     'Google busy import atlandi | event=%s hata=%s',
                     (event.get('id') or '')[:80],
@@ -2788,6 +2823,7 @@ def refresh_external_busy(force=False):
         )
         conn.commit()
         cursor.close()
+        _dispatch_import_notifications(imported_ids)
         logger.info(
             'Google dis mesguliyet yenilendi: %s aralik, manuel randevu: %s',
             len(rows), imported,
@@ -3163,7 +3199,7 @@ def refresh_google_event_colors(limit=400):
         _disconnect(conn)
 
 
-def _import_manual_google_event(cursor, event, calendar_id):
+def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None):
     """Elle Google etkinliği: Off Day veya (telefon varsa) source=google randevu."""
     if (event.get('status') or '') == 'cancelled':
         return 'skip'
@@ -3303,9 +3339,11 @@ def _import_manual_google_event(cursor, event, calendar_id):
         (local_date, local_time, duration_minutes, staff_id),
     )
     logger.info(
-        'Google manuel etkinlik randevu oldu (WhatsApp yok) apt #%s event=%s staff=%s customer=%s',
+        'Google manuel etkinlik randevu oldu apt #%s event=%s staff=%s customer=%s',
         appointment_id, event_id, staff_id, customer_id,
     )
+    if imported_ids is not None:
+        imported_ids.append(appointment_id)
     return 'imported'
 
 
@@ -3623,7 +3661,9 @@ def _handle_inbound_time_off(cursor, event, calendar_id, time_off_id):
     return 'moved'
 
 
-def _handle_inbound_event(cursor, event, calendar_id, cancelled_ids=None, moved_ids=None):
+def _handle_inbound_event(
+    cursor, event, calendar_id, cancelled_ids=None, moved_ids=None, imported_ids=None,
+):
     if _is_off_day_origin(event):
         time_off_id = _our_time_off_id_from_event(event)
         if not time_off_id:
@@ -3637,7 +3677,7 @@ def _handle_inbound_event(cursor, event, calendar_id, cancelled_ids=None, moved_
                 time_off_id = found[0] if found else None
         if time_off_id:
             return _handle_inbound_time_off(cursor, event, calendar_id, time_off_id)
-        return _import_manual_google_event(cursor, event, calendar_id)
+        return _import_manual_google_event(cursor, event, calendar_id, imported_ids)
 
     appointment_id = _our_appointment_id_from_event(event)
     if not appointment_id:
@@ -3662,7 +3702,7 @@ def _handle_inbound_event(cursor, event, calendar_id, cancelled_ids=None, moved_
                 time_off_id = found[0] if found else None
         if time_off_id:
             return _handle_inbound_time_off(cursor, event, calendar_id, time_off_id)
-        return _import_manual_google_event(cursor, event, calendar_id)
+        return _import_manual_google_event(cursor, event, calendar_id, imported_ids)
 
     deleted = (event.get('status') or '') == 'cancelled'
 
@@ -3864,16 +3904,18 @@ def poll_inbound_changes():
         }
         cancelled_ids = []
         moved_ids = []
+        imported_ids = []
         for event in items:
             if event.get('recurringEventId') and not event.get('start'):
                 summary['skip'] += 1
                 continue
             marker = len(cancelled_ids)
             moved_marker = len(moved_ids)
+            imported_marker = len(imported_ids)
             try:
                 cursor.execute('SAVEPOINT gcal_inbound_event')
                 action = _handle_inbound_event(
-                    cursor, event, calendar_id, cancelled_ids, moved_ids
+                    cursor, event, calendar_id, cancelled_ids, moved_ids, imported_ids
                 ) or 'skip'
                 cursor.execute('RELEASE SAVEPOINT gcal_inbound_event')
             except Exception as exc:
@@ -3881,10 +3923,11 @@ def poll_inbound_changes():
                     cursor.execute('ROLLBACK TO SAVEPOINT gcal_inbound_event')
                 except Exception:
                     pass
-                # Savepoint geri alindiysa iptal/tasima da gerceklesmedi;
+                # Savepoint geri alindiysa iptal/tasima/import de gerceklesmedi;
                 # bildirim gonderilmemeli.
                 del cancelled_ids[marker:]
                 del moved_ids[moved_marker:]
+                del imported_ids[imported_marker:]
                 logger.warning(
                     'Google inbound event atlandi | event=%s hata=%s',
                     (event.get('id') or '')[:80],
@@ -3920,6 +3963,7 @@ def poll_inbound_changes():
         # musteriye "iptal edildi" mesaji gitmesin.
         _dispatch_cancel_notifications(cancelled_ids)
         _dispatch_reschedule_notifications(moved_ids)
+        _dispatch_import_notifications(imported_ids)
         if (
             summary['moved'] or summary['cancel'] or summary['revert']
             or summary['imported'] or summary['unmatched'] or summary['conflict']
