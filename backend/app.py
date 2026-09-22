@@ -7460,10 +7460,18 @@ def create_database_backup():
             
             # Google Drive'a yükle (rclone ile)
             upload_to_google_drive(backup_path, backup_filename)
-            
+
             # Eski yedekleri temizle
             cleanup_old_database_backups(BACKUP_DIR, KEEP_DAYS)
-            
+
+            # .env ve Google Calendar kimlik dosyasini da yedekle — bunlar
+            # olmadan bir DB yedeği geri yüklense bile sistem çalışmaz
+            # (DB şifresi, JWT_SECRET, WhatsApp/Evolution API anahtarı vb.
+            # sadece .env'de duruyor). Sabit dosya adiyla yukleniyor, her
+            # gece uzerine yazilir — gecmis versiyonlarin Drive'da birikmesi
+            # istenmiyor (aktif sirlarin eski kopyalarinin cogalmasi risk).
+            backup_secrets_to_drive()
+
             return True
         else:
             log_error(logger, E_BKP_001, "Veritabani yedekleme basarisiz", stderr=result.stderr)
@@ -7477,6 +7485,43 @@ def create_database_backup():
     except Exception as e:
         log_error(logger, E_BKP_001, "Veritabani yedekleme hatasi", exc=e)
         return False
+
+
+def backup_secrets_to_drive():
+    """.env ve Google Calendar kimlik dosyasını Google Drive'a yedekler.
+
+    Bir DB dump'ı tek başına sistemi geri ayağa kaldırmaya yetmez — DB
+    şifresi, JWT_SECRET, Evolution/WhatsApp API anahtarı, e-posta şifresi
+    gibi tüm sırlar sadece .env'de; Google Takvim entegrasyonu da ayrı bir
+    kimlik dosyasına (credentials/google-calendar.json) bağlı. Bu iki
+    dosya olmadan bir felaket senaryosunda sistemi yeniden ayağa kaldırmak
+    saatler sürebilir (her sırrı tek tek yeniden üretmek/bulmak gerekir).
+
+    Sabit dosya adlarıyla yüklenir (tarih damgasız) — her gece üzerine
+    yazılır, Drive'da eski sır kopyalarının çoğalmasını önlemek için.
+    Hata durumunda (rclone yoksa, .env taşınmışsa vb.) sadece loglanır,
+    asıl DB yedekleme akışını asla düşürmez.
+    """
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    env_path = os.path.join(backend_dir, '.env')
+    try:
+        gcal_creds_path = get_google_calendar_config().get('credentials_path') or ''
+    except Exception:
+        gcal_creds_path = ''
+
+    if os.path.exists(env_path):
+        try:
+            upload_to_google_drive(env_path, 'roof_tattoo_env_backup.txt')
+        except Exception as e:
+            log_error(logger, E_BKP_001, ".env Google Drive'a yedeklenemedi", exc=e)
+    else:
+        logger.warning(".env dosyasi bulunamadi, sir yedegi atlandi")
+
+    if gcal_creds_path and os.path.exists(gcal_creds_path):
+        try:
+            upload_to_google_drive(gcal_creds_path, 'roof_tattoo_google_calendar_credentials_backup.json')
+        except Exception as e:
+            log_error(logger, E_BKP_001, "Google Calendar kimlik dosyasi yedeklenemedi", exc=e)
 
 
 def upload_to_google_drive(backup_path, backup_filename):
