@@ -27,7 +27,10 @@
     --font-ui: "Montserrat", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     --font-display: "Bebas Neue", "Montserrat", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     --page-footer-clearance: max(48px, calc(32px + env(safe-area-inset-bottom)));
-    --page-footer-phone-clearance: max(96px, calc(80px + env(safe-area-inset-bottom)));
+    /* Dock ikonlarinin (40px) + uzerlerinde acilan ipucu balonunun (~30px + 8px bosluk)
+       kapladigi alani da kapsayacak sekilde — aksi halde balon, altta biriken
+       form icerigiyle (ör. onay kutucuklari sonrasi buton) cakisiyordu. */
+    --page-footer-phone-clearance: max(150px, calc(134px + env(safe-area-inset-bottom)));
 }
 
 body {
