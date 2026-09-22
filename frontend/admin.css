@@ -42,6 +42,19 @@ button i {
     margin-right: 8px;
 }
 
+/* .close-btn — tum admin modallerinde kullanilan, daire seklinde ve
+   sadece ikon iceren kapatma butonu. Yukaridaki "ikon + yazi arasi
+   bosluk" kurali burada anlamsiz, ikonu daire icinde sola kaydirip
+   merkezden kaciriyordu. Not: ":only-child" kasitli kullanilmadi — bir
+   <i> ikonunun ardindan duz metin gelen butonlarda (ör. "<i></i>
+   Doğrula") da eslesip o bosluğu yanlislikla sildigi test edildi.
+   !important: asagida mobil medya sorgusunda ayni butona ayrica
+   margin-right tanimlanmis (#dashboard-page button i, .modal-overlay
+   button i, .action-btn i), bu istisna onlari da kapsamali. */
+.close-btn i {
+    margin-right: 0 !important;
+}
+
 .stat-icon i {
     font-size: 1.5rem;
     margin-right: 0;
