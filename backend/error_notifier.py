@@ -32,6 +32,7 @@ import logging
 import psycopg2
 
 from config import DATABASE_CONFIG
+import push_notifications as push_notif
 
 load_dotenv()
 
@@ -52,6 +53,11 @@ ERROR_COOLDOWN_SECONDS = 3600  # 1 saat
 # DB'ye erişilemediğinde kullanılan bellek içi yedek kayıt: {error_key: timestamp}
 # (sadece o anki worker process'i için geçerlidir, bkz. modül docstring'i)
 _sent_errors = {}
+
+# Bu kodlar icin e-postaya EK olarak super_admin'in abone cihazlarina da
+# aninda PWA push bildirimi gider — "baglanti koptu" turunden, hemen fark
+# edilmesi gereken kritik durumlar. Diger tum kodlar sadece e-posta ile gider.
+PUSH_ALERT_CODES = {'E-WA-005', 'E-GCAL-005'}
 
 
 def _claim_send_db(error_key):
@@ -146,16 +152,26 @@ def send_error_notification(error_type, error_message, details=None):
         bool: E-posta gönderildiyse True
     """
     
-    if not is_configured():
-        logger.warning("E-posta ayarları yapılmamış, bildirim gönderilemedi")
-        return False
-    
     error_key = _get_error_key(error_type, error_message)
-    
+
     if not _should_send(error_key):
-        logger.info(f"Rate limit aktif, e-posta gönderilmedi: {error_type}")
+        logger.info(f"Rate limit aktif, bildirim gönderilmedi: {error_type}")
         return False
-    
+
+    if error_type in PUSH_ALERT_CODES:
+        try:
+            push_notif.push_to_role(
+                'super_admin',
+                f'Kritik Sistem Hatası ({error_type})',
+                error_message,
+            )
+        except Exception as push_err:
+            logger.warning(f"Push bildirimi gönderilemedi: {push_err}")
+
+    if not is_configured():
+        logger.warning("E-posta ayarları yapılmamış, e-posta gönderilemedi")
+        return False
+
     try:
         # E-posta içeriği oluştur
         subject = "Kritik Hata - Roof Tattoo Randevu Sistemi"

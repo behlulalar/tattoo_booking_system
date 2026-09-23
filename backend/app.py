@@ -158,6 +158,7 @@ from error_codes import (
     E_DB_001,
     E_DB_002,
     E_DB_003,
+    E_GCAL_005,
     E_REQ_001,
     E_SCH_001,
     E_UNK_001,
@@ -1208,6 +1209,37 @@ def _whatsapp_session_ready_for_bulk_send():
     except Exception as e:
         log_error(logger, E_WA_005, "WhatsApp oturum saglik kontrolu basarisiz — toplu gonderim atlandi", exc=e)
         return False
+
+
+def check_google_calendar_connection():
+    """Google Takvim baglantisini periyodik olarak dener; kopuksa E-GCAL-005
+    ile loglar (bu, super_admin'e aninda push + e-posta bildirimi tetikler,
+    bkz. error_notifier.PUSH_ALERT_CODES).
+
+    Senkron kapaliysa (is_google_calendar_enabled() False) hicbir sey
+    yapmaz — o zaten kasitli bir durum, hata degil. WhatsApp kontrolundeki
+    ile ayni "iki olcum" deseni kullanilir: ilk olcum basarisiz olursa
+    kisa bir bekleme sonrasi ikinci bir olcumle dogrulanir, tek seferlik
+    agi hiccup'i yanlis alarm uretmesin diye.
+    """
+    if not is_google_calendar_enabled():
+        return
+
+    def _reachable():
+        return credentials_file_ok() and google_api_reachable(timeout=3)
+
+    try:
+        if _reachable():
+            return
+        time.sleep(5)
+        if _reachable():
+            return
+        log_error(
+            logger, E_GCAL_005,
+            "Google Takvim bağlantısı kopuk (kimlik dosyası veya Google API'ye erişilemiyor)",
+        )
+    except Exception as e:
+        log_error(logger, E_GCAL_005, "Google Takvim bağlantı kontrolü başarısız", exc=e)
 
 
 def drain_whatsapp_queue():
@@ -8172,6 +8204,9 @@ def start_scheduler_if_master():
             scheduler.add_job(func=drain_gcal_queue, trigger="interval", minutes=2, id='gcal_queue_drain', replace_existing=True, max_instances=1)
             scheduler.add_job(func=run_gcal_inbound_tick, trigger="interval", minutes=2, id='gcal_inbound_tick', replace_existing=True, max_instances=1)
             scheduler.add_job(func=ping_uptimerobot_heartbeat, trigger="interval", minutes=2, id='uptimerobot_heartbeat', replace_existing=True, max_instances=1)
+            # Google Takvim baglanti kontrolu: WhatsApp'takiyle ayni amac —
+            # kopuklugu erken yakalayip super_admin'e push+e-posta gonderir
+            scheduler.add_job(func=check_google_calendar_connection, trigger="interval", minutes=5, id='gcal_connection_check', replace_existing=True, max_instances=1)
             # Günlük veritabanı yedekleme: Her gün saat 00:30'da
             backup_hour = 0
             backup_minute = 30
@@ -8192,6 +8227,7 @@ def start_scheduler_if_master():
                 logger.info("   - Google Calendar: aktif (kuyruklu push + yerel meşguliyet + inbound)")
                 logger.info("   - Takvim kuyruğu tahliyesi: her 2 dakikada bir")
                 logger.info("   - Takvim inbound/mesguliyet: her 2 dakikada bir")
+                logger.info("   - Takvim bağlantı kontrolü: her 5 dakikada bir")
                 def _startup_gcal_inbound():
                     try:
                         run_gcal_inbound_tick()

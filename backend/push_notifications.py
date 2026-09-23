@@ -69,6 +69,42 @@ def remove_subscription(cursor, endpoint):
     cursor.execute('DELETE FROM push_subscriptions WHERE endpoint = %s', (endpoint,))
 
 
+def push_to_role(role, title, body, url=None):
+    """Belirli bir role sahip TUM personelin abone cihazlarina push gonderir.
+
+    Ör. kritik sistem uyarilari (WhatsApp/Google Takvim baglantisi kopunca)
+    icin role='super_admin'.
+    """
+    if not push_enabled():
+        return
+    if _get_db_connection is None:
+        logger.warning('push_to_role: db accessors henuz set edilmedi')
+        return
+
+    conn = None
+    staff_ids = []
+    try:
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM artists WHERE role = %s', (role,))
+        staff_ids = [r[0] for r in cursor.fetchall() or []]
+        cursor.close()
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        logger.warning(f"push_to_role: personel okunamadi: {e}")
+        return
+    finally:
+        _release_db_connection(conn)
+
+    for staff_id in staff_ids:
+        push_to_staff(staff_id, title, body, url=url)
+
+
 def push_to_staff(staff_id, title, body, url=None):
     """Bir personelin TUM abone cihazlarina push bildirimi gonderir.
 
