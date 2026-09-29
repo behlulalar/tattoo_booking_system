@@ -3243,7 +3243,7 @@ def create_tattoo_request():
 
         base_message = (
             f'Talebiniz alındı. Referans numaranız: {reference_number}. '
-            'Sanatçı inceleyip süre belirledikten sonra size seçim linki gönderilecek.'
+            'Sanatçı talebinizi inceleyip size geri dönüş sağlayacaktır.'
         )
         if loyalty_attached:
             base_message += (
