@@ -307,6 +307,7 @@ def build_appointment_created_customer_message(
     body_area: str | None = None,
     tattoo_size: str | None = None,
     pre_consultation: bool = False,
+    discount_info: dict | None = None,
 ) -> str:
     """Müşteriye: randevu oluşturuldu."""
     b = _biz()
@@ -338,6 +339,11 @@ def build_appointment_created_customer_message(
     price_part = _price_line(price, prefix='💰 Ücret: ')
     if price_part:
         lines.append(price_part.lstrip('\n'))
+        if discount_info:
+            lines.append(
+                f"   _(Liste fiyatı {format_try(discount_info['original_price'])} ₺ — "
+                f"%{discount_info['percent']} sadakat indirimi: {discount_info['code']})_"
+            )
 
     lines.extend([
         '',

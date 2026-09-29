@@ -113,17 +113,6 @@ CREATE INDEX IF NOT EXISTS idx_appointments_staff ON appointments(staff_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_customer ON appointments(customer_id);
 CREATE INDEX IF NOT EXISTS idx_appointments_source ON appointments(source);
 
--- Working hours
-CREATE TABLE IF NOT EXISTS working_hours (
-  id           SERIAL PRIMARY KEY,
-  staff_id     INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
-  day_of_week  INTEGER NOT NULL CHECK (day_of_week >= 0 AND day_of_week <= 6),
-  start_time   TIME NOT NULL,
-  end_time     TIME NOT NULL,
-  is_available BOOLEAN DEFAULT TRUE
-);
-CREATE INDEX IF NOT EXISTS idx_working_hours_staff ON working_hours(staff_id);
-
 -- Time off
 CREATE TABLE IF NOT EXISTS time_off (
   id           SERIAL PRIMARY KEY,

@@ -64,18 +64,6 @@ CREATE TABLE appointments (
 );
 
 -- =============================================
--- 5. WORKING_HOURS (Çalışma Saatleri) Tablosu
--- =============================================
-CREATE TABLE working_hours (
-    id           SERIAL PRIMARY KEY,
-    staff_id     INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
-    day_of_week  INTEGER NOT NULL CHECK (day_of_week >= 0 AND day_of_week <= 6),  -- 0=Pazar, 1=Pazartesi...
-    start_time   TIME NOT NULL,
-    end_time     TIME NOT NULL,
-    is_available BOOLEAN DEFAULT TRUE
-);
-
--- =============================================
 -- 6. STAFF_SERVICES (Personel-Hizmet İlişkisi) Tablosu
 -- =============================================
 CREATE TABLE staff_services (
@@ -96,7 +84,6 @@ CREATE INDEX idx_appointments_date ON appointments(appointment_date);
 CREATE INDEX idx_appointments_staff ON appointments(staff_id);
 CREATE INDEX idx_appointments_customer ON appointments(customer_id);
 CREATE INDEX idx_appointments_source ON appointments(source);
-CREATE INDEX idx_working_hours_staff ON working_hours(staff_id);
 
 -- =============================================
 -- 7. TIME_OFF (İzin/Kapalı Saatler) Tablosu

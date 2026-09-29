@@ -192,119 +192,8 @@ function $(id) { return document.getElementById(id); }
 // =============================================
 let _promptResolve  = null;
 let _confirmResolve = null;
-let _offerFormResolve = null;
-let _offerFormLoyalty = null;
-let _offerPriceInputHandler = null;
-
-function formatPriceDigitsWithDots(digits) {
-  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-}
-
-function parseOfferPriceInputValue(raw) {
-  return parseFloat(String(raw || '0').replace(/\./g, '')) || 0;
-}
-
-function handleOfferPriceInputFormatting(e) {
-  const input = e.target;
-  const cursorFromEnd = input.value.length - input.selectionStart;
-  const digits = input.value.replace(/\D/g, '');
-  input.value = formatPriceDigitsWithDots(digits);
-  const pos = Math.max(0, input.value.length - cursorFromEnd);
-  input.setSelectionRange(pos, pos);
-}
-
-function updateOfferDiscountPreview() {
-  const preview = $('offer-form-discount-preview');
-  const priceInput = $('offer-form-price');
-  if (!preview || !_offerFormLoyalty || _offerFormLoyalty.used) {
-    if (preview) preview.hidden = true;
-    return;
-  }
-  const listPrice = parseOfferPriceInputValue(priceInput?.value);
-  if (listPrice <= 0) {
-    preview.hidden = true;
-    return;
-  }
-  const pct = _offerFormLoyalty.discount_percent || 10;
-  const finalPrice = Math.round(listPrice * (1 - pct / 100) * 100) / 100;
-  preview.hidden = false;
-  preview.textContent =
-    `Müşteriye gönderilecek fiyat: ${finalPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺ ` +
-    `(liste ${listPrice.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺, %${pct} indirim)`;
-}
 
 // Offer form modal — süre + fiyat
-function openOfferFormModal(desc = '', defaultPrice = null, loyaltyDiscount = null) {
-  return new Promise((resolve) => {
-    _offerFormResolve = resolve;
-    _offerFormLoyalty = loyaltyDiscount;
-    const overlay = $('offer-form-overlay');
-    const banner = $('offer-form-loyalty-banner');
-    const priceHint = $('offer-form-price-hint');
-    const priceInput = $('offer-form-price');
-
-    $('offer-form-desc').textContent = desc;
-    $('offer-form-duration').value   = '120';
-    $('offer-form-price').value      =
-      defaultPrice != null && Number(defaultPrice) > 0
-        ? formatPriceDigitsWithDots(String(Math.round(Number(defaultPrice))))
-        : '';
-
-    if (banner) {
-      if (loyaltyDiscount && !loyaltyDiscount.used) {
-        banner.hidden = false;
-        banner.innerHTML =
-          `<i class="fas fa-gift"></i> Sadakat kodu: <strong>${escapeHtml(loyaltyDiscount.code)}</strong> ` +
-          `(%${loyaltyDiscount.discount_percent} indirim — liste fiyatı girin, müşteriye indirimli gönderilir)`;
-      } else if (loyaltyDiscount?.used) {
-        banner.hidden = false;
-        banner.innerHTML =
-          `<i class="fas fa-check-circle"></i> Kod <strong>${escapeHtml(loyaltyDiscount.code)}</strong> daha önce kullanıldı.`;
-      } else {
-        banner.hidden = true;
-        banner.innerHTML = '';
-      }
-    }
-
-    if (priceHint) {
-      priceHint.textContent = loyaltyDiscount && !loyaltyDiscount.used
-        ? 'Liste fiyatını girin; sadakat indirimi otomatik uygulanır.'
-        : 'Randevu tamamlandığında gelir raporuna otomatik eklenir.';
-    }
-
-    if (priceInput) {
-      if (_offerPriceInputHandler) {
-        priceInput.removeEventListener('input', _offerPriceInputHandler);
-      }
-      _offerPriceInputHandler = (e) => { handleOfferPriceInputFormatting(e); updateOfferDiscountPreview(); };
-      priceInput.addEventListener('input', _offerPriceInputHandler);
-    }
-    updateOfferDiscountPreview();
-
-    overlay.style.display = 'flex';
-    setTimeout(() => $('offer-form-duration')?.focus(), 50);
-  });
-}
-
-function closeOfferFormModal() {
-  $('offer-form-overlay').style.display = 'none';
-  if (_offerFormResolve) { _offerFormResolve(null); _offerFormResolve = null; }
-}
-
-function resolveOfferForm() {
-  const durationRaw = parseInt($('offer-form-duration')?.value || '0', 10);
-  const priceRaw    = parseOfferPriceInputValue($('offer-form-price')?.value);
-  if (!durationRaw || durationRaw < 60 || durationRaw % 60 !== 0) {
-    alert('Süre 60\'ın katı olmalı (örn: 60, 120, 180)');
-    return;
-  }
-  $('offer-form-overlay').style.display = 'none';
-  if (_offerFormResolve) {
-    _offerFormResolve({ duration_minutes: durationRaw, price: priceRaw });
-    _offerFormResolve = null;
-  }
-}
-
 function customPrompt(title, desc, defaultValue = '') {
   return new Promise((resolve) => {
     _promptResolve = resolve;
@@ -467,7 +356,6 @@ async function submitEditTattooRequest() {
     showToast(data.message || 'Talep güncellendi', 'success');
     closeEditTattooRequestModal();
     await reloadNewTattooRequestPages();
-    await loadOfferedRequests();
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -510,57 +398,6 @@ function submitTimeOffForm() {
   };
   $('time-off-form-overlay').style.display = 'none';
   if (_timeOffResolve) { _timeOffResolve(result); _timeOffResolve = null; }
-}
-
-// Offer URL Modal
-function showOfferUrlModal(offerUrl, whatsappSent) {
-  const overlay = $('offer-url-overlay');
-  if (!overlay) return;
-  $('offer-url-input').value = offerUrl || '';
-  const statusEl = $('offer-url-whatsapp-status');
-  if (whatsappSent) {
-    statusEl.textContent = '✅ WhatsApp mesajı müşteriye gönderildi.';
-    statusEl.style.background = 'rgba(111, 154, 111, 0.16)';
-    statusEl.style.color = '#6F9A6F';
-    statusEl.style.border = '1px solid rgba(111, 154, 111, 0.28)';
-  } else {
-    statusEl.innerHTML =
-      '⚠️ WhatsApp mesajı <strong>ulaşmadı</strong> — teklif kaydı oluştu. Linki kopyalayıp müşterinin numarasına manuel gönderin.';
-    statusEl.style.background = 'rgba(201, 154, 74, 0.16)';
-    statusEl.style.color = '#C99A4A';
-    statusEl.style.border = '1px solid rgba(201, 154, 74, 0.32)';
-  }
-  overlay.style.display = 'flex';
-}
-
-function closeOfferUrlModal() {
-  const overlay = $('offer-url-overlay');
-  if (overlay) overlay.style.display = 'none';
-}
-
-// Teklif formu kapanip API cagrisi (WhatsApp gonderimi dahil) bitene kadar
-// gecen sure boyunca hicbir gorsel geri bildirim yoktu — kullanici sistemin
-// hata verdigini sanabiliyordu. Bu araya bir bekleme modali giriyor.
-function showOfferSendingModal() {
-  const overlay = $('offer-sending-overlay');
-  if (overlay) overlay.style.display = 'flex';
-}
-
-function hideOfferSendingModal() {
-  const overlay = $('offer-sending-overlay');
-  if (overlay) overlay.style.display = 'none';
-}
-
-function copyOfferUrl() {
-  const input = $('offer-url-input');
-  if (!input) return;
-  navigator.clipboard.writeText(input.value).then(() => {
-    const btn = $('copy-offer-btn');
-    if (btn) { btn.innerHTML = '<i class="fas fa-check"></i> Kopyalandı'; setTimeout(() => { btn.innerHTML = '<i class="fas fa-copy"></i> Kopyala'; }, 2000); }
-  }).catch(() => {
-    input.select();
-    document.execCommand('copy');
-  });
 }
 
 function showToast(message, type = 'success') {
@@ -1291,16 +1128,10 @@ async function loadManualAppointmentTimeSlots() {
     }
     const slots = data.available_start_slots || [];
     if (!slots.length) {
-      const hint = data.work_start && data.work_end
-        ? ` (${data.work_start}–${data.work_end} mesai)`
-        : '';
-      timeSel.innerHTML = `<option value="">Bu gün için uygun saat yok${hint}</option>`;
+      timeSel.innerHTML = '<option value="">Bu gün için uygun saat yok</option>';
       return;
     }
-    const rangeHint = data.work_start && data.work_end
-      ? ` — mesai ${data.work_start}–${data.work_end}`
-      : '';
-    timeSel.innerHTML = `<option value="">Saat seçin${rangeHint}</option>` +
+    timeSel.innerHTML = '<option value="">Saat seçin</option>' +
       slots.map((t) => `<option value="${t}">${t}</option>`).join('');
     timeSel.disabled = false;
   } catch (e) {
@@ -1309,9 +1140,15 @@ async function loadManualAppointmentTimeSlots() {
   }
 }
 
-function openManualAppointmentModal() {
+// Talep kartındaki "Randevu Ver" butonundan açılırsa oluşturulan randevu bu talebe bağlanır.
+let _manualApptTattooRequestId = null;
+
+function openManualAppointmentModal(prefill = null) {
   const overlay = $('manual-appointment-overlay');
   if (!overlay) return;
+  // Butonlara doğrudan listener olarak bağlandığında ilk argüman click event'i olur.
+  const pre = prefill && prefill.requestId ? prefill : null;
+  _manualApptTattooRequestId = pre ? pre.requestId : null;
   $('manual-appointment-form')?.reset();
   if ($('manual-appt-duration')) $('manual-appt-duration').value = '120';
   if ($('manual-appt-whatsapp')) $('manual-appt-whatsapp').checked = true;
@@ -1327,8 +1164,30 @@ function openManualAppointmentModal() {
   } else if ($('manual-appt-date')) {
     $('manual-appt-date').value = localIsoDate();
   }
-  populateManualApptStaffSelect().then(() => loadManualAppointmentTimeSlots());
-  setTimeout(() => $('manual-appt-phone')?.focus(), 80);
+  populateManualApptStaffSelect().then(() => {
+    if (pre?.staffId && $('manual-appt-staff')) {
+      const sel = $('manual-appt-staff');
+      if (Array.from(sel.options).some((o) => o.value === String(pre.staffId))) {
+        sel.value = String(pre.staffId);
+      }
+    }
+    return loadManualAppointmentTimeSlots();
+  });
+  if (pre) {
+    const parsed = parseTrMobile(pre.phone);
+    const digits = String(pre.phone || '').replace(/\D/g, '');
+    if ($('manual-appt-phone')) $('manual-appt-phone').value = parsed || (digits ? `+${digits}` : '');
+    if ($('manual-appt-name')) $('manual-appt-name').value = pre.name || '';
+    if ($('manual-appt-surname')) $('manual-appt-surname').value = pre.surname || '';
+    const hint = $('manual-appt-customer-hint');
+    if (hint) {
+      hint.textContent = `Talep ${pre.referenceNumber || '#' + pre.requestId} için randevu veriliyor.`;
+      hint.hidden = false;
+    }
+    setTimeout(() => $('manual-appt-duration')?.focus(), 80);
+  } else {
+    setTimeout(() => $('manual-appt-phone')?.focus(), 80);
+  }
 }
 
 function closeManualAppointmentModal() {
@@ -1581,6 +1440,8 @@ async function submitManualAppointment(e) {
     send_whatsapp: sendWhatsapp,
   };
   if (staffId) body.staff_id = staffId;
+  const linkedRequestId = _manualApptTattooRequestId;
+  if (linkedRequestId) body.tattoo_request_id = linkedRequestId;
 
   closeManualAppointmentModal();
   const creatingOverlay = $('manual-appt-creating-overlay');
@@ -1609,12 +1470,17 @@ async function submitManualAppointment(e) {
 
   const detailEl = $('manual-appt-success-detail');
   if (detailEl) {
-    detailEl.textContent = `${name} ${surname} — ${isoDateToTr(dateIso)} ${time}`;
+    const disc = data.loyalty_discount;
+    detailEl.textContent = `${name} ${surname} — ${isoDateToTr(dateIso)} ${time}` + (disc
+      ? ` · %${disc.percent} sadakat indirimi (${disc.code}): ${disc.original_price} ₺ → ${disc.final_price} ₺`
+      : '');
   }
   const successOverlay = $('manual-appt-success-overlay');
   if (successOverlay) successOverlay.style.display = 'flex';
 
   await reloadActiveAdminAppointments();
+  // Talep randevuya dönüştü (manuel ya da otomatik eşleşme) — talep listelerini yenile
+  await reloadNewTattooRequestPages();
 }
 
 // =============================================
@@ -1705,14 +1571,12 @@ async function loadEditApptTimeSlots(preserveTime) {
   if (errEl) errEl.style.display = 'none';
 
   const dateTr = isoDateToTr(dateIso);
-  const allowOutsideHours = !!$('edit-appt-allow-outside-hours')?.checked;
   const qs = new URLSearchParams({
     staff_id: String(staffId),
     date: dateTr,
     duration_minutes: String(duration),
     exclude_appointment_id: String(apptId || ''),
   });
-  if (allowOutsideHours) qs.set('allow_outside_working_hours', '1');
 
   try {
     const { ok, data } = await apiCall(`/admin/manual-appointment/available-slots?${qs.toString()}`, {
@@ -1838,7 +1702,6 @@ async function submitEditAppointment(e) {
     time,
     duration_minutes: duration,
     price,
-    allow_outside_working_hours: !!$('edit-appt-allow-outside-hours')?.checked,
   };
   if (staffId) body.staff_id = staffId;
 
@@ -1971,7 +1834,7 @@ function bindAppointmentStatusControls(container, afterSuccess) {
 function renderDisabled(sectionId, title, message) {
   const sec = $(sectionId);
   if (!sec) return;
-  const container = sec.querySelector('.services-list, .appointments-list, .working-hours-container, .time-off-container, .all-appointments-container') || sec;
+  const container = sec.querySelector('.services-list, .appointments-list, .time-off-container, .all-appointments-container') || sec;
   container.innerHTML = `
     <div style="padding:16px; border:1px dashed rgba(0,0,0,.2); border-radius:12px;">
       <div style="font-weight:400; margin-bottom:8px;">${escapeHtml(title)}</div>
@@ -2711,13 +2574,11 @@ function renderWhatsAppBtnHtml(phone) {
   </button>`;
 }
 
-function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOffered = false, emptyMessage = '') {
+function renderTattooRequests(items, containerId = 'tattoo-requests-list', _unused = false, emptyMessage = '') {
   const container = $(containerId);
   if (!container) return;
   if (!items || items.length === 0) {
-    const fallback = isOffered
-      ? 'Henüz gönderilmiş teklif yok'
-      : 'Bekleyen talep yok';
+    const fallback = 'Bekleyen talep yok';
     container.innerHTML = `<p class="empty-message">${emptyMessage || fallback}</p>`;
     return;
   }
@@ -2795,14 +2656,9 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
           </div>
 
           <div class="appointment-actions tattoo-request-actions">
-            ${isOffered
-              ? `<button class="action-btn" data-resend="${tr.id}">
-                   <i class="fas fa-rotate-right"></i> Yeni Link Gönder
-                 </button>`
-              : `<button class="action-btn review-btn" data-offer="${tr.id}">
-                   <i class="fas fa-paper-plane"></i> Süre Belirle & Link Gönder
-                 </button>`
-            }
+            <button class="action-btn review-btn" data-schedule="${tr.id}">
+              <i class="fas fa-calendar-plus"></i> Randevu Ver
+            </button>
             <div class="tr-manage-row">
               <button type="button" class="action-btn edit-btn" data-edit="${tr.id}">
                 <i class="fas fa-pen"></i> Düzenle
@@ -2818,79 +2674,20 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
     })
     .join('');
 
-  // Yeni teklif gönder (Dövme Talepleri)
-  container.querySelectorAll('button[data-offer]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-offer');
+  // Randevu ver: manuel randevu formunu müşteri/talep bilgileriyle açar
+  container.querySelectorAll('button[data-schedule]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-schedule');
       const tr = items.find((item) => String(item.id) === String(id));
-      const result = await openOfferFormModal(
-        'Müşteriye gönderilecek teklif bilgilerini girin.',
-        null,
-        tr?.loyalty_discount || null
-      );
-      if (!result) return;
-      btn.disabled = true;
-      showOfferSendingModal();
-      try {
-        const { ok, data } = await apiCall(`/admin/tattoo-requests/${id}/offer`, {
-          method: 'POST',
-          body: JSON.stringify({ duration_minutes: result.duration_minutes, price: result.price }),
-        });
-        if (!ok || !data.success) {
-          showToast(data.message || 'Link gönderilemedi', 'error');
-          return;
-        }
-        showOfferUrlModal(data.offer_url, data.whatsapp_sent);
-        if (data.whatsapp_sent) {
-          showToast(data.message || 'Teklif gönderildi', 'success');
-        } else {
-          showToast(data.message || 'Teklif oluşturuldu — WhatsApp mesajı gitmedi, linki manuel gönderin', 'error');
-        }
-        await reloadNewTattooRequestPages();
-        await loadOfferedRequests();
-      } finally {
-        hideOfferSendingModal();
-        btn.disabled = false;
-      }
-    });
-  });
-
-  // Yeniden link gönder (Gönderilen Teklifler)
-  container.querySelectorAll('button[data-resend]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-resend');
-      const tr = items.find((item) => String(item.id) === String(id));
-      const result = await openOfferFormModal(
-        'Mevcut teklif iptal edilir, yeni link oluşturulur.',
-        null,
-        tr?.loyalty_discount || null
-      );
-      if (!result) return;
-      btn.disabled = true;
-      showOfferSendingModal();
-      try {
-        const { ok, data } = await apiCall(`/admin/tattoo-requests/${id}/offer`, {
-          method: 'POST',
-          body: JSON.stringify({ duration_minutes: result.duration_minutes, price: result.price }),
-        });
-        if (!ok || !data.success) {
-          showToast(data.message || 'Link gönderilemedi', 'error');
-          return;
-        }
-        showOfferUrlModal(data.offer_url, data.whatsapp_sent);
-        if (data.whatsapp_sent) {
-          showToast(data.message || 'Teklif gönderildi', 'success');
-        } else {
-          showToast(
-            data.message || 'Teklif oluşturuldu — WhatsApp mesajı müşteriye ulaşmadı, linki manuel gönderin',
-            'error'
-          );
-        }
-        await loadOfferedRequests();
-      } finally {
-        hideOfferSendingModal();
-        btn.disabled = false;
-      }
+      if (!tr) return;
+      openManualAppointmentModal({
+        requestId: tr.id,
+        referenceNumber: tr.reference_number || '',
+        phone: tr.customer?.phone || '',
+        name: tr.customer?.name || '',
+        surname: tr.customer?.surname || '',
+        staffId: tr.staff?.id || null,
+      });
     });
   });
 
@@ -2921,8 +2718,7 @@ function renderTattooRequests(items, containerId = 'tattoo-requests-list', isOff
         }
         showToast(data.message || 'Talep silindi', 'success');
         await reloadNewTattooRequestPages();
-        await loadOfferedRequests();
-      } finally {
+          } finally {
         btn.disabled = false;
       }
     });
@@ -3054,38 +2850,6 @@ async function reloadNewTattooRequestPages() {
   if (getLoggedInStaff()?.role === 'super_admin') {
     await loadAllTattooRequests();
   }
-}
-
-async function loadOfferedRequests() {
-  if (!canAccessTattooRequests()) return;
-  const container = $('offered-requests-list');
-  if (!container) return;
-
-  // Personel filtresi: super_admin/teknik destek tum stüdyonun tekliflerini
-  // tek bir listede karisik goruyordu, kim gonderdigini ayirt etmek zordu.
-  const filtersWrap = $('offered-requests-filters');
-  let staffQ = '';
-  if (hasStudioAccess()) {
-    if (filtersWrap) filtersWrap.style.display = 'flex';
-    await populateStaffFilter('offered-requests-staff-filter');
-    const staffVal = $('offered-requests-staff-filter')?.value || '';
-    if (staffVal) staffQ = `&staff_id=${encodeURIComponent(staffVal)}`;
-  } else if (filtersWrap) {
-    filtersWrap.style.display = 'none';
-  }
-
-  container.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
-  const refQ = getTattooRefSearchParam('offered-ref-search');
-  const { ok, data } = await apiCall(`/admin/tattoo-requests?status=offered${refQ}${staffQ}`, { method: 'GET' });
-  if (!ok || !data.success) {
-    container.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(data.message || 'Yüklenemedi')}</p>`;
-    return;
-  }
-  const items = data.tattoo_requests || [];
-  // pending-badge (Gönderilen Teklifler sayacı) güncelle
-  const badge = $('pending-badge');
-  if (badge) badge.textContent = String(items.length);
-  renderTattooRequests(items, 'offered-requests-list', true);
 }
 
 function renderAppointmentsGrouped(containerId, items) {
@@ -3304,12 +3068,6 @@ async function loadDashboard() {
   // Sidebar badge'lerini arka planda güncelle (dashboard'da görünür olsun)
   if (canAccessTattooRequests()) {
     refreshNewTattooRequestBadges();
-    apiCall('/admin/tattoo-requests?status=offered', { method: 'GET' }).then(({ ok, data }) => {
-      if (!ok || !data.success) return;
-      const cnt = (data.tattoo_requests || []).length;
-      const badge = $('pending-badge');
-      if (badge) badge.textContent = String(cnt);
-    });
   }
 }
 
@@ -3369,7 +3127,6 @@ function minutesToTime(mins) {
 
 const DEFAULT_SCHEDULE_START_MINS = 9 * 60;   // 09:00
 const DEFAULT_SCHEDULE_END_MINS = 24 * 60;    // 24:00 (son slot 23:30)
-const _scheduleRangeCache = {};
 
 function buildScheduleTimeSlots(startMins = DEFAULT_SCHEDULE_START_MINS, endMins = DEFAULT_SCHEDULE_END_MINS) {
   const times = [];
@@ -3377,29 +3134,6 @@ function buildScheduleTimeSlots(startMins = DEFAULT_SCHEDULE_START_MINS, endMins
     times.push(minutesToTime(m));
   }
   return times;
-}
-
-function workingHoursToRange(workingHours) {
-  let minM = null;
-  let maxM = null;
-  (workingHours || []).forEach((wh) => {
-    if (wh.is_available === false) return;
-    const st = timeToMinutes((wh.start_time || '09:00').slice(0, 5));
-    let en;
-    const endRaw = (wh.end_time || '20:00').slice(0, 5);
-    if (endRaw === '00:00' || endRaw === '24:00') {
-      en = 24 * 60;
-    } else {
-      en = timeToMinutes(endRaw);
-    }
-    if (en <= st) en = 24 * 60;
-    minM = minM === null ? st : Math.min(minM, st);
-    maxM = maxM === null ? en : Math.max(maxM, en);
-  });
-  if (minM === null) {
-    return { start: DEFAULT_SCHEDULE_START_MINS, end: DEFAULT_SCHEDULE_END_MINS };
-  }
-  return { start: minM, end: maxM };
 }
 
 function getTableStaffIdForHours(tableContainerId) {
@@ -3415,25 +3149,6 @@ function getTableStaffIdForHours(tableContainerId) {
   }
 }
 
-function jsDateToDbDayOfWeek(dateObj) {
-  // Backend: 0=Pazar, 1=Pazartesi, ... 6=Cumartesi (JS getDay() ile aynı)
-  return dateObj.getDay();
-}
-
-function dayWorkingHoursToRange(wh) {
-  if (!wh || wh.is_available === false) return null;
-  const st = timeToMinutes((wh.start_time || '09:00').slice(0, 5));
-  let en;
-  const endRaw = (wh.end_time || '20:00').slice(0, 5);
-  if (endRaw === '00:00' || endRaw === '24:00') {
-    en = 24 * 60;
-  } else {
-    en = timeToMinutes(endRaw);
-  }
-  if (en <= st) en = 24 * 60;
-  return { start: st, end: en };
-}
-
 function extendRangeFromAppointment(range, apt) {
   if (!apt?.time) return range;
   const st = timeToMinutes(apt.time.slice(0, 5));
@@ -3444,74 +3159,7 @@ function extendRangeFromAppointment(range, apt) {
   };
 }
 
-async function fetchScheduleWorkingHours(staffId) {
-  const cacheKey = staffId ? `wh_s${staffId}` : 'wh_all';
-  if (_scheduleRangeCache[cacheKey]) return _scheduleRangeCache[cacheKey];
-
-  let workingHours = [];
-
-  if (staffId) {
-    const { ok, data } = await apiCall(`/admin/working-hours?staff_id=${staffId}`, { method: 'GET' });
-    if (ok && data.success) workingHours = data.working_hours || [];
-  } else {
-    let staff = getAdminStaff();
-    if (hasStudioAccess(staff?.role)) {
-      const { ok, data } = await apiCall('/admin/staff', { method: 'GET' });
-      if (ok && data.success && (data.staff || []).length) {
-        const merged = new Map();
-        for (const s of data.staff) {
-          const whRes = await apiCall(`/admin/working-hours?staff_id=${s.id}`, { method: 'GET' });
-          if (!whRes.ok || !whRes.data.success) continue;
-          (whRes.data.working_hours || []).forEach((wh) => {
-            const key = wh.day_of_week;
-            const existing = merged.get(key);
-            if (!existing) {
-              merged.set(key, { ...wh });
-              return;
-            }
-            const a = dayWorkingHoursToRange(existing);
-            const b = dayWorkingHoursToRange(wh);
-            if (!a) return;
-            if (!b) return;
-            merged.set(key, {
-              ...existing,
-              is_available: true,
-              start_time: minutesToTime(Math.min(a.start, b.start)),
-              end_time: minutesToTime(Math.max(a.end, b.end)),
-            });
-          });
-        }
-        workingHours = [...merged.values()];
-      }
-    } else {
-      const { ok, data } = await apiCall('/admin/working-hours', { method: 'GET' });
-      if (ok && data.success) workingHours = data.working_hours || [];
-    }
-  }
-
-  _scheduleRangeCache[cacheKey] = workingHours;
-  return workingHours;
-}
-
-/** Takvim tablosu saat sütunları — backend ile aynı kaynak (randevuya göre daralmaz) */
-async function fetchScheduleGridTimes(staffId) {
-  const cacheKey = `grid_${staffId || 'all'}`;
-  if (_scheduleRangeCache[cacheKey]) return _scheduleRangeCache[cacheKey];
-
-  const qs = new URLSearchParams();
-  if (staffId) qs.set('staff_id', String(staffId));
-
-  const { ok, data } = await apiCall(`/admin/schedule-grid-times?${qs.toString()}`, { method: 'GET' });
-  let times = buildScheduleTimeSlots();
-  if (ok && data.success && Array.isArray(data.times) && data.times.length) {
-    times = data.times.map((t) => String(t).slice(0, 5));
-  }
-
-  _scheduleRangeCache[cacheKey] = times;
-  return times;
-}
-
-/** Randevu çalışma saatleri dışındaysa sütunlara ekle */
+/** Randevu varsayılan takvim aralığının dışındaysa sütunlara ekle */
 function ensureAppointmentTimesInGrid(times, appointmentsInWeek) {
   const set = new Set(times);
   let minM = times.length ? timeToMinutes(times[0]) : DEFAULT_SCHEDULE_START_MINS;
@@ -3529,13 +3177,6 @@ function ensureAppointmentTimesInGrid(times, appointmentsInWeek) {
   });
 
   return [...set].sort((a, b) => timeToMinutes(a) - timeToMinutes(b));
-}
-
-function isDayClosedForSchedule(workingHours, dateObj) {
-  const whByDay = new Map();
-  (workingHours || []).forEach((wh) => whByDay.set(Number(wh.day_of_week), wh));
-  const wh = whByDay.get(jsDateToDbDayOfWeek(dateObj));
-  return !wh || wh.is_available === false || !dayWorkingHoursToRange(wh);
 }
 
 let _appointmentsData    = [];   // Randevular section
@@ -3743,8 +3384,7 @@ async function renderAppointmentsTable(itemsRaw, tableContainerId) {
   items = items.filter((a) => a.date && weekDateSet.has(a.date));
 
   const staffIdForHours = getTableStaffIdForHours(tableContainerId);
-  const workingHours = await fetchScheduleWorkingHours(staffIdForHours);
-  let times = await fetchScheduleGridTimes(staffIdForHours);
+  let times = buildScheduleTimeSlots();
   let offs = offDaysForTable(tableContainerId);
   if (staffIdForHours) {
     offs = offs.filter((t) => !t.staff?.id || Number(t.staff.id) === Number(staffIdForHours));
@@ -3789,8 +3429,6 @@ async function renderAppointmentsTable(itemsRaw, tableContainerId) {
 
   const dayColumns = weekDates.map((dateObj, idx) => {
     const dateStr = weekDateStrings[idx];
-    const dayClosed = isDayClosedForSchedule(workingHours, dateObj);
-    const hasAppts = (itemsByDate[dateStr] || []).length > 0;
     const isToday = dateStr === todayStr;
 
     const slotLines = times.map(() =>
@@ -3808,7 +3446,7 @@ async function renderAppointmentsTable(itemsRaw, tableContainerId) {
       nowLine = `<div class="gcal-now-line" style="top:${nowTop}px"></div>`;
     }
 
-    return `<div class="gcal-day-col${dayClosed && !hasAppts ? ' gcal-day-col--closed' : ''}${isToday ? ' gcal-day-col--today' : ''}">
+    return `<div class="gcal-day-col${isToday ? ' gcal-day-col--today' : ''}">
       <div class="gcal-slots-bg" style="height:${totalHeight}px">${slotLines}</div>
       <div class="gcal-events-layer" style="height:${totalHeight}px">${eventsHtml}${nowLine}</div>
     </div>`;
@@ -4032,32 +3670,8 @@ async function loadPending() {
 
 async function loadSchedule() {
   if (!canAccessIncome()) return;
-  const canEditHours = true;
-  const saveWh = $('save-working-hours-btn');
-  if (saveWh) saveWh.style.display = canEditHours ? '' : 'none';
-
-  const whContainer = $('working-hours-table');
   const toContainer = $('time-off-list');
-  if (whContainer) whContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
   if (toContainer) toContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
-
-  const wh = await apiCall('/admin/working-hours', { method: 'GET' });
-  if (!wh.ok || !wh.data.success) {
-    if (whContainer) whContainer.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(wh.data.message || 'Yüklenemedi')}</p>`;
-  } else {
-    const hours = wh.data.working_hours || [];
-    renderWorkingHours(hours, { containerId: 'working-hours-table', readOnly: !canEditHours });
-    const notice = $('working-hours-notice');
-    const noticeText = $('working-hours-notice-text');
-    if (notice) {
-      notice.style.display = 'flex';
-      if (noticeText) {
-        noticeText.innerHTML = hours.length
-          ? 'Bu saatler yalnızca sizin koltuğunuz içindir. Bir günü kapatmak diğer sanatçıları kapatmaz. Diğer personel için <strong>Personel</strong> sayfasındaki saat ikonunu kullanın.'
-          : 'Saatler henüz kaydedilmemiş. Önizleme 10:00–20:00; kaydedince sizin koltuğunuz için kesinleşir. Diğer sanatçılar etkilenmez.';
-      }
-    }
-  }
 
   const to = await apiCall('/admin/time-off', { method: 'GET' });
   if (!to.ok || !to.data.success) {
@@ -4065,70 +3679,6 @@ async function loadSchedule() {
   } else {
     renderTimeOff(to.data.time_offs || to.data.time_off || []);
   }
-}
-
-function collectWorkingHoursPayload(container) {
-  const payload = [];
-  for (let day = 0; day <= 6; day++) {
-    const start = container?.querySelector(`input[data-wh-start="${day}"]`)?.value || '10:00';
-    const end = container?.querySelector(`input[data-wh-end="${day}"]`)?.value || '20:00';
-    const isAvailable = !!container?.querySelector(`input[data-wh-open="${day}"]`)?.checked;
-    payload.push({ day_of_week: day, start_time: start, end_time: end, is_available: isAvailable });
-  }
-  return payload;
-}
-
-function renderWorkingHours(items, { containerId = 'working-hours-table', readOnly = false } = {}) {
-  const container = $(containerId);
-  if (!container) return;
-  const dayNames = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
-  const disabledAttr = readOnly ? 'disabled' : '';
-
-  // Map by day_of_week
-  const byDay = new Map();
-  (items || []).forEach((w) => byDay.set(Number(w.day_of_week), w));
-
-  container.classList.toggle('is-readonly', readOnly);
-  container.innerHTML = dayNames
-    .map((name, idx) => {
-      const day = idx; // backend uses 0..6
-      const w = byDay.get(day) || { day_of_week: day, start_time: '10:00', end_time: '20:00', is_available: true };
-      const isOpen = !!w.is_available;
-      return `
-        <div class="working-hour-row">
-          <div class="wh-day">${escapeHtml(name)}</div>
-          <div class="wh-toggle">
-            <label class="switch" title="Açık/Kapalı">
-              <input type="checkbox" data-wh-open="${day}" ${isOpen ? 'checked' : ''} ${disabledAttr} />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="wh-times ${isOpen ? '' : 'disabled'}">
-            <input type="time" data-wh-start="${day}" value="${escapeHtml(w.start_time || '10:00')}" ${isOpen && !readOnly ? '' : 'disabled'} />
-            <span style="color: var(--text-muted);">-</span>
-            <input type="time" data-wh-end="${day}" value="${escapeHtml(w.end_time || '20:00')}" ${isOpen && !readOnly ? '' : 'disabled'} />
-          </div>
-        </div>
-      `;
-    })
-    .join('');
-
-  if (readOnly) return;
-
-  // Toggle enable/disable time inputs
-  container.querySelectorAll('input[data-wh-open]').forEach((chk) => {
-    chk.addEventListener('change', () => {
-      const day = chk.getAttribute('data-wh-open');
-      const start = container.querySelector(`input[data-wh-start="${day}"]`);
-      const end = container.querySelector(`input[data-wh-end="${day}"]`);
-      const row = chk.closest('.working-hour-row');
-      const times = row?.querySelector('.wh-times');
-      const open = chk.checked;
-      if (start) start.disabled = !open;
-      if (end) end.disabled = !open;
-      if (times) times.classList.toggle('disabled', !open);
-    });
-  });
 }
 
 function renderTimeOff(items, { containerId = 'time-off-list', deleteUrlFor } = {}) {
@@ -4378,17 +3928,8 @@ function closeStaffScheduleModal() {
 
 async function loadStaffSchedule() {
   if (!_staffScheduleTargetId) return;
-  const whContainer = $('staff-working-hours-table');
   const toContainer = $('staff-time-off-list');
-  if (whContainer) whContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
   if (toContainer) toContainer.innerHTML = '<p class="empty-message">Yükleniyor...</p>';
-
-  const wh = await apiCall(`/admin/staff/${_staffScheduleTargetId}/working-hours`, { method: 'GET' });
-  if (!wh.ok || !wh.data.success) {
-    if (whContainer) whContainer.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(wh.data.message || 'Yüklenemedi')}</p>`;
-  } else {
-    renderWorkingHours(wh.data.working_hours || [], { containerId: 'staff-working-hours-table' });
-  }
 
   const to = await apiCall(`/admin/staff/${_staffScheduleTargetId}/time-off`, { method: 'GET' });
   if (!to.ok || !to.data.success) {
@@ -4791,21 +4332,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('staff-schedule-overlay')?.addEventListener('click', (e) => {
     if (e.target === $('staff-schedule-overlay')) closeStaffScheduleModal();
   });
-  $('save-staff-working-hours-btn')?.addEventListener('click', async () => {
-    if (!_staffScheduleTargetId) return;
-    const payload = collectWorkingHoursPayload($('staff-working-hours-table'));
-    const { ok, data } = await apiCall(`/admin/staff/${_staffScheduleTargetId}/working-hours`, {
-      method: 'PUT',
-      body: JSON.stringify({ working_hours: payload }),
-    });
-    if (!ok || !data.success) {
-      showToast(data.message || 'Kaydedilemedi', 'error');
-      return;
-    }
-    showToast('Çalışma saatleri kaydedildi', 'success');
-    Object.keys(_scheduleRangeCache).forEach((k) => delete _scheduleRangeCache[k]);
-    await loadStaffSchedule();
-  });
   $('add-staff-time-off-btn')?.addEventListener('click', async () => {
     if (!_staffScheduleTargetId) return;
     const timeOffData = await openTimeOffFormModal();
@@ -4862,27 +4388,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     $('adjustment-modal-overlay').style.display = 'none';
   });
 
-  // Schedule save
-  $('save-working-hours-btn')?.addEventListener('click', async () => {
-    if (!canAccessIncome()) {
-      showToast('Çalışma saatlerini düzenleme yetkiniz yok', 'error');
-      return;
-    }
-    const payload = collectWorkingHoursPayload($('working-hours-table'));
-    const { ok, data } = await apiCall('/admin/working-hours', {
-      method: 'PUT',
-      body: JSON.stringify({ working_hours: payload }),
-    });
-    if (!ok || !data.success) {
-      showToast(data.message || 'Kaydedilemedi', 'error');
-      return;
-    }
-    showToast('Kaydedildi', 'success');
-    const notice = $('working-hours-notice');
-    if (notice) notice.style.display = 'none';
-    await loadSchedule();
-  });
-
+  // Off Day
   $('add-time-off-btn')?.addEventListener('click', async () => {
     const timeOffData = await openTimeOffFormModal();
     if (!timeOffData) return;
@@ -4957,7 +4463,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   $('edit-appointment-form')?.addEventListener('submit', submitEditAppointment);
   $('edit-appt-date-btn')?.addEventListener('click', () => editApptDatePicker?.open());
-  ['edit-appt-duration', 'edit-appt-staff', 'edit-appt-allow-outside-hours'].forEach((id) => {
+  ['edit-appt-duration', 'edit-appt-staff'].forEach((id) => {
     $(id)?.addEventListener('change', () => loadEditApptTimeSlots($('edit-appt-time')?.value));
   });
   ['edit-appt-name', 'edit-appt-surname'].forEach((id) => {
@@ -4975,7 +4481,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (page === 'dashboard') await loadDashboard();
       if (page === 'appointments') await loadAppointments();
       if (page === 'pending') await loadPending();
-      if (page === 'my-tattoo-requests' || page === 'undecided-requests' || page === 'preconsult-requests' || page === 'offered') {
+      if (page === 'my-tattoo-requests' || page === 'undecided-requests' || page === 'preconsult-requests') {
         if (!canAccessTattooRequests()) {
           showToast('Bu sayfaya erişim yetkiniz yok', 'error');
           showSection('dashboard');
@@ -4995,7 +4501,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         await loadAllTattooRequests();
       }
-      if (page === 'offered') await loadOfferedRequests();
       if (page === 'staff') {
         if (!hasStudioAccess()) {
           showToast('Bu sayfaya erişim yetkiniz yok', 'error');
@@ -5137,12 +4642,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('all-tattoo-ref-search')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') loadAllTattooRequests();
   });
-  $('offered-ref-search-btn')?.addEventListener('click', loadOfferedRequests);
-  $('offered-ref-search')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') loadOfferedRequests();
-  });
-  $('refresh-offered-btn')?.addEventListener('click', loadOfferedRequests);
-  $('offered-requests-staff-filter')?.addEventListener('change', loadOfferedRequests);
 
   // View toggle — Randevular
   setupViewToggle('view-list-btn', 'view-table-btn',
@@ -5158,11 +4657,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     const s = $('all-appointments-start-date'); if (s) s.value = '';
     const e = $('all-appointments-end-date');   if (e) e.value = '';
     const sf = $('all-appointments-staff-filter'); if (sf) sf.value = '';
-    Object.keys(_scheduleRangeCache).forEach((k) => delete _scheduleRangeCache[k]);
     loadAllAppointments();
   });
   $('all-appointments-staff-filter')?.addEventListener('change', () => {
-    Object.keys(_scheduleRangeCache).forEach((k) => delete _scheduleRangeCache[k]);
     const tableView = $('all-appointments-table-view');
     if (tableView && tableView.style.display !== 'none') {
       void renderAppointmentsTable(_allAppointmentsData, 'all-appointments-table-container');
