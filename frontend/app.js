@@ -1235,7 +1235,7 @@ async function submitTattooRequest({ preConsultation = false, undecided = false,
     setTattooConfigStepActive(false);
     updateStepper(5);
 
-    let defaultMessage = 'Talebiniz alındı. Sanatçı süre belirleyip link gönderecek.';
+    let defaultMessage = 'Talebiniz alındı. Sanatçı size geri dönüş sağlayacaktır.';
     if (data.loyalty_discount?.code) {
       defaultMessage += ` İndirim kodunuz (${data.loyalty_discount.code}) talebe eklendi.`;
     }

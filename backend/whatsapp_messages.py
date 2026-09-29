@@ -213,10 +213,7 @@ def build_tattoo_request_received_message(
         next_step = 'Sanatçımız talebinizi inceleyip sizinle iletişime geçecek.'
     else:
         title = 'Dövme Talebiniz Alındı'
-        next_step = (
-            'Talebiniz inceleniyor. Sanatçı süre belirledikten sonra '
-            'randevu saati seçmeniz için size link gönderilecek.'
-        )
+        next_step = 'Talebiniz inceleniyor. Sanatçı size geri dönüş sağlayacaktır.'
 
     lines = [f'📋 *{title}*', '', f'🔖 Referans: *{reference_number}*', f'👤 Sanatçı: {staff_name}']
 
