@@ -1127,12 +1127,12 @@ async function loadManualAppointmentTimeSlots() {
       return;
     }
     const slots = data.available_start_slots || [];
-    if (!slots.length) {
+    const busySlots = data.busy_start_slots || [];
+    if (!slots.length && !busySlots.length) {
       timeSel.innerHTML = '<option value="">Bu gün için uygun saat yok</option>';
       return;
     }
-    timeSel.innerHTML = '<option value="">Saat seçin</option>' +
-      slots.map((t) => `<option value="${t}">${t}</option>`).join('');
+    timeSel.innerHTML = buildTimeSlotOptionsHtml(slots, busySlots, duration);
     timeSel.disabled = false;
   } catch (e) {
     console.error(e);
@@ -1548,6 +1548,24 @@ function slotEndLabel(startTime, durationMinutes) {
   return `${eh}:${em}`;
 }
 
+/**
+ * Saat seçimi <option> listesi: seçilebilir saatler "12:00 - 13:00" aralığıyla,
+ * dolu olanlar kırmızı ve seçilemez şekilde ("dolu") listelenir.
+ */
+function buildTimeSlotOptionsHtml(availableSlots, busySlots, durationMinutes) {
+  const rows = [
+    ...availableSlots.map((t) => ({ t, busy: false })),
+    ...busySlots.map((t) => ({ t, busy: true })),
+  ].sort((a, b) => a.t.localeCompare(b.t));
+  const placeholder = availableSlots.length ? 'Saat seçin' : 'Bu gün için uygun saat yok';
+  return `<option value="">${placeholder}</option>` + rows.map(({ t, busy }) => {
+    const label = `${t} - ${slotEndLabel(t, durationMinutes)}`;
+    return busy
+      ? `<option value="${t}" class="slot-busy" disabled>${label} · dolu</option>`
+      : `<option value="${t}">${label}</option>`;
+  }).join('');
+}
+
 async function loadEditApptTimeSlots(preserveTime) {
   const timeSel = $('edit-appt-time');
   const errEl = $('edit-appt-error');
@@ -1591,12 +1609,12 @@ async function loadEditApptTimeSlots(preserveTime) {
       return;
     }
     const slots = data.available_start_slots || [];
-    if (!slots.length) {
+    const busySlots = data.busy_start_slots || [];
+    if (!slots.length && !busySlots.length) {
       timeSel.innerHTML = '<option value="">Bu gün için uygun saat yok</option>';
       return;
     }
-    timeSel.innerHTML = `<option value="">Saat seçin</option>` +
-      slots.map((t) => `<option value="${t}">${t} - ${slotEndLabel(t, duration)}</option>`).join('');
+    timeSel.innerHTML = buildTimeSlotOptionsHtml(slots, busySlots, duration);
     timeSel.disabled = false;
     if (preserveTime && slots.includes(preserveTime)) {
       timeSel.value = preserveTime;
