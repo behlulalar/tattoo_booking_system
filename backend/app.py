@@ -2029,15 +2029,19 @@ def _gcal_inbound_time_free(
     return not any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals)
 
 
-def compute_available_start_slots(
+def compute_start_slot_status(
     cursor, staff_id, formatted_date, duration_minutes,
     skip_past_filter=False,
     past_filter_mode='buffer',
     exclude_appointment_id=None,
 ):
-    """Belirli gün/personel için uygun başlangıç saatlerini döndürür.
+    """Belirli gün/personel için başlangıç saatlerini duruma göre ayırır.
 
-    Dönüş: (starts, is_day_closed).
+    Dönüş: (available, blocked, is_day_closed)
+    - available: seçilebilir başlangıç saatleri
+    - blocked: gün içinde başlayan ama randevu / izin / Google'daki meşgul
+      zamanla çakıştığı için dolu olan başlangıç saatleri
+    Geçmiş saatler ve gece yarısını aşan başlangıçlar iki listede de yer almaz.
     """
     day_slots, is_day_closed, busy_intervals = _staff_day_schedule(
         cursor, staff_id, formatted_date, exclude_appointment_id=exclude_appointment_id,
@@ -2048,7 +2052,16 @@ def compute_available_start_slots(
         req = SLOT_STEP_MINUTES
     if req % 30 != 0:
         req = ((req // 30) + 1) * 30
-    starts = []
+
+    # Bugünse geçmiş başlangıç saatlerini çıkar
+    from datetime import date as dt_date
+    cutoff = None
+    if not skip_past_filter and formatted_date == dt_date.today().isoformat():
+        now = datetime.now()
+        now_mins = now.hour * 60 + now.minute
+        cutoff = now_mins if past_filter_mode == 'strict' else now_mins + SLOT_STEP_MINUTES
+
+    available, blocked = [], []
     for start in day_slots:
         start_m = _time_str_to_minutes(start)
         end_m = start_m + req
@@ -2056,22 +2069,33 @@ def compute_available_start_slots(
         # appointment_time tek bir takvim gününe ait, çakışma hesabı da aynı güne bakar.
         if end_m > 24 * 60:
             continue
-        if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
+        if cutoff is not None and start_m <= cutoff:
             continue
-        starts.append(start)
-
-    # Bugünse geçmiş başlangıç saatlerini çıkar
-    from datetime import date as dt_date
-    if not skip_past_filter and formatted_date == dt_date.today().isoformat():
-        now = datetime.now()
-        now_mins = now.hour * 60 + now.minute
-        if past_filter_mode == 'strict':
-            cutoff = now_mins
+        if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
+            blocked.append(start)
         else:
-            cutoff = now_mins + SLOT_STEP_MINUTES
-        starts = [s for s in starts if _time_str_to_minutes(s) > cutoff]
+            available.append(start)
 
-    return starts, is_day_closed
+    return available, blocked, is_day_closed
+
+
+def compute_available_start_slots(
+    cursor, staff_id, formatted_date, duration_minutes,
+    skip_past_filter=False,
+    past_filter_mode='buffer',
+    exclude_appointment_id=None,
+):
+    """Belirli gün/personel için uygun başlangıç saatlerini döndürür.
+
+    Dönüş: (starts, is_day_closed).
+    """
+    available, _blocked, is_day_closed = compute_start_slot_status(
+        cursor, staff_id, formatted_date, duration_minutes,
+        skip_past_filter=skip_past_filter,
+        past_filter_mode=past_filter_mode,
+        exclude_appointment_id=exclude_appointment_id,
+    )
+    return available, is_day_closed
 
 
 def _gcal_inbound_slot_allowed(
@@ -3841,7 +3865,7 @@ def admin_manual_appointment_available_slots():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        available_start_slots, is_day_closed = compute_available_start_slots(
+        available_start_slots, busy_start_slots, is_day_closed = compute_start_slot_status(
             cursor,
             int(staff_id),
             formatted_date,
@@ -3854,6 +3878,7 @@ def admin_manual_appointment_available_slots():
         return jsonify({
             'success': True,
             'available_start_slots': available_start_slots,
+            'busy_start_slots': busy_start_slots,
             'is_day_closed': is_day_closed,
         })
     except Exception as e:
