@@ -3248,7 +3248,7 @@ def create_tattoo_request():
         if loyalty_attached:
             base_message += (
                 f" Sadakat indirim kodunuz ({loyalty_attached['code']}) talebe eklendi; "
-                f"teklif fiyatınıza %{loyalty_attached['discount_percent']} indirim uygulanacak."
+                f"randevu ücretinize %{loyalty_attached['discount_percent']} indirim uygulanacak."
             )
 
         return jsonify({

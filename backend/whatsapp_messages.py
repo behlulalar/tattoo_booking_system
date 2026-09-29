@@ -231,7 +231,7 @@ def build_tattoo_request_received_message(
             lines.append('')
             lines.append(
                 f'🎁 Sadakat kodunuz (*{code}*) talebe eklendi'
-                + (f' — teklifte *%{pct}* indirim uygulanacak.' if pct else '.')
+                + (f' — randevu ücretinize *%{pct}* indirim uygulanacak.' if pct else '.')
             )
 
     lines.extend(['', b['name']])
@@ -285,7 +285,7 @@ def build_tattoo_request_staff_message(
 
     lines.extend([
         '',
-        'Admin panelden talebi inceleyip süre belirleyerek teklif gönderebilirsiniz.',
+        'Admin panelden talebi inceleyip müşteriyle iletişime geçerek randevu verebilirsiniz.',
         '',
         b['name'],
     ])
