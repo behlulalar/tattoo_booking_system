@@ -601,7 +601,7 @@ function buildTattooRequestWhatsAppMessage(ref, summary = {}) {
   lines.push(
     '',
     'Referans görselim veya aklımdaki tasarım var; paylaşmak istiyorum.',
-    'Lütfen bu mesajı gönderdikten sonra görsel veya notlarımı ekleyeceğim.'
+    'Bu mesajı gönderdikten sonra görsel veya notlarımı ekleyeceğim.'
   );
   return lines.join('\n');
 }
