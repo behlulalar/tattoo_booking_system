@@ -386,7 +386,7 @@ def send_text(
         phone, remote_jid=remote_jid, remote_jid_alt=remote_jid_alt
     )
     url_path = f"/message/sendText/{name}"
-    # linkPreview=False: mesajlardaki linkler (karsilama, teklif, randevu
+    # linkPreview=False: mesajlardaki linkler (karsilama, randevu
     # linki vb.) icin WhatsApp'in otomatik olusturdugu buyuk gorsel onizleme
     # kartini kapatir — cok yer kapliyordu, gereksiz.
     payload = {"number": target, "text": message, "linkPreview": False}

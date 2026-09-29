@@ -362,7 +362,7 @@ def attach_loyalty_code_to_request(cursor, customer_id, tattoo_request_id, code)
         """
         SELECT tr.id FROM tattoo_requests tr
         WHERE tr.loyalty_redemption_id = %s
-          AND tr.status IN ('new', 'offered')
+          AND tr.status = 'new'
           AND tr.id != %s
         LIMIT 1
         """,
@@ -424,7 +424,7 @@ def validate_loyalty_code_for_customer(cursor, customer_id, code):
         """
         SELECT tr.id FROM tattoo_requests tr
         WHERE tr.loyalty_redemption_id = %s
-          AND tr.status IN ('new', 'offered')
+          AND tr.status = 'new'
         LIMIT 1
         """,
         (redemption_id,),
@@ -476,8 +476,8 @@ def get_request_loyalty_discount(cursor, tattoo_request_id):
     }
 
 
-def mark_redemption_used_for_offer(cursor, redemption_id, tattoo_request_id):
-    """Teklif gönderilince kodu tek kullanımlık olarak kapat."""
+def mark_redemption_used(cursor, redemption_id, tattoo_request_id):
+    """Randevu verilince kodu tek kullanımlık olarak kapat."""
     cursor.execute(
         """
         UPDATE loyalty_redemptions

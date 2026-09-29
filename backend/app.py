@@ -120,7 +120,7 @@ from loyalty_points import (
     award_loyalty_on_completion,
     build_loyalty_summary,
     get_request_loyalty_discount,
-    mark_redemption_used_for_offer,
+    mark_redemption_used,
     redeem_loyalty_discount,
     validate_loyalty_code_for_customer,
 )
@@ -911,7 +911,7 @@ def ensure_whatsapp_queue_table():
 
     Evolution API anlik olarak kapaliysa/hata donuyorsa send_wapio_message
     tek seferlik denemeyle basarisiz oluyordu ve mesaj kalici olarak
-    kayboluyordu (teklif linki, randevu onayi, iptal bildirimi gibi tekrar
+    kayboluyordu (talep bildirimi, randevu onayi, iptal bildirimi gibi tekrar
     denenmeyen tum mesajlar icin). Bu tablo basarisiz mesajlari kuyruklar,
     drain_whatsapp_queue (2 dk'da bir) ustel geri cekilmeyle tekrar dener.
     """
@@ -3268,24 +3268,6 @@ def create_tattoo_request():
 
 
 # =============================================
-# ESKİ SAAT SEÇİM LİNKLERİ (KAPATILDI)
-# Randevuyu artık sanatçı kendisi veriyor; eski linkler açılırsa bilgi mesajı döner.
-# =============================================
-
-SLOT_SELECTION_RETIRED_MESSAGE = (
-    'Randevu saati artık sanatçımız tarafından belirleniyor. '
-    'Sizinle WhatsApp üzerinden iletişime geçilecektir.'
-)
-
-
-@app.route('/api/offers/<token>', methods=['GET'])
-@app.route('/api/offers/<token>/choose-slot', methods=['POST'])
-@limiter.limit("30 per minute")
-def retired_slot_offer(token):
-    return jsonify({'success': False, 'message': SLOT_SELECTION_RETIRED_MESSAGE}), 410
-
-
-# =============================================
 # ADMIN PANEL ENDPOINTS
 # =============================================
 
@@ -3550,7 +3532,7 @@ def admin_update_tattoo_request(tattoo_request_id):
             cursor.close()
             return err
 
-        if rec['status'] not in ('new', 'offered'):
+        if rec['status'] != 'new':
             cursor.close()
             return jsonify({
                 'success': False,
@@ -3607,7 +3589,7 @@ def admin_update_tattoo_request(tattoo_request_id):
 @app.route('/api/admin/tattoo-requests/<int:tattoo_request_id>', methods=['DELETE'])
 @token_required
 def admin_delete_tattoo_request(tattoo_request_id):
-    """Yeni veya teklif gönderilmiş talebi sil."""
+    """Yeni (henüz randevuya dönüşmemiş) talebi sil."""
     if not can_access_tattoo_requests():
         return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
 
@@ -3620,7 +3602,7 @@ def admin_delete_tattoo_request(tattoo_request_id):
             cursor.close()
             return err
 
-        if rec['status'] not in ('new', 'offered'):
+        if rec['status'] != 'new':
             cursor.close()
             return jsonify({
                 'success': False,
@@ -4114,7 +4096,7 @@ def admin_create_manual_appointment():
 
         # Müşteri talep oluştururken sadakat kodu girdiyse, sanatçının girdiği
         # liste fiyatından indirim otomatik düşülür ve kod tek kullanımlık kapanır
-        # (eski teklif akışındaki davranışın aynısı). Ücret 0 ise kod harcanmaz.
+        # Ücret 0 ise kod harcanmaz.
         discount_info = None
         if linked_request_id:
             loyalty_discount = get_request_loyalty_discount(cursor, linked_request_id)
@@ -4128,7 +4110,7 @@ def admin_create_manual_appointment():
                     original_price, loyalty_discount['discount_percent']
                 )
                 if loyalty_discount.get('redemption_id'):
-                    mark_redemption_used_for_offer(
+                    mark_redemption_used(
                         cursor, loyalty_discount['redemption_id'], linked_request_id
                     )
                 cursor.execute(
@@ -7955,29 +7937,7 @@ def get_customer_appointments():
         rows = cursor.fetchall()
 
         appointments = []
-        can_use_offer_price_fallback = True
         for row in rows:
-            final_price = float(row[7] or 0)
-            tattoo_request_id = row[10]
-
-            # Backward-compat: some old appointments may have price=0 even if offered with a price.
-            # Try to recover from the latest used slot_offers price.
-            if final_price <= 0 and tattoo_request_id and can_use_offer_price_fallback:
-                try:
-                    cursor.execute("""
-                        SELECT price
-                        FROM slot_offers
-                        WHERE tattoo_request_id = %s AND used_at IS NOT NULL
-                        ORDER BY used_at DESC NULLS LAST, id DESC
-                        LIMIT 1
-                    """, (tattoo_request_id,))
-                    offer_row = cursor.fetchone()
-                    if offer_row and offer_row[0] is not None and float(offer_row[0]) > 0:
-                        final_price = float(offer_row[0])
-                except Exception:
-                    # If slot_offers.price is unavailable in older DBs, skip fallback silently.
-                    can_use_offer_price_fallback = False
-
             appointments.append({
                 'type': 'appointment',
                 'id': row[0],
@@ -7987,7 +7947,7 @@ def get_customer_appointments():
                 'payment_method': row[4],
                 'created_at': row[5].strftime('%d.%m.%Y %H:%M'),
                 'duration_minutes': row[6],
-                'price': final_price,
+                'price': float(row[7] or 0),
                 'staff': {
                     'id': row[8],
                     'name': row[9]
