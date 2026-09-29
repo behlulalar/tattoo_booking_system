@@ -3081,14 +3081,14 @@ def link_open_tattoo_request(cursor, appointment_id, customer_id, staff_id, tatt
     dövme talebine bağlar ve talebi 'scheduled' yapar.
 
     tattoo_request_id verilirse yalnızca o talep (aynı müşteriye aitse) bağlanır;
-    verilmezse müşterinin açık ('new'/'offered') talepleri arasından önce aynı
+    verilmezse müşterinin açık ('new') talepleri arasından önce aynı
     sanatçıya ait olan, sonra en eskisi seçilir. Bağlanacak talep yoksa None döner.
     """
     if tattoo_request_id:
         cursor.execute(
             """
             SELECT id FROM tattoo_requests
-            WHERE id = %s AND customer_id = %s AND status IN ('new', 'offered')
+            WHERE id = %s AND customer_id = %s AND status = 'new'
             FOR UPDATE
             """,
             (int(tattoo_request_id), customer_id),
@@ -3097,7 +3097,7 @@ def link_open_tattoo_request(cursor, appointment_id, customer_id, staff_id, tatt
         cursor.execute(
             """
             SELECT id FROM tattoo_requests
-            WHERE customer_id = %s AND status IN ('new', 'offered')
+            WHERE customer_id = %s AND status = 'new'
             ORDER BY (staff_id = %s) DESC, created_at ASC
             LIMIT 1
             FOR UPDATE

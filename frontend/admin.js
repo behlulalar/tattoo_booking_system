@@ -1,4 +1,4 @@
-// Minimal admin panel for tattoo request offer flow
+// Minimal admin panel for the tattoo request / appointment flow
 function getApiBase() {
   const stored = localStorage.getItem('API_BASE_URL');
   if (stored) return `${stored.replace(/\/$/, '')}/api`;
@@ -193,7 +193,6 @@ function $(id) { return document.getElementById(id); }
 let _promptResolve  = null;
 let _confirmResolve = null;
 
-// Offer form modal — süre + fiyat
 function customPrompt(title, desc, defaultValue = '') {
   return new Promise((resolve) => {
     _promptResolve = resolve;

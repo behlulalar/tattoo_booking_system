@@ -415,7 +415,6 @@ body {
 .status-badge.completed { background: rgba(59, 130, 246, 0.15); color: var(--info); }
 .status-badge.cancelled { background: rgba(239, 68, 68, 0.15);  color: var(--danger); }
 .status-badge.no_show   { background: rgba(150,150,150,0.15);   color: var(--text-muted); }
-.status-badge.slot_pending,
 .status-badge.request_pending { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
 
 .apt-card-badges {
@@ -451,7 +450,6 @@ body {
     color: #60a5fa;
 }
 
-.appointment-card.status-slot_pending::before,
 .appointment-card.status-request_pending::before { background: #a855f7; }
 
 .section-hint {
@@ -484,23 +482,6 @@ body {
 .request-wait-note i {
     margin-right: 6px;
     color: #c084fc;
-}
-
-.slot-select-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-    text-decoration: none;
-    background: linear-gradient(135deg, rgba(168, 85, 247, 0.35), rgba(59, 130, 246, 0.35));
-    border: 1px solid rgba(168, 85, 247, 0.45);
-    color: var(--text-primary);
-}
-
-.slot-select-btn:hover {
-    border-color: rgba(168, 85, 247, 0.7);
-    transform: translateY(-1px);
 }
 
 .appointment-details {

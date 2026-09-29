@@ -118,7 +118,7 @@ CREATE UNIQUE INDEX uq_time_off_google_event_id
 -- VALUES ('Roof Admin', '5551234567', 'HASHED_PASSWORD_HERE', 'super_admin');
 
 -- NOT: services/staff_services tabloları güncel akışta kullanılmıyor —
--- randevu fiyatı/süresi artık dövme talebi -> teklif akışında admin
+-- randevu fiyatı/süresi artık dövme talebi sonrası admin
 -- tarafından girilir (bkz. appointments.price, appointments.duration_minutes).
 -- Bu dosya (schema.sql) da güncel kurulum betiği değildir, bkz.
 -- migrations/bootstrap_tattoo_db.sql.

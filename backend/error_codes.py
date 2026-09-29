@@ -30,7 +30,7 @@ E_GCAL_005 = "E-GCAL-005"  # bağlantı kopuk — kimlik dosyası veya Google AP
 
 # Randevu / talep
 E_BOOK_001 = "E-BOOK-001"  # randevu oluşturulamadı
-E_REQ_001 = "E-REQ-001"  # dövme talebi / teklif hatası
+E_REQ_001 = "E-REQ-001"  # dövme talebi hatası
 
 # Yedekleme / scheduler
 E_BKP_001 = "E-BKP-001"  # veritabanı yedekleme veya Drive yükleme
@@ -59,7 +59,7 @@ CODE_HELP = {
     E_GCAL_004: "Takvimde eklenen Off Day, o gün için onaylı bir randevuyla çakışıyor — randevu otomatik iptal edilmedi, elle kontrol edin.",
     E_GCAL_005: "Google Takvim bağlantısı kopuk (kimlik dosyası eksik/bozuk veya Google API'ye ulaşılamıyor).",
     E_BOOK_001: "Randevu kaydı oluşmadı (slot çakışması hariç beklenmeyen hata).",
-    E_REQ_001: "Dövme talebi veya teklif linki oluşturulamadı.",
+    E_REQ_001: "Dövme talebi oluşturulamadı.",
     E_BKP_001: "pg_dump veya Google Drive (rclone) yedekleme hatası.",
     E_SCH_001: "APScheduler başlatılamadı. Kilit veya process çakışması.",
     E_UNK_001: "Kod bağlanmamış genel hata. Kaynak sütunundaki dosya:satır.",
