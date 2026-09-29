@@ -2912,6 +2912,31 @@ def create_appointment():
     }), 410
 
 
+# =============================================
+# TATTOO CONFIG (body region — no auto pricing)
+# =============================================
+
+BODY_REGIONS = {
+    'head': {'label': 'Baş / ense'},
+    'neck': {'label': 'Boyun'},
+    'chest': {'label': 'Göğüs'},
+    'ribs': {'label': 'Kaburga'},
+    'stomach': {'label': 'Karın'},
+    'back_upper': {'label': 'Üst sırt'},
+    'back_lower': {'label': 'Alt sırt / bel'},
+    'shoulder': {'label': 'Omuz'},
+    'upper_arm': {'label': 'Üst kol'},
+    'forearm': {'label': 'Ön kol'},
+    'wrist': {'label': 'Bilek'},
+    'hand': {'label': 'El / parmak'},
+    'thigh': {'label': 'Uyluk'},
+    'knee': {'label': 'Diz'},
+    'calf': {'label': 'Baldır'},
+    'ankle': {'label': 'Ayak bileği'},
+    'foot': {'label': 'Ayak üstü'},
+}
+
+
 @app.route('/api/tattoo-config', methods=['GET'])
 def get_tattoo_config():
     """Vücut bölgesi meta verisi."""
