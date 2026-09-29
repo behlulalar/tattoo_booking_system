@@ -47,3 +47,6 @@ Thumbs.db
 # Local CBM graph cache (optional team artifact lives in .codebase-memory/)
 .codebase-memory/
 
+
+### Claude Code local settings
+.claude/settings.local.json

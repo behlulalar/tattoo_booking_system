@@ -192,10 +192,8 @@ async function init() {
 
   if (!ok || !data.success) {
     const msg = data.message || 'Link geçersiz veya süresi dolmuş.';
-    if (status === 410 && msg.includes('kullanılmış')) {
-      showError('Link Daha Önce Kullanıldı', 'Bu randevu linki daha önce kullanılmış. Yeni bir teklif için stüdyomuzu arayabilirsiniz.');
-    } else if (status === 410) {
-      showError('Link Süresi Doldu', 'Bu randevu linkinin geçerlilik süresi dolmuş. Yeni bir teklif için stüdyomuzu arayabilirsiniz.');
+    if (status === 410) {
+      showError('Randevunuzu Sanatçınız Verecek', msg);
     } else {
       showError('Hata', msg);
     }

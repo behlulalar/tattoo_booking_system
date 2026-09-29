@@ -3076,6 +3076,49 @@ def _match_customer_by_name(cursor, name, surname):
     return customer_id
 
 
+def link_open_tattoo_request(cursor, appointment_id, customer_id, staff_id, tattoo_request_id=None):
+    """Sanatçının elle (panel / Google Takvim) verdiği randevuyu müşterinin açık
+    dövme talebine bağlar ve talebi 'scheduled' yapar.
+
+    tattoo_request_id verilirse yalnızca o talep (aynı müşteriye aitse) bağlanır;
+    verilmezse müşterinin açık ('new'/'offered') talepleri arasından önce aynı
+    sanatçıya ait olan, sonra en eskisi seçilir. Bağlanacak talep yoksa None döner.
+    """
+    if tattoo_request_id:
+        cursor.execute(
+            """
+            SELECT id FROM tattoo_requests
+            WHERE id = %s AND customer_id = %s AND status IN ('new', 'offered')
+            FOR UPDATE
+            """,
+            (int(tattoo_request_id), customer_id),
+        )
+    else:
+        cursor.execute(
+            """
+            SELECT id FROM tattoo_requests
+            WHERE customer_id = %s AND status IN ('new', 'offered')
+            ORDER BY (staff_id = %s) DESC, created_at ASC
+            LIMIT 1
+            FOR UPDATE
+            """,
+            (customer_id, staff_id),
+        )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    request_id = row[0]
+    cursor.execute(
+        'UPDATE appointments SET tattoo_request_id = %s WHERE id = %s',
+        (request_id, appointment_id),
+    )
+    cursor.execute(
+        "UPDATE tattoo_requests SET status = 'scheduled' WHERE id = %s",
+        (request_id,),
+    )
+    return request_id
+
+
 def _resolve_or_create_gcal_customer(cursor, name, surname, phone, event_id):
     """Telefon varsa mevcut müşteriyi bağla; dolu adı/soyadı ezme."""
     name = (name or '').strip()
@@ -3358,6 +3401,7 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None):
             ),
         )
         appointment_id = cursor.fetchone()[0]
+        link_open_tattoo_request(cursor, appointment_id, customer_id, staff_id)
         cursor.execute('RELEASE SAVEPOINT gcal_import')
     except Exception as exc:
         try:

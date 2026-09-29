@@ -48,6 +48,7 @@ from whatsapp_messages import (
     format_try,
 )
 from google_calendar_sync import (
+    link_open_tattoo_request,
     enqueue_appointment_sync,
     enqueue_time_off_sync,
     enqueue_event_delete,
@@ -1530,72 +1531,6 @@ def customer_token_required(f):
     return decorated
 
 
-def build_slot_select_url(token):
-    """Müşteri saat seçimi sayfası linki."""
-    base_url = (SITE_CONFIG.get('randevu_url') or '').strip().rstrip('/')
-    if base_url:
-        return f"{base_url}/slot-select.html?token={token}"
-    return f"/slot-select.html?token={token}"
-
-
-def _fetch_customer_pending_slot_selections(cursor, customer_id):
-    """Onaylanmış ama saat seçilmemiş dövme talepleri (aktif slot teklifi)."""
-    cursor.execute("""
-        SELECT
-            tr.id,
-            tr.reference_number,
-            tr.size,
-            tr.body_area,
-            tr.tattoo_style,
-            tr.estimated_price,
-            tr.description,
-            so.token,
-            so.duration_minutes,
-            so.price,
-            so.expires_at,
-            s.id,
-            s.name
-        FROM tattoo_requests tr
-        JOIN artists s ON tr.staff_id = s.id
-        JOIN LATERAL (
-            SELECT token, duration_minutes, price, expires_at
-            FROM slot_offers
-            WHERE tattoo_request_id = tr.id
-              AND used_at IS NULL
-              AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY id DESC
-            LIMIT 1
-        ) so ON TRUE
-        WHERE tr.customer_id = %s AND tr.status = 'offered'
-        ORDER BY tr.created_at DESC
-    """, (customer_id,))
-    rows = cursor.fetchall()
-    items = []
-    for row in rows:
-        (tr_id, ref_num, size, body_area, tattoo_style, estimated_price, description,
-         token, duration_minutes, offer_price, expires_at, staff_id, staff_name) = row
-        items.append({
-            'type': 'slot_selection',
-            'tattoo_request_id': tr_id,
-            'reference_number': ref_num,
-            'status': 'slot_pending',
-            'slot_select_url': build_slot_select_url(token),
-            'duration_minutes': int(duration_minutes or 0),
-            'price': float(offer_price or 0),
-            'expires_at': expires_at.strftime('%d.%m.%Y %H:%M') if expires_at else None,
-            'staff': {'id': staff_id, 'name': staff_name},
-            'tattoo': {
-                'request_id': tr_id,
-                'size': size,
-                'body_area': body_area,
-                'tattoo_style': tattoo_style,
-                'estimated_price': float(estimated_price) if estimated_price is not None else None,
-                'description': description,
-            },
-        })
-    return items
-
-
 # =============================================
 # WHATSAPP WEBHOOK - GELEN MESAJLARI İŞLE
 # =============================================
@@ -2009,7 +1944,9 @@ def resolve_body_region_id(body_region=None, body_area=None):
     return None
 
 
-# Müşteri randevu seçimi ve uygun saat üretimi bu adımla gider.
+# Randevu saatleri bu adımla (dakika) listelenir. Randevuları sanatçılar yönetir:
+# gün boyu her saat aday olur, yalnızca çakışmalar (randevu, izin, Google'daki
+# meşgul zaman) saati eler.
 SLOT_STEP_MINUTES = 60
 
 
@@ -2017,84 +1954,19 @@ def _ranges_overlap(start_a, end_a, start_b, end_b):
     return start_a < end_b and start_b < end_a
 
 
-def _generate_half_hour_slots(start_minutes, end_minutes, step=None):
-    """start_minutes dahil, end_minutes hariç slot listesi (varsayılan 60 dk)."""
-    step = int(step or SLOT_STEP_MINUTES)
-    slots = []
-    current = int(start_minutes)
-    end_m = int(end_minutes)
-    while current < end_m:
-        slots.append(_time_str_from_minutes(current))
-        current += step
-    return slots
-
-
-def _staff_has_working_hours(cursor, staff_id):
-    cursor.execute(
-        'SELECT 1 FROM working_hours WHERE staff_id = %s LIMIT 1',
-        (staff_id,),
-    )
-    return cursor.fetchone() is not None
-
-
-def _slots_from_working_hour_row(wh_start, wh_end):
-    start_total_minutes = wh_start.hour * 60 + wh_start.minute
-    if wh_end.hour == 0 and wh_end.minute == 0:
-        end_total_minutes = 24 * 60
-    else:
-        end_total_minutes = wh_end.hour * 60 + wh_end.minute
-    return _generate_half_hour_slots(start_total_minutes, end_total_minutes)
-
-
-def _staff_day_schedule(
-    cursor, staff_id, formatted_date,
-    allow_outside_working_hours=False,
-    exclude_appointment_id=None,
-):
-    """Belirli gün/personel için çalışma penceresi + meşgul aralıklar.
+def _staff_day_schedule(cursor, staff_id, formatted_date, exclude_appointment_id=None):
+    """Belirli gün/personel için aday saatler + meşgul aralıklar.
 
     compute_available_start_slots (saatlik buton listesi) ve Google'dan
     gelen izgara-dışı (ör. 14:15) saatleri doğrulayan _gcal_inbound_time_free
     tarafından ortak kullanılır, ikisi de aynı çakışma verisine bakar.
+    Dönüş: (day_slots, is_day_closed, busy_intervals). is_day_closed, o gün
+    tüm gün süren bir izin (Off Day) olduğunda True olur.
     """
-    from datetime import datetime as dt
-
-    date_obj = dt.strptime(formatted_date, '%Y-%m-%d')
-    day_of_week = date_obj.weekday()
-    db_day = 0 if day_of_week == 6 else day_of_week + 1
-
-    cursor.execute("""
-        SELECT start_time, end_time, is_available FROM working_hours
-        WHERE staff_id = %s AND day_of_week = %s
-    """, (staff_id, db_day))
-    working_hour = cursor.fetchone()
-    available_slots = []
+    day_slots = [
+        _time_str_from_minutes(m) for m in range(0, 24 * 60, SLOT_STEP_MINUTES)
+    ]
     is_day_closed = False
-
-    if working_hour:
-        wh_start, wh_end, is_available = working_hour
-        available_slots = _slots_from_working_hour_row(wh_start, wh_end)
-        if not is_available:
-            is_day_closed = True
-        elif allow_outside_working_hours:
-            # Mesai disina izin verilirken sadece bitis siniri degil, baslangic
-            # adaylari da aksama dogru genisler (ör. mesai 14-18 ise 22:00'a
-            # kadar baslangic secenegi sunulur) — 23:00'ten sonrasi/gece yarisini
-            # asan baslangiclar disarida tutuluyor, gunluk cakisma hesabinin
-            # (busy_intervals) ayni takvim gunune bagli kalmasi icin.
-            wh_end_minutes = wh_end.hour * 60 + wh_end.minute
-            extended_cap = 23 * 60
-            if extended_cap > wh_end_minutes:
-                available_slots += _generate_half_hour_slots(
-                    wh_end_minutes, extended_cap, step=SLOT_STEP_MINUTES
-                )
-    elif _staff_has_working_hours(cursor, staff_id):
-        # Sanatçı saatlerini kaydetmiş ama bu gün için satır yok → kapalı
-        available_slots = []
-        is_day_closed = True
-    else:
-        # Hiç çalışma saati tanımlanmamış → admin panel varsayılanı (10:00–20:00)
-        available_slots = _generate_half_hour_slots(10 * 60, 20 * 60)
 
     busy_intervals = []
     apt_query = """
@@ -2117,6 +1989,7 @@ def _staff_day_schedule(
     """, (staff_id, formatted_date))
     for start_time, end_time in cursor.fetchall():
         if start_time is None:
+            is_day_closed = True
             busy_intervals.append((0, 24 * 60))
         else:
             start_m = _time_str_to_minutes(str(start_time)[:5])
@@ -2128,14 +2001,7 @@ def _staff_day_schedule(
 
     busy_intervals.extend(load_external_busy_minutes(cursor, formatted_date))
 
-    if is_day_closed:
-        busy_intervals.append((0, 24 * 60))
-
-    work_end_m = (
-        _time_str_to_minutes(available_slots[-1]) + SLOT_STEP_MINUTES
-        if available_slots else 0
-    )
-    return available_slots, is_day_closed, busy_intervals, work_end_m
+    return day_slots, is_day_closed, busy_intervals
 
 
 def _gcal_inbound_time_free(
@@ -2147,64 +2013,48 @@ def _gcal_inbound_time_free(
 
     compute_available_start_slots'un ürettiği sabit saat-başı buton listesine
     ("starts" içinde birebir eşleşme) BAKMAZ — çünkü 14:15 o listede hiç
-    olmayacaktır. Bunun yerine doğrudan çalışma penceresi + çakışma
-    aralıklarına (aynı _staff_day_schedule verisi) bakar.
+    olmayacaktır. Bunun yerine doğrudan çakışma aralıklarına (aynı
+    _staff_day_schedule verisi) bakar.
     """
-    available_slots, is_day_closed, busy_intervals, work_end_m = _staff_day_schedule(
+    _, is_day_closed, busy_intervals = _staff_day_schedule(
         cursor, staff_id, formatted_date, exclude_appointment_id=exclude_appointment_id,
     )
-    if is_day_closed or not available_slots:
+    if is_day_closed:
         return False
     start_m = _time_str_to_minutes(str(time_str or '')[:5])
-    work_start_m = _time_str_to_minutes(available_slots[0])
     end_m = start_m + int(duration_minutes or 0)
-    if start_m < work_start_m or end_m > work_end_m:
+    # Gün aşımı (gece yarısını geçme) engellenir: randevu tek bir takvim gününe ait.
+    if start_m < 0 or end_m > 24 * 60:
         return False
     return not any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals)
 
 
 def compute_available_start_slots(
     cursor, staff_id, formatted_date, duration_minutes,
-    return_details=False,
     skip_past_filter=False,
     past_filter_mode='buffer',
     exclude_appointment_id=None,
-    allow_outside_working_hours=False,
 ):
-    """Belirli gün/personel için uygun başlangıç saatlerini döndürür."""
-    available_slots, is_day_closed, busy_intervals, work_end_m = _staff_day_schedule(
-        cursor, staff_id, formatted_date,
-        allow_outside_working_hours=allow_outside_working_hours,
-        exclude_appointment_id=exclude_appointment_id,
-    )
+    """Belirli gün/personel için uygun başlangıç saatlerini döndürür.
 
-    booked = []
-    for t in available_slots:
-        slot_start = _time_str_to_minutes(t)
-        slot_end = slot_start + SLOT_STEP_MINUTES
-        if any(_ranges_overlap(slot_start, slot_end, b0, b1) for b0, b1 in busy_intervals):
-            booked.append(t)
+    Dönüş: (starts, is_day_closed).
+    """
+    day_slots, is_day_closed, busy_intervals = _staff_day_schedule(
+        cursor, staff_id, formatted_date, exclude_appointment_id=exclude_appointment_id,
+    )
 
     req = int(duration_minutes or SLOT_STEP_MINUTES)
     if req < SLOT_STEP_MINUTES:
         req = SLOT_STEP_MINUTES
     if req % 30 != 0:
         req = ((req // 30) + 1) * 30
-    booked_set = set(booked)
     starts = []
-    for start in available_slots:
+    for start in day_slots:
         start_m = _time_str_to_minutes(start)
         end_m = start_m + req
-        # Gun asimi (gece yarisini gecme) her zaman engellenir — override bile
-        # olsa appointment_date/appointment_time tek bir takvim gunune ait
-        # kabul edilir, cakisma hesabi (busy_intervals) da ayni gune bakar.
+        # Gün aşımı (gece yarısını geçme) engellenir: appointment_date /
+        # appointment_time tek bir takvim gününe ait, çakışma hesabı da aynı güne bakar.
         if end_m > 24 * 60:
-            continue
-        # allow_outside_working_hours: admin, o gunun mesai bitisini asan (ama
-        # yine de gun icinde baslayan) bir randevuya bilerek izin veriyor —
-        # cakisma kontrolu (asagidaki overlap kontrolu + DB'deki
-        # appointments_no_overlap EXCLUDE constraint) hala tam calisir.
-        if not allow_outside_working_hours and end_m > work_end_m:
             continue
         if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
             continue
@@ -2220,18 +2070,6 @@ def compute_available_start_slots(
         else:
             cutoff = now_mins + SLOT_STEP_MINUTES
         starts = [s for s in starts if _time_str_to_minutes(s) > cutoff]
-
-    if return_details:
-        work_start = available_slots[0] if available_slots else None
-        work_end = available_slots[-1] if available_slots else None
-        return {
-            'available_start_slots': starts,
-            'all_slots': available_slots,
-            'booked_slots': sorted(booked_set),
-            'is_day_closed': is_day_closed,
-            'work_start': work_start,
-            'work_end': work_end,
-        }
 
     return starts, is_day_closed
 
@@ -2517,88 +2355,8 @@ set_gcal_import_notifier(_gcal_notify_imported_from_google)
 set_gcal_push_notifier(_gcal_notify_push_events)
 
 
-def _minutes_from_time_value(t):
-    s = str(t)[:5]
-    parts = s.split(':')
-    return int(parts[0]) * 60 + int(parts[1])
-
-
 def _time_str_from_minutes(m):
     return f"{m // 60:02d}:{m % 60:02d}"
-
-
-def _range_from_working_hour_rows(rows):
-    """Açık günlerin birleşik min/max dakika aralığı."""
-    min_m = None
-    max_m = None
-    for start_time, end_time, is_available in rows:
-        if is_available is False:
-            continue
-        st = _minutes_from_time_value(start_time or '09:00')
-        end_raw = str(end_time)[:5] if end_time else '20:00'
-        if end_raw in ('00:00', '24:00'):
-            en = 24 * 60
-        else:
-            en = _minutes_from_time_value(end_time)
-        if en <= st:
-            en = 24 * 60
-        min_m = st if min_m is None else min(min_m, st)
-        max_m = en if max_m is None else max(max_m, en)
-    return min_m, max_m
-
-
-def _build_half_hour_time_labels(start_m, end_m):
-    labels = []
-    m = int(start_m)
-    end_m = int(end_m)
-    while m < end_m:
-        labels.append(_time_str_from_minutes(m))
-        m += 30
-    return labels
-
-
-@app.route('/api/admin/schedule-grid-times', methods=['GET'])
-@limiter.exempt
-@token_required
-def admin_schedule_grid_times():
-    """Admin takvim tablosu için sabit saat sütunları (tüm çalışma günleri birleşimi)."""
-    staff_id = request.args.get('staff_id', type=int)
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        staff_ids = []
-        if staff_id:
-            if not is_studio_admin() and int(staff_id) != int(request.staff_id):
-                cursor.close()
-                return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-            staff_ids = [int(staff_id)]
-        elif is_studio_admin():
-            cursor.execute("SELECT id FROM artists ORDER BY id")
-            staff_ids = [r[0] for r in cursor.fetchall()]
-        else:
-            staff_ids = [int(request.staff_id)]
-
-        # Admin takvim tablosu: sabit 09:00–24:00 (çalışma saati DB kaydı grid'i daraltmaz)
-        min_m = 9 * 60
-        max_m = 24 * 60
-
-        times = _build_half_hour_time_labels(min_m, max_m)
-        cursor.close()
-
-        return jsonify({
-            'success': True,
-            'times': times,
-            'start_time': _time_str_from_minutes(min_m),
-            'end_time': _time_str_from_minutes(max_m),
-        })
-    except Exception as e:
-        logger.error(f"admin_schedule_grid_times hatası: {e}")
-        return jsonify({'success': False, 'message': 'Saatler alınamadı'}), 500
-    finally:
-        release_db_connection(conn)
 
 
 def is_wapio_demo_mode():
@@ -3150,89 +2908,8 @@ def get_services():
 def create_appointment():
     return jsonify({
         "success": False,
-        "message": "Randevu oluşturma akışı değişti. Önce dövme talebi oluşturulur, sonra admin süre belirleyip link gönderir; müşteri linkten slot seçince randevu oluşur."
+        "message": "Randevu oluşturma akışı değişti. Önce dövme talebi oluşturulur, randevuyu sanatçı verir."
     }), 410
-
-
-@app.route('/api/booked-times', methods=['GET'])
-def get_booked_times():
-    staff_id = request.args.get('staff_id')
-    date_str = request.args.get('date')  # Format: "16.12.2025"
-    duration_minutes = request.args.get('duration_minutes', type=int)  # Dakika cinsinden (opsiyonel)
-    
-    logger.info(
-        "get_booked_times | staff_id=%s date=%s duration=%s",
-        staff_id,
-        date_str,
-        duration_minutes,
-    )
-    
-    if not staff_id or not date_str:
-        return jsonify({"success": False, "message": "staff_id ve date gerekli"}), 400
-    
-    formatted_date = parse_tr_date(date_str)
-    if not formatted_date:
-        return jsonify({"success": False, "message": TR_DATE_ERROR}), 400
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        slot_details = compute_available_start_slots(
-            cursor, int(staff_id), formatted_date, duration_minutes, return_details=True
-        )
-        available_slots = slot_details['all_slots']
-        booked_times = slot_details['booked_slots']
-        available_start_slots = slot_details['available_start_slots']
-
-        logger.info(
-            "get_booked_times slots | available=%s booked=%s start_slots=%s",
-            len(available_slots or []),
-            len(booked_times or []),
-            len(available_start_slots or []),
-        )
-
-        cursor.close()
-
-        return jsonify({
-            "success": True,
-            "available_slots": available_slots,
-            "booked_times": booked_times,
-            "available_start_slots": available_start_slots
-        })
-    except Exception as e:
-        logger.error(f"get_booked_times hatası: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"success": False, "message": "Bir problem oluştu"}), 500
-    finally:
-        release_db_connection(conn)
-
-
-# =============================================
-# TATTOO CONFIG (body region — no auto pricing)
-# =============================================
-
-BODY_REGIONS = {
-    'head': {'label': 'Baş / ense'},
-    'neck': {'label': 'Boyun'},
-    'chest': {'label': 'Göğüs'},
-    'ribs': {'label': 'Kaburga'},
-    'stomach': {'label': 'Karın'},
-    'back_upper': {'label': 'Üst sırt'},
-    'back_lower': {'label': 'Alt sırt / bel'},
-    'shoulder': {'label': 'Omuz'},
-    'upper_arm': {'label': 'Üst kol'},
-    'forearm': {'label': 'Ön kol'},
-    'wrist': {'label': 'Bilek'},
-    'hand': {'label': 'El / parmak'},
-    'thigh': {'label': 'Uyluk'},
-    'knee': {'label': 'Diz'},
-    'calf': {'label': 'Baldır'},
-    'ankle': {'label': 'Ayak bileği'},
-    'foot': {'label': 'Ayak üstü'},
-}
 
 
 @app.route('/api/tattoo-config', methods=['GET'])
@@ -3542,275 +3219,21 @@ def create_tattoo_request():
 
 
 # =============================================
-# TOKENIZED SLOT OFFER FLOW (CUSTOMER)
+# ESKİ SAAT SEÇİM LİNKLERİ (KAPATILDI)
+# Randevuyu artık sanatçı kendisi veriyor; eski linkler açılırsa bilgi mesajı döner.
 # =============================================
 
+SLOT_SELECTION_RETIRED_MESSAGE = (
+    'Randevu saati artık sanatçımız tarafından belirleniyor. '
+    'Sizinle WhatsApp üzerinden iletişime geçilecektir.'
+)
+
+
 @app.route('/api/offers/<token>', methods=['GET'])
-@limiter.limit("30 per minute")
-def get_offer(token):
-    """Return offer metadata and, optionally, available start slots for a given date."""
-    token = (token or '').strip()
-    date_str = request.args.get('date')  # optional: "16.12.2025"
-
-    if not token:
-        return jsonify({'success': False, 'message': 'token gerekli'}), 400
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            SELECT
-                so.id,
-                so.duration_minutes,
-                so.expires_at,
-                so.used_at,
-                so.price,
-                so.original_price,
-                so.discount_percent,
-                tr.id,
-                tr.staff_id,
-                tr.size,
-                tr.body_area,
-                tr.body_region,
-                tr.tattoo_style,
-                tr.estimated_price,
-                tr.description,
-                tr.reference_image,
-                c.phone,
-                s.name,
-                lr.redemption_code
-            FROM slot_offers so
-            JOIN tattoo_requests tr ON so.tattoo_request_id = tr.id
-            JOIN customers c ON tr.customer_id = c.id
-            JOIN artists s ON tr.staff_id = s.id
-            LEFT JOIN loyalty_redemptions lr ON tr.loyalty_redemption_id = lr.id
-            WHERE so.token = %s
-        """, (token,))
-        row = cursor.fetchone()
-        if not row:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Link geçersiz'}), 404
-
-        (offer_id, duration_minutes, expires_at, used_at, offer_price,
-         original_price, discount_percent, tr_id, staff_id,
-         size, body_area, body_region, tattoo_style, estimated_price_req, desc, ref_img,
-         customer_phone, staff_name, loyalty_code) = row
-
-        if used_at is not None:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Bu link daha önce kullanılmış'}), 410
-
-        if expires_at and expires_at < datetime.utcnow():
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Bu linkin süresi dolmuş'}), 410
-
-        offer_payload = {
-            'token': token,
-            'duration_minutes': int(duration_minutes),
-            'price': float(offer_price or 0),
-            'expires_at': expires_at.isoformat() if expires_at else None,
-        }
-        if original_price and discount_percent:
-            offer_payload['original_price'] = float(original_price)
-            offer_payload['discount_percent'] = int(discount_percent)
-            if loyalty_code:
-                offer_payload['loyalty_code'] = loyalty_code
-
-        payload = {
-            'success': True,
-            'offer': offer_payload,
-            'tattoo_request': {
-                'id': tr_id,
-                'staff': {'id': staff_id, 'name': staff_name},
-                'size': size,
-                'body_area': body_area,
-                'body_region': body_region,
-                'tattoo_style': tattoo_style,
-                'estimated_price': float(estimated_price_req) if estimated_price_req is not None else None,
-                'description': desc,
-                'reference_image': ref_img,
-            },
-        }
-
-        # If a date is provided, return available start slots for that date
-        if date_str:
-            formatted_date = parse_tr_date(date_str)
-            if not formatted_date:
-                cursor.close()
-                return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
-
-            slot_details = compute_available_start_slots(
-                cursor, staff_id, formatted_date, duration_minutes,
-                return_details=True
-            )
-            payload['slots'] = {
-                'date': date_str,
-                'available_start_slots': slot_details['available_start_slots'],
-                'all_slots': slot_details['all_slots'],
-                'booked_slots': slot_details['booked_slots'],
-            }
-        else:
-            from datetime import date as dt_date
-            today = dt_date.today()
-            payload['dates'] = [
-                (today + timedelta(days=i)).strftime('%d.%m.%Y')
-                for i in range(14)
-            ]
-
-        cursor.close()
-        return jsonify(payload)
-    except Exception as e:
-        logger.error(f"get_offer hatası: {e}")
-        return jsonify({'success': False, 'message': 'Bir problem oluştu'}), 500
-    finally:
-        release_db_connection(conn)
-
-
 @app.route('/api/offers/<token>/choose-slot', methods=['POST'])
-@limiter.limit("20 per minute")
-def choose_offer_slot(token):
-    token = (token or '').strip()
-    data = request.get_json() or {}
-    date_str = data.get('date')  # "16.12.2025"
-    time_str = data.get('time')  # "13:00"
-
-    if not token or not date_str or not time_str:
-        return jsonify({'success': False, 'message': 'token, date, time gerekli'}), 400
-
-    formatted_date = parse_tr_date(date_str)
-    if not formatted_date:
-        return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Lock offer row to prevent double use
-        cursor.execute("""
-            SELECT
-                so.id,
-                so.duration_minutes,
-                so.expires_at,
-                so.used_at,
-                so.price,
-                tr.id,
-                tr.customer_id,
-                tr.staff_id,
-                tr.body_area,
-                tr.body_region,
-                tr.size,
-                tr.tattoo_style,
-                tr.reference_number,
-                tr.description,
-                c.phone,
-                c.name,
-                c.surname,
-                s.name,
-                s.phone
-            FROM slot_offers so
-            JOIN tattoo_requests tr ON so.tattoo_request_id = tr.id
-            JOIN customers c ON tr.customer_id = c.id
-            JOIN artists s ON tr.staff_id = s.id
-            WHERE so.token = %s
-            FOR UPDATE
-        """, (token,))
-        row = cursor.fetchone()
-        if not row:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Link geçersiz'}), 404
-
-        (offer_id, duration_minutes, expires_at, used_at, offer_price, tr_id,
-         customer_id, staff_id, body_area, body_region, tattoo_size, tattoo_style,
-         reference_number, request_description, customer_phone, customer_first_name,
-         customer_last_name, staff_name, staff_phone) = row
-
-        customer_name = ' '.join(
-            filter(None, [customer_first_name, customer_last_name])
-        ).strip() or None
-        is_pre_consultation = (tattoo_style or '') in ('pre_consultation', 'Ön görüşme')
-
-        if used_at is not None:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Bu link daha önce kullanılmış'}), 410
-
-        if expires_at and expires_at < datetime.utcnow():
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Bu linkin süresi dolmuş'}), 410
-
-        # Uygunluk kontrolü ile INSERT arası: aynı sanatçı/gün için ikinci bir
-        # müşteri araya girip çakışan saat alamasın.
-        lock_staff_day(cursor, staff_id, formatted_date)
-
-        available_start_slots, _ = compute_available_start_slots(
-            cursor, staff_id, formatted_date, duration_minutes,
-        )
-
-        if time_str not in available_start_slots:
-            msg = 'Seçilen saat artık uygun değil. Lütfen saatleri yeniden yükleyip tekrar deneyin.'
-            conn.rollback()
-            return jsonify({'success': False, 'message': msg}), 409
-
-        cursor.execute("""
-            INSERT INTO appointments (customer_id, staff_id, tattoo_request_id, appointment_date, appointment_time, status, duration_minutes, price, source)
-            VALUES (%s, %s, %s, %s, %s, 'confirmed', %s, %s, 'customer')
-            RETURNING id
-        """, (customer_id, staff_id, tr_id, formatted_date, time_str, int(duration_minutes), float(offer_price or 0)))
-        new_appointment_id = cursor.fetchone()[0]
-
-        cursor.execute("UPDATE slot_offers SET used_at = NOW() WHERE id = %s", (offer_id,))
-        cursor.execute("UPDATE tattoo_requests SET status = 'scheduled' WHERE id = %s", (tr_id,))
-        enqueue_appointment_sync(cursor, new_appointment_id)
-
-        conn.commit()
-
-        kick_gcal_queue()
-
-        customer_msg = build_appointment_created_customer_message(
-            date_str,
-            time_str,
-            duration_minutes,
-            offer_price,
-            staff_name=staff_name,
-            customer_name=customer_name,
-            reference_number=reference_number,
-            body_area=body_area,
-            tattoo_size=tattoo_size,
-            pre_consultation=is_pre_consultation,
-        )
-        staff_msg = build_appointment_created_staff_message(
-            customer_phone,
-            date_str,
-            time_str,
-            duration_minutes,
-            offer_price,
-            customer_name=customer_name,
-            reference_number=reference_number,
-            body_area=body_area,
-            tattoo_size=tattoo_size,
-            description=request_description,
-            pre_consultation=is_pre_consultation,
-        )
-
-        send_wapio_message(customer_phone, customer_msg)
-        send_wapio_message(staff_phone, staff_msg)
-
-        cursor.close()
-        return jsonify({'success': True, 'message': 'Randevu oluşturuldu'})
-    except psycopg2.IntegrityError as e:
-        if conn:
-            conn.rollback()
-        logger.warning(f"choose_offer_slot IntegrityError: {e}")
-        return jsonify({'success': False, 'message': 'Bu saat dolu. Lütfen başka bir saat seçin.'}), 409
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        log_error(logger, E_BOOK_001, "Randevu olusturulamadi (teklif slot)", exc=e)
-        return jsonify({'success': False, 'message': 'Bir problem oluştu'}), 500
-    finally:
-        release_db_connection(conn)
+@limiter.limit("30 per minute")
+def retired_slot_offer(token):
+    return jsonify({'success': False, 'message': SLOT_SELECTION_RETIRED_MESSAGE}), 410
 
 
 # =============================================
@@ -4189,195 +3612,6 @@ def admin_delete_tattoo_request(tattoo_request_id):
         release_db_connection(conn)
 
 
-@app.route('/api/admin/tattoo-requests/<int:tattoo_request_id>/offer', methods=['POST'])
-@token_required
-def admin_offer_slots(tattoo_request_id):
-    """Admin sets duration, system sends token link to customer."""
-    if not can_access_tattoo_requests():
-        return jsonify({'success': False, 'message': 'Bu işlem için yetkiniz yok'}), 403
-
-    data = request.get_json() or {}
-    duration_minutes = int(data.get('duration_minutes') or 0)
-    expires_hours    = int(data.get('expires_hours') or 48)
-    price            = float(data.get('price') or 0)
-
-    if duration_minutes < 60 or duration_minutes % 60 != 0:
-        return jsonify({'success': False, 'message': 'duration_minutes 60 dakikanın katı olmalı (örn 60, 120, 180)'}), 400
-    if expires_hours <= 0 or expires_hours > 168:
-        expires_hours = 48
-    if price < 0:
-        price = 0
-
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-
-        # Permission: staff can only offer their own requests (super_admin can offer all)
-        loyalty_discount = get_request_loyalty_discount(cursor, tattoo_request_id)
-
-        cursor.execute("""
-            SELECT tr.customer_id, tr.staff_id, tr.reference_number, c.phone, s.name, tr.tattoo_style
-            FROM tattoo_requests tr
-            JOIN customers c ON tr.customer_id = c.id
-            JOIN artists s ON tr.staff_id = s.id
-            WHERE tr.id = %s
-        """, (tattoo_request_id,))
-        row = cursor.fetchone()
-        if not row:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Talep bulunamadı'}), 404
-
-        customer_id, staff_id, request_ref, customer_phone, staff_name, tattoo_style = row
-        is_pre_consultation = (tattoo_style or '') in ('pre_consultation', 'Ön görüşme')
-        if not is_studio_admin() and int(staff_id) != int(request.staff_id):
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Bu talep için yetkiniz yok'}), 403
-
-        from evolution_client import resolve_evolution_send_target
-
-        # parse_mobile_number hem Turk (ciplak 10 hane) hem yurt disi (ulke
-        # kodu dahil tam basamaklar) saklanmis numaralari dogru tanir —
-        # eskiden burada sadece Turk formatini kabul eden sabit bir kontrol
-        # vardi, yurt disi musterilere teklif linki gonderilemiyordu.
-        if not parse_mobile_number(customer_phone):
-            cursor.close()
-            return jsonify({
-                'success': False,
-                'message': f'Geçersiz müşteri telefonu ({customer_phone}).',
-            }), 400
-        whatsapp_target = resolve_evolution_send_target(customer_phone)
-
-        original_price = float(price)
-        final_price = original_price
-        discount_applied = False
-        discount_percent = None
-        loyalty_code = None
-
-        if (
-            loyalty_discount
-            and loyalty_discount.get('used_at') is None
-            and original_price > 0
-        ):
-            final_price, _, discount_percent = apply_percent_discount(
-                original_price, loyalty_discount['discount_percent']
-            )
-            if loyalty_discount.get('redemption_id'):
-                mark_redemption_used_for_offer(
-                    cursor, loyalty_discount['redemption_id'], tattoo_request_id
-                )
-            discount_applied = True
-            loyalty_code = loyalty_discount['code']
-
-        # Yeni link gonderilirken bu talebin daha once gonderilmis, henuz
-        # kullanilmamis eski linkleri gecersiz kilinir — aksi halde musteri
-        # eski ve yeni linkten ayni anda saat secebiliyordu.
-        cursor.execute("""
-            UPDATE slot_offers
-               SET expires_at = NOW()
-             WHERE tattoo_request_id = %s
-               AND used_at IS NULL
-               AND (expires_at IS NULL OR expires_at > NOW())
-        """, (tattoo_request_id,))
-
-        token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(hours=expires_hours)
-
-        cursor.execute("""
-            INSERT INTO slot_offers (
-                tattoo_request_id, token, duration_minutes, expires_at,
-                price, original_price, discount_percent
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            tattoo_request_id, token, duration_minutes, expires_at,
-            final_price,
-            original_price if discount_applied else None,
-            discount_percent if discount_applied else None,
-        ))
-
-        cursor.execute("UPDATE tattoo_requests SET status = 'offered' WHERE id = %s", (tattoo_request_id,))
-
-        conn.commit()
-        cursor.close()
-
-        offer_url = build_slot_select_url(token)
-
-        if discount_applied:
-            price_line = (
-                f"💰 Ücret: *{format_try(final_price)} ₺*\n"
-                f"   _(Liste fiyatı {format_try(original_price)} ₺ — "
-                f"%{discount_percent} sadakat indirimi: {loyalty_code})_\n\n"
-            )
-        elif final_price > 0:
-            price_line = f"💰 Ücret: *{format_try(final_price)} ₺*\n\n"
-        else:
-            price_line = ""
-
-        ref_line = f"📋 Referans: *{request_ref}*\n\n" if request_ref else ""
-        title = "Ön Görüşme Randevusu Saat Seçimi" if is_pre_consultation else "Dövme Randevu Saat Seçimi"
-        msg = (
-            f"🕒 *{title}*\n\n"
-            f"{ref_line}"
-            f"Dövmeniz için süre: *{duration_minutes} dakika*.\n\n"
-            f"{price_line}"
-            f"Aşağıdaki linkten sadece bu süreye uygun saatleri göreceksiniz (60 dk slotlar).\n\n"
-            f"Link: {offer_url}\n\n"
-            f"Not: Link {expires_hours} saat boyunca geçerlidir."
-        )
-        whatsapp_sent = send_wapio_message(customer_phone, msg)
-        if whatsapp_sent:
-            logger.info(
-                f"Teklif linki WhatsApp OK: request_id={tattoo_request_id}, "
-                f"hedef={whatsapp_target}, db_phone={customer_phone}"
-            )
-        else:
-            logger.error(
-                f"Teklif linki WhatsApp ile gönderilemedi: request_id={tattoo_request_id}, "
-                f"hedef={whatsapp_target}, db_phone={customer_phone}"
-            )
-
-        if discount_applied and whatsapp_sent:
-            status_msg = (
-                f'Link gönderildi — %{discount_percent} sadakat indirimi uygulandı '
-                f'({format_try(original_price)} ₺ → {format_try(final_price)} ₺, kod: {loyalty_code})'
-            )
-        elif discount_applied and not whatsapp_sent:
-            status_msg = (
-                f'Teklif oluşturuldu (WhatsApp gönderilemedi) — %{discount_percent} indirim kayıtlı. '
-                f'Linki manuel paylaşın: {offer_url}'
-            )
-        elif whatsapp_sent:
-            status_msg = 'Link müşteriye WhatsApp ile gönderildi'
-        else:
-            status_msg = (
-                f'Teklif oluşturuldu ancak WhatsApp mesajı gitmedi. '
-                f'Bağlantıyı kontrol edin veya linki manuel gönderin: {offer_url}'
-            )
-
-        return jsonify({
-            'success': True,
-            'token': token,
-            'offer_url': offer_url,
-            'whatsapp_sent': whatsapp_sent,
-            'whatsapp_target': whatsapp_target,
-            'customer_phone': customer_phone,
-            'message': status_msg,
-            'discount_applied': discount_applied,
-            'original_price': original_price if discount_applied else None,
-            'final_price': final_price if discount_applied else (original_price if original_price > 0 else None),
-            'discount_percent': discount_percent,
-            'loyalty_code': loyalty_code,
-        })
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"admin_offer_slots hatası: {e}")
-        return jsonify({'success': False, 'message': 'Teklif oluşturulamadı'}), 500
-    finally:
-        release_db_connection(conn)
-
-
 @app.route('/api/admin/appointments', methods=['GET'])
 @limiter.exempt
 @token_required
@@ -4562,12 +3796,11 @@ def get_admin_appointments():
 @app.route('/api/admin/manual-appointment/available-slots', methods=['GET'])
 @token_required
 def admin_manual_appointment_available_slots():
-    """Manuel randevu formu — mesai saatlerine göre uygun başlangıç saatleri."""
+    """Manuel randevu formu — çakışmaya göre uygun başlangıç saatleri."""
     staff_id = request.args.get('staff_id', type=int)
     date_str = (request.args.get('date') or '').strip()
     duration_minutes = request.args.get('duration_minutes', type=int)
     exclude_appointment_id = request.args.get('exclude_appointment_id', type=int)
-    allow_outside_working_hours = (request.args.get('allow_outside_working_hours') or '').lower() in ('1', 'true', 'yes')
 
     if not staff_id or not date_str:
         return jsonify({'success': False, 'message': 'staff_id ve date gerekli'}), 400
@@ -4583,24 +3816,20 @@ def admin_manual_appointment_available_slots():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        slot_details = compute_available_start_slots(
+        available_start_slots, is_day_closed = compute_available_start_slots(
             cursor,
             int(staff_id),
             formatted_date,
             duration_minutes,
-            return_details=True,
             skip_past_filter=False,
             past_filter_mode='strict',
             exclude_appointment_id=exclude_appointment_id,
-            allow_outside_working_hours=allow_outside_working_hours,
         )
         cursor.close()
         return jsonify({
             'success': True,
-            'available_start_slots': slot_details['available_start_slots'],
-            'work_start': slot_details.get('work_start'),
-            'work_end': slot_details.get('work_end'),
-            'is_day_closed': slot_details.get('is_day_closed', False),
+            'available_start_slots': available_start_slots,
+            'is_day_closed': is_day_closed,
         })
     except Exception as e:
         logger.error(f"admin_manual_appointment_available_slots hatası: {e}")
@@ -4715,6 +3944,7 @@ def admin_create_manual_appointment():
     status = (data.get('status') or 'confirmed').strip()
     send_whatsapp = data.get('send_whatsapp', True) not in (False, 'false', 0, '0')
     staff_id_raw = data.get('staff_id')
+    tattoo_request_id_raw = data.get('tattoo_request_id')
 
     if not phone_raw or not name or not surname:
         return jsonify({'success': False, 'message': 'Telefon, ad ve soyad zorunludur'}), 400
@@ -4824,6 +4054,43 @@ def admin_create_manual_appointment():
             status, duration_minutes, price
         ))
         appointment_id = cursor.fetchone()[0]
+        try:
+            explicit_request_id = int(tattoo_request_id_raw) if tattoo_request_id_raw else None
+        except (TypeError, ValueError):
+            explicit_request_id = None
+        linked_request_id = link_open_tattoo_request(
+            cursor, appointment_id, customer_id, staff_id, explicit_request_id
+        )
+
+        # Müşteri talep oluştururken sadakat kodu girdiyse, sanatçının girdiği
+        # liste fiyatından indirim otomatik düşülür ve kod tek kullanımlık kapanır
+        # (eski teklif akışındaki davranışın aynısı). Ücret 0 ise kod harcanmaz.
+        discount_info = None
+        if linked_request_id:
+            loyalty_discount = get_request_loyalty_discount(cursor, linked_request_id)
+            if (
+                loyalty_discount
+                and loyalty_discount.get('used_at') is None
+                and price > 0
+            ):
+                original_price = price
+                price, _, discount_percent = apply_percent_discount(
+                    original_price, loyalty_discount['discount_percent']
+                )
+                if loyalty_discount.get('redemption_id'):
+                    mark_redemption_used_for_offer(
+                        cursor, loyalty_discount['redemption_id'], linked_request_id
+                    )
+                cursor.execute(
+                    'UPDATE appointments SET price = %s WHERE id = %s',
+                    (price, appointment_id),
+                )
+                discount_info = {
+                    'code': loyalty_discount['code'],
+                    'percent': discount_percent,
+                    'original_price': original_price,
+                    'final_price': price,
+                }
         enqueue_appointment_sync(cursor, appointment_id)
         conn.commit()
         kick_gcal_queue()
@@ -4840,6 +4107,7 @@ def admin_create_manual_appointment():
                     price,
                     staff_name=staff_name,
                     customer_name=f'{name} {surname}'.strip() or None,
+                    discount_info=discount_info,
                 )
                 send_wapio_message(customer_phone_display, customer_msg)
                 if staff_phone:
@@ -4857,7 +4125,10 @@ def admin_create_manual_appointment():
                 logger.warning(f"Manuel randevu WhatsApp bildirimi gönderilemedi: {wa_err}")
 
         cursor.close()
-        logger.info(f"Manuel randevu oluşturuldu: apt={appointment_id}, customer={customer_id}, staff={staff_id}")
+        logger.info(
+            f"Manuel randevu oluşturuldu: apt={appointment_id}, customer={customer_id}, "
+            f"staff={staff_id}, tattoo_request={linked_request_id}"
+        )
 
         return jsonify({
             'success': True,
@@ -4870,7 +4141,9 @@ def admin_create_manual_appointment():
                 'duration_minutes': duration_minutes,
                 'price': price,
                 'source': 'admin',
+                'tattoo_request_id': linked_request_id,
             },
+            'loyalty_discount': discount_info,
             'customer': {
                 'id': cust[0],
                 'phone': cust[1],
@@ -4984,11 +4257,9 @@ def admin_edit_appointment(appointment_id):
         )
 
         if slot_changed:
-            allow_outside_working_hours = bool(data.get('allow_outside_working_hours'))
             available_starts, is_day_closed = compute_available_start_slots(
                 cursor, staff_id, formatted_date, duration_minutes,
                 exclude_appointment_id=appointment_id,
-                allow_outside_working_hours=allow_outside_working_hours,
             )
             if is_day_closed:
                 cursor.close()
@@ -5820,10 +5091,6 @@ def delete_staff(staff_id):
         )
         enqueue_event_deletes(cursor, [row[0] for row in cursor.fetchall() if row[0]])
 
-        # Working_hours / time_off: sadece planlama metadata'si, gelir
-        # raporlarini etkilemez — silinmesi güvenli.
-        cursor.execute("DELETE FROM working_hours WHERE staff_id = %s", (staff_id,))
-
         cursor.execute(
             "SELECT google_event_id FROM time_off WHERE staff_id = %s",
             (staff_id,),
@@ -5941,99 +5208,6 @@ def _insert_time_off(cursor, staff_id, off_date, start_time, end_time, reason):
     enqueue_time_off_sync(cursor, new_id)
     overlap = _time_off_overlap_count(cursor, staff_id, off_date, start_time, end_time)
     return new_id, overlap
-
-@app.route('/api/admin/working-hours', methods=['GET'])
-@token_required
-def get_working_hours():
-    """Çalışma saatlerini getir - personel kendisini, super_admin herkesi görebilir"""
-    staff_id = request.args.get('staff_id', request.staff_id)
-    
-    # Yetki kontrolü
-    if not is_studio_admin() and int(staff_id) != request.staff_id:
-        return jsonify({'success': False, 'message': 'Yetkiniz yok'}), 403
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, day_of_week, start_time, end_time, is_available
-            FROM working_hours
-            WHERE staff_id = %s
-            ORDER BY day_of_week
-        """, (staff_id,))
-        
-        rows = cursor.fetchall()
-        cursor.close()
-        
-        # Günler: 0=Pazar, 1=Pazartesi...
-        day_names = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi']
-        
-        working_hours = []
-        for row in rows:
-            working_hours.append({
-                'id': row[0],
-                'day_of_week': row[1],
-                'day_name': day_names[row[1]],
-                'start_time': str(row[2])[:5] if row[2] else None,
-                'end_time': str(row[3])[:5] if row[3] else None,
-                'is_available': row[4]
-            })
-        
-        return jsonify({'success': True, 'working_hours': working_hours, 'staff_id': int(staff_id)})
-    except Exception as e:
-        logger.error(f"get_working_hours hatası: {e}")
-        return jsonify({'success': False, 'message': 'Çalışma saatleri alınamadı'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/working-hours', methods=['PUT'])
-@token_required
-def update_working_hours():
-    """Saatlerim: yalnız giriş yapan super_admin'in kendi koltuğu.
-    Diğer personel saatleri PUT /staff/<id>/working-hours ile ayarlanır.
-    """
-    if not can_access_income():
-        return jsonify({
-            'success': False,
-            'message': 'Çalışma saatlerini düzenleme yetkiniz yok',
-        }), 403
-
-    data = request.get_json() or {}
-    staff_id = int(request.staff_id)
-    working_hours = data.get('working_hours', [])
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Mevcut saatleri sil
-        cursor.execute("DELETE FROM working_hours WHERE staff_id = %s", (staff_id,))
-        
-        # Yeni saatleri ekle
-        for wh in working_hours:
-            cursor.execute("""
-                INSERT INTO working_hours (staff_id, day_of_week, start_time, end_time, is_available)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (staff_id, wh['day_of_week'], wh.get('start_time') or '09:00', wh.get('end_time') or '20:00', wh.get('is_available', True)))
-        
-        conn.commit()
-        cursor.close()
-        
-        logger.info(f"Çalışma saatleri güncellendi: staff_id={staff_id}")
-        
-        return jsonify({'success': True, 'message': 'Çalışma saatleri kaydedildi'})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"update_working_hours hatası: {e}")
-        return jsonify({'success': False, 'message': 'Çalışma saatleri kaydedilemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
 
 @app.route('/api/admin/time-off', methods=['GET'])
 @token_required
@@ -8318,93 +7492,6 @@ atexit.register(_shutdown_scheduler_and_lock)
 # STAFF-SPECIFIC SCHEDULE ENDPOINTS (Super Admin)
 # =============================================
 
-@app.route('/api/admin/staff/<int:staff_id>/working-hours', methods=['GET'])
-@token_required
-def get_staff_working_hours(staff_id):
-    """Super admin gets working hours for a specific staff member"""
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Yetkisiz erişim'}), 403
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT id, day_of_week, start_time, end_time, is_available
-            FROM working_hours
-            WHERE staff_id = %s
-            ORDER BY day_of_week
-        """, (staff_id,))
-        
-        rows = cursor.fetchall()
-        cursor.close()
-        
-        working_hours = []
-        for row in rows:
-            working_hours.append({
-                'id': row[0],
-                'day_of_week': row[1],
-                'start_time': str(row[2])[:5] if row[2] else None,
-                'end_time': str(row[3])[:5] if row[3] else None,
-                'is_available': row[4]
-            })
-        
-        return jsonify({'success': True, 'working_hours': working_hours})
-    except Exception as e:
-        logger.error(f"get_staff_working_hours hatası: {e}")
-        return jsonify({'success': False, 'message': 'Çalışma saatleri alınamadı'}), 500
-    finally:
-        release_db_connection(conn)
-
-
-@app.route('/api/admin/staff/<int:staff_id>/working-hours', methods=['PUT'])
-@token_required
-def update_staff_working_hours(staff_id):
-    """Super admin updates working hours for a specific staff member"""
-    if not is_studio_admin():
-        return jsonify({'success': False, 'message': 'Yetkisiz erişim'}), 403
-    
-    data = request.get_json()
-    working_hours = data.get('working_hours', [])
-    
-    conn = None
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Delete existing working hours
-        cursor.execute("DELETE FROM working_hours WHERE staff_id = %s", (staff_id,))
-        
-        # Insert new working hours
-        for wh in working_hours:
-            # Veritabanı NULL kabul etmiyor, kapalı günler için varsayılan değerler kullan.
-            # /api/admin/working-hours (eski route) ile AYNI varsayılanlar —
-            # farklı olursa aynı working_hours tablosu iki route'tan farklı
-            # dummy değerlerle güncellenip tutarsız görünüyordu.
-            start_time = wh['start_time'] if wh['start_time'] else '09:00'
-            end_time = wh['end_time'] if wh['end_time'] else '20:00'
-            
-            cursor.execute("""
-                INSERT INTO working_hours (staff_id, day_of_week, start_time, end_time, is_available)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (staff_id, wh['day_of_week'], start_time, end_time, wh['is_available']))
-        
-        conn.commit()
-        cursor.close()
-        
-        logger.info(f"Personel çalışma saatleri güncellendi: staff_id={staff_id}")
-        
-        return jsonify({'success': True, 'message': 'Çalışma saatleri güncellendi'})
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        logger.error(f"update_staff_working_hours hatası: {e}")
-        return jsonify({'success': False, 'message': 'Çalışma saatleri güncellenemedi'}), 500
-    finally:
-        release_db_connection(conn)
-
-
 @app.route('/api/admin/staff/<int:staff_id>/time-off', methods=['GET'])
 @token_required
 def get_staff_time_off(staff_id):
@@ -8863,10 +7950,6 @@ def get_customer_appointments():
                 } if row[10] else None,
                 'source': row[14] or 'admin',
             })
-
-        if filter_type in ('upcoming', 'all'):
-            pending_slots = _fetch_customer_pending_slot_selections(cursor, request.customer_id)
-            appointments = pending_slots + appointments
 
         cursor.close()
         

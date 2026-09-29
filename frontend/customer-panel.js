@@ -311,10 +311,6 @@ function renderAppointments(container, appointments) {
     }
 
     container.innerHTML = appointments.map(apt => {
-        if (apt.type === 'slot_selection') {
-            return renderSlotSelectionCard(apt);
-        }
-
         const staffName = apt.staff?.name || '—';
         const canCancel = (apt.status === 'pending' || apt.status === 'confirmed') && canCancelAppointment(apt);
 
@@ -384,81 +380,6 @@ function renderAppointments(container, appointments) {
     }).join('');
 }
 
-function renderSlotSelectionCard(apt) {
-    const staffName = apt.staff?.name || '—';
-    const refLine = apt.reference_number
-        ? `<div class="detail-row">
-            <i class="fas fa-hashtag"></i>
-            <span class="detail-label">Referans</span>
-            <span class="detail-value">${escapeHtml(apt.reference_number)}</span>
-           </div>`
-        : '';
-    const expiresLine = apt.expires_at
-        ? `<div class="detail-row">
-            <i class="fas fa-hourglass-half"></i>
-            <span class="detail-label">Link geçerliliği</span>
-            <span class="detail-value">${escapeHtml(apt.expires_at)}</span>
-           </div>`
-        : '';
-    const slotUrl = apt.slot_select_url || '#';
-
-    return `
-        <div class="appointment-card status-slot_pending">
-            <div class="appointment-header">
-                <div>
-                    <div class="appointment-date">
-                        <i class="fas fa-calendar-check"></i>
-                        Onaylandı — saat seçin
-                    </div>
-                    <div class="appointment-time">
-                        <i class="fas fa-info-circle"></i>
-                        Tarih ve saat seçimi yapılmadı
-                    </div>
-                </div>
-                <span class="status-badge slot_pending">${getStatusText('slot_pending')}</span>
-            </div>
-
-            <div class="appointment-details">
-                ${refLine}
-                <div class="detail-row">
-                    <i class="fas fa-user-tie"></i>
-                    <span class="detail-label">Sanatçı</span>
-                    <span class="detail-value">${escapeHtml(staffName)}</span>
-                </div>
-                ${apt.tattoo ? `
-                <div class="detail-row">
-                    <i class="fas fa-palette"></i>
-                    <span class="detail-label">Tarz</span>
-                    <span class="detail-value">${escapeHtml(apt.tattoo.tattoo_style || '—')}</span>
-                </div>
-                <div class="detail-row">
-                    <i class="fas fa-map-marker-alt"></i>
-                    <span class="detail-label">Bölge</span>
-                    <span class="detail-value">${escapeHtml(apt.tattoo.body_area || '—')}</span>
-                </div>
-                ` : ''}
-                <div class="detail-row">
-                    <i class="fas fa-clock"></i>
-                    <span class="detail-label">Süre</span>
-                    <span class="detail-value">${apt.duration_minutes} dk</span>
-                </div>
-                <div class="detail-row">
-                    <i class="fas fa-tag"></i>
-                    <span class="detail-label">Ücret</span>
-                    <span class="detail-value">${getPriceText(apt.price)}</span>
-                </div>
-                ${expiresLine}
-            </div>
-
-            <div class="appointment-actions">
-                <a class="action-btn slot-select-btn" href="${escapeHtml(slotUrl)}">
-                    <i class="fas fa-link"></i> Saat Seçimi Yap
-                </a>
-            </div>
-        </div>
-    `;
-}
-
 function renderRequests(container, requests) {
     if (!requests || requests.length === 0) {
         container.innerHTML = '<p class="empty-message"><i class="fas fa-inbox"></i><br>Bekleyen talep yok</p>';
@@ -523,7 +444,7 @@ function renderRequests(container, requests) {
 
                 <p class="request-wait-note">
                     <i class="fas fa-hourglass-half"></i>
-                    Sanatçı talebinizi inceliyor. Onay ve süre belirlendikten sonra saat seçim linki <strong>Randevularım</strong> bölümünde görünecek.
+                    Sanatçı talebinizi inceliyor. Randevunuz sanatçı tarafından verildiğinde <strong>Randevularım</strong> bölümünde görünecek ve size WhatsApp ile bildirilecek.
                 </p>
             </div>
         `;
@@ -612,8 +533,7 @@ function getStatusText(status) {
         'confirmed': 'Onaylandı',
         'completed': 'Tamamlandı',
         'cancelled': 'İptal',
-        'no_show': 'Gelmedi',
-        'slot_pending': 'Saat seçimi'
+        'no_show': 'Gelmedi'
     };
     return statusMap[status] || status;
 }

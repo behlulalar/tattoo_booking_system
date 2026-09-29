@@ -1,9 +1,9 @@
 /* Roof Tattoo admin PWA — API asla cache'lenmez; müşteri sitesine dokunulmaz. */
-const CACHE_VERSION = 'roof-admin-20260922173000';
+const CACHE_VERSION = 'roof-admin-20260929190000';
 const ADMIN_SHELL = [
   '/sp-admin-x7k.html',
-  '/admin.js?v=20260922173000',
-  '/admin.css?v=20260922173000',
+  '/admin.js?v=20260929190000',
+  '/admin.css?v=20260929190000',
   '/mobile-safe.css?v=20260818131000',
   '/admin.webmanifest',
   '/img/logo.png',
