@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import requests
+from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
 from config import DATABASE_CONFIG, WAPIO_CONFIG, CODE_EXPIRATION_SECONDS, SITE_CONFIG, get_evolution_config, save_evolution_config, get_google_calendar_config, save_google_calendar_config
 # Wapio (legacy — dosyalar repoda; runtime devre dışı)
@@ -125,11 +125,9 @@ from loyalty_points import (
     redeem_loyalty_discount,
     validate_loyalty_code_for_customer,
 )
-from notifications import create_notification
 import push_notifications as push_notif
 import staff_settings
 import os
-import json
 import random
 import time
 import psycopg2
@@ -150,14 +148,13 @@ from urllib.parse import urlparse
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from threading import Lock, Thread
-from marshmallow import Schema, fields, validate, ValidationError, validates
+from marshmallow import Schema, fields, ValidationError
 import psutil
 
 from logging_setup import setup_logging, log_error, log_warning
 from error_codes import (
     E_AUTH_001,
     E_BKP_001,
-    E_BOOK_001,
     E_DB_001,
     E_DB_002,
     E_DB_003,
@@ -232,6 +229,14 @@ CORS(app, resources={r"/api/*": {
 # worker'da giris/OTP gibi hassas endpoint'lerin dakikalik limiti fiilen
 # worker sayisiyla katlanir. REDIS_URL tanimliysa paylasimli sayac icin
 # Redis kullanilir; tanimli degilse (yerel gelistirme) memory'ye duser.
+# Uygulamaya yalnizca nginx (unix socket) uzerinden ulasilir; nginx istemci IP'sini
+# X-Forwarded-For'a ekler. ProxyFix olmadan get_remote_address hep ayni (proxy) IP'yi
+# gorur ve TUM kullanicilar ayni rate-limit kovasini paylasir (bir kisi herkesi
+# giristen kilitleyebilir). Proxy'nin son eklemesine guvenilir (x_for=1).
+TRUSTED_PROXY_COUNT = int(os.getenv('TRUSTED_PROXY_COUNT', '1'))
+if TRUSTED_PROXY_COUNT > 0:
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=TRUSTED_PROXY_COUNT, x_proto=TRUSTED_PROXY_COUNT)
+
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
@@ -358,29 +363,6 @@ def parse_mobile_number(phone):
 # =============================================
 # INPUT VALIDATION SCHEMAS (Marshmallow)
 # =============================================
-class AppointmentSchema(Schema):
-    """Randevu oluşturma için input validation schema"""
-    phone = fields.String(required=True, validate=validate.Length(equal=10, error='Telefon numarası 10 haneli olmalıdır'))
-    staff_id = fields.Integer(required=True, validate=validate.Range(min=1, error='Geçersiz personel ID'))
-    service_id = fields.Integer(required=True, validate=validate.Range(min=1, error='Geçersiz hizmet ID'))
-    date = fields.String(required=True, validate=validate.Regexp(r'^\d{2}\.\d{2}\.\d{4}$', error='Tarih formatı DD.MM.YYYY olmalıdır'))
-    time = fields.String(required=True, validate=validate.Regexp(r'^\d{2}:\d{2}$', error='Saat formatı HH:MM olmalıdır'))
-    payment_method = fields.String(required=True, validate=validate.OneOf(['nakit', 'havale'], error='Ödeme yöntemi nakit veya havale olmalıdır'))
-    
-    @validates('time')
-    def validate_time_format(self, value):
-        """Saat formatını ve geçerliliğini kontrol et"""
-        try:
-            hour, minute = map(int, value.split(':'))
-            if not (0 <= hour < 24 and 0 <= minute < 60):
-                raise ValidationError('Geçersiz saat değeri')
-            # 30 dakikalık slot kontrolü
-            if minute not in [0, 30]:
-                raise ValidationError('Saat 30 dakikalık slotlar halinde olmalıdır (örn: 09:00, 09:30)')
-        except (ValueError, AttributeError):
-            raise ValidationError('Geçersiz saat formatı')
-
-
 class SendCodeSchema(Schema):
     """Doğrulama kodu gönderme için input validation schema"""
     phone = fields.String(required=True)
@@ -1177,6 +1159,10 @@ def _record_bulk_send():
         release_db_connection(conn)
 
 
+_WA_DOWN_LOG_INTERVAL_SECONDS = 600
+_wa_bulk_state = {'down_since': None, 'last_logged': 0.0}
+
+
 def _whatsapp_session_ready_for_bulk_send():
     """Toplu gonderim oncesi WhatsApp oturumu saglikli mi diye bakar.
 
@@ -1197,18 +1183,32 @@ def _whatsapp_session_ready_for_bulk_send():
     try:
         result = check_whatsapp_health()
         if bool(result.get('healthy')):
+            _wa_bulk_state['down_since'] = None
             return True
 
-        time.sleep(5)
-        result = check_whatsapp_health()
-        healthy = bool(result.get('healthy'))
-        if not healthy:
+        if _wa_bulk_state['down_since'] is None:
+            # Ilk "kopuk" olcumu: gecici hiccup olabilir, bir kez daha bak.
+            time.sleep(5)
+            result = check_whatsapp_health()
+            if bool(result.get('healthy')):
+                return True
+            _wa_bulk_state['down_since'] = time.time()
+
+        # Oturum kopukken her 2 dakikalik turda ERROR yazmak gunluge gunde
+        # binlerce satir ekliyordu; hata bildirimi (e-posta/push) zaten kendi
+        # sikligiyla giden error_notifier'a bagli, bu yuzden ERROR yalnizca
+        # _WA_DOWN_LOG_INTERVAL_SECONDS'te bir yazilir, arada DEBUG.
+        now = time.time()
+        if now - _wa_bulk_state['last_logged'] >= _WA_DOWN_LOG_INTERVAL_SECONDS:
+            _wa_bulk_state['last_logged'] = now
             log_error(
                 logger, E_WA_005,
                 "WhatsApp oturumu kopuk — toplu gonderim bu turda atlandi",
                 reason=result.get('reason'),
             )
-        return healthy
+        else:
+            logger.debug("WhatsApp oturumu hala kopuk — toplu gonderim atlandi")
+        return False
     except Exception as e:
         log_error(logger, E_WA_005, "WhatsApp oturum saglik kontrolu basarisiz — toplu gonderim atlandi", exc=e)
         return False
@@ -1245,6 +1245,41 @@ def check_google_calendar_connection():
         log_error(logger, E_GCAL_005, "Google Takvim bağlantı kontrolü başarısız", exc=e)
 
 
+WHATSAPP_QUEUE_MAX_AGE_HOURS = float(os.getenv('WHATSAPP_QUEUE_MAX_AGE_HOURS', '6'))
+
+
+def _expire_stale_whatsapp_queue():
+    """Cok eski bekleyen mesajlari gondermeden kapatir.
+
+    WhatsApp saatlerce/gunlerce kopuk kaldiysa, baglanti donunca eski bir
+    "randevunuz olusturuldu" gibi bayat mesajlar musteriye gitmesin.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE whatsapp_message_queue
+               SET status = 'expired', last_error = 'Bekleme suresi asildi, gonderilmedi'
+             WHERE status = 'pending'
+               AND created_at < NOW() - (%s || ' hours')::interval
+            """,
+            (str(WHATSAPP_QUEUE_MAX_AGE_HOURS),),
+        )
+        expired = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        if expired:
+            logger.warning("WhatsApp kuyrugunda %s bayat mesaj gonderilmeden kapatildi", expired)
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning(f"_expire_stale_whatsapp_queue hatasi: {e}")
+    finally:
+        release_db_connection(conn)
+
+
 def drain_whatsapp_queue():
     """Basarisiz WhatsApp mesajlarini ustel geri cekilmeyle tekrar dener.
 
@@ -1252,6 +1287,8 @@ def drain_whatsapp_queue():
     loglanir — bu, error_notifier'a baglandigi icin (bkz. logging_setup)
     kalici basarisizliklar artik e-posta ile de bildirilir.
     """
+    _expire_stale_whatsapp_queue()
+
     if not _whatsapp_session_ready_for_bulk_send():
         return
 
@@ -1429,11 +1466,12 @@ def token_required(f):
                 token = token[7:]
 
             data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            staff_id = data['staff_id']
+            staff_id = int(data['staff_id'])
             token_version = int(data.get('token_version') or 1)
         except jwt.ExpiredSignatureError:
             return jsonify({'success': False, 'message': 'Token süresi dolmuş'}), 401
-        except jwt.InvalidTokenError:
+        except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
+            # Musteri token'i gibi staff_id tasimayan gecerli JWT'ler de buraya duser.
             return jsonify({'success': False, 'message': 'Geçersiz token'}), 401
 
         # Personel silinmiş/rolü değişmişse eski token'ın süresi dolana kadar
@@ -2603,8 +2641,6 @@ def verify_code():
         return jsonify({'success': False, 'message': 'Telefon numarası ve doğrulama kodu gereklidir'}), 400
 
     phone = str(phone).strip()
-    normalized_phone = normalize_phone_for_storage(phone)
-
     if is_wapio_demo_mode():
         if str(code).strip() != "123456":
             return jsonify({'success': False, 'message': 'Demo doğrulama kodu yanlış (123456 olmalı)'}), 401
@@ -2924,7 +2960,6 @@ _artists_cache = {'data': None, 'ts': 0}
 _ARTISTS_CACHE_TTL_SECONDS = 60
 
 
-@app.route('/api/barbers', methods=['GET'])  # backward compatible
 @app.route('/api/artists', methods=['GET'])
 def get_artists():
     now = time.time()
@@ -2966,22 +3001,6 @@ def get_artists():
         return jsonify({"success": False, "message": "Bir problem oluştu"}), 500
     finally:
         release_db_connection(conn)
-
-@app.route('/api/services', methods=['GET'])
-def get_services():
-    return jsonify({
-        "success": False,
-        "message": "Bu sistemde hizmet seçimi kaldırıldı. Dövme talebi akışını kullanın."
-    }), 410
-
-@app.route('/api/create-appointment', methods=['POST'])
-@limiter.limit("10 per minute")  # Dakikada max 10 randevu
-def create_appointment():
-    return jsonify({
-        "success": False,
-        "message": "Randevu oluşturma akışı değişti. Önce dövme talebi oluşturulur, randevuyu sanatçı verir."
-    }), 410
-
 
 # =============================================
 # TATTOO CONFIG (body region — no auto pricing)
@@ -7206,8 +7225,7 @@ def send_aftercare_cream_reminders():
 def create_database_backup():
     """PostgreSQL veritabanını yedekler (scheduler için)"""
     import subprocess
-    import glob
-    
+
     # Backup klasörü
     BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backups')
     KEEP_DAYS = 7  # Kaç günlük yedek tutulsun
@@ -7284,7 +7302,7 @@ def create_database_backup():
         
         if result.returncode == 0:
             file_size = os.path.getsize(backup_path) / (1024 * 1024)  # MB
-            logger.info(f"Veritabanı yedekleme tamamlandı!")
+            logger.info("Veritabanı yedekleme tamamlandı!")
             logger.info(f"Dosya: {backup_filename}")
             logger.info(f"Boyut: {file_size:.2f} MB")
             
@@ -7384,9 +7402,9 @@ def upload_to_google_drive(backup_path, backup_filename):
                     break
         
         if not rclone_path:
-            logger.warning(f"Rclone bulunamadı, Google Drive'a yükleme atlandı")
-            logger.warning(f"   Rclone kurulumu: https://rclone.org/install/")
-            logger.warning(f"   Veya: which rclone ile konumunu bulup PATH'e ekleyin")
+            logger.warning("Rclone bulunamadı, Google Drive'a yükleme atlandı")
+            logger.warning("   Rclone kurulumu: https://rclone.org/install/")
+            logger.warning("   Veya: which rclone ile konumunu bulup PATH'e ekleyin")
             return False
         
         logger.info(f"Rclone bulundu: {rclone_path}")
@@ -7451,7 +7469,7 @@ def upload_to_google_drive(backup_path, backup_filename):
             '--stats=10s'
         ]
         
-        logger.info(f"Google Drive'a yükleniyor...")
+        logger.info("Google Drive'a yükleniyor...")
         logger.info(f"   Kaynak: {backup_path}")
         logger.info(f"   Hedef: {remote_path}")
         
@@ -7463,7 +7481,7 @@ def upload_to_google_drive(backup_path, backup_filename):
         )
         
         if result.returncode == 0:
-            logger.info(f"Backup Google Drive'a başarıyla yüklendi!")
+            logger.info("Backup Google Drive'a başarıyla yüklendi!")
             logger.info(f"Konum: {remote_path}")
             if result.stdout:
                 logger.info(f"Rclone çıktısı: {result.stdout[-500:]}") # Son 500 karakter
@@ -7488,8 +7506,8 @@ def upload_to_google_drive(backup_path, backup_filename):
         )
         return False
     except FileNotFoundError:
-        logger.warning(f"Rclone bulunamadı, Google Drive'a yükleme atlandı")
-        logger.warning(f"   Rclone kurulumu: https://rclone.org/install/")
+        logger.warning("Rclone bulunamadı, Google Drive'a yükleme atlandı")
+        logger.warning("   Rclone kurulumu: https://rclone.org/install/")
         return False
     except Exception as e:
         log_error(logger, E_BKP_001, "Google Drive yedek yukleme hatasi", exc=e)

@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta, timezone, time as dt_time
 
 import psycopg2
 
-from config import DATABASE_CONFIG, SITE_CONFIG, get_google_calendar_config
+from config import DATABASE_CONFIG, get_google_calendar_config
 from error_codes import E_GCAL_001, E_GCAL_002, E_GCAL_003, E_GCAL_004
 from logging_setup import log_error
 from whatsapp_messages import format_try
@@ -4109,7 +4109,7 @@ def poll_inbound_changes():
         state = cursor.fetchone()
         sync_token = state[0] if state else None
 
-        service = _get_calendar_service()
+        _get_calendar_service()  # kimlik/servis hazir degilse burada hata ver
         items = []
         next_token = None
         # syncToken suresi dolarsa (410) token dusurulup bir kez tam senkron

@@ -316,7 +316,6 @@ def apply_percent_discount(price, discount_percent):
         return 0.0, 0.0, 0
     pct = max(1, min(50, int(discount_percent or 0)))
     final = round(original * (1 - pct / 100), 2)
-    saved = round(original - final, 2)
     return final, original, pct
 
 
