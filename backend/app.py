@@ -3794,7 +3794,8 @@ def get_admin_appointments():
                 tr.reference_image,
                 COALESCE(a.price, 0) as price,
                 a.source,
-                c.instagram as customer_instagram
+                c.instagram as customer_instagram,
+                s.calendar_color_id as staff_color_id
             FROM appointments a
             JOIN customers c ON a.customer_id = c.id
             JOIN artists s ON a.staff_id = s.id
@@ -3910,7 +3911,12 @@ def get_admin_appointments():
                 },
                 'staff': {
                     'id': row[10],
-                    'name': row[11]
+                    'name': row[11],
+                    # Google Takvim'deki sanatci rengiyle ayni (yoksa ayni yedek renk).
+                    'color_hex': staff_settings.COLOR_BY_ID[
+                        row[20] if row[20] in staff_settings.SELECTABLE_COLOR_IDS
+                        else staff_settings.fallback_color_id(row[10])
+                    ]['hex'],
                 },
                 'tattoo_request': {
                     'id': row[12],

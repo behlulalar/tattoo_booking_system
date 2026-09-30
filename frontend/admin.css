@@ -1234,6 +1234,13 @@ strong, b, th {
     margin-top: 2px;
 }
 
+.gcal-event--light,
+.gcal-event--light .gcal-event-title,
+.gcal-event--light .gcal-event-line,
+.gcal-event--light .gcal-event-time {
+    color: #1f1f1f;
+}
+
 .gcal-event--confirmed {
     background: rgba(101, 122, 91, 0.92);
     border-left-color: #8FA085;
