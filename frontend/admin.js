@@ -3654,6 +3654,15 @@ function offDaysForTable(tableContainerId) {
     : _appointmentsOffDays;
 }
 
+// Acik renkli zeminlerde (Muz/sari gibi) beyaz yazi okunmaz: koyu yazi kullan.
+function isLightColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+  return lum > 0.62;
+}
+
 function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   const a = ev.apt;
   const startMins = ev.start;
@@ -3684,8 +3693,16 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   const endT = minutesToTime(startMins + duration);
 
   const sourceLabel = appointmentSourceText(a.source);
-  return `<div class="gcal-event ${statusClass}" style="top:${topPx}px;height:${heightPx}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);" title="${escapeHtml(customer)} · ${escapeHtml(sourceLabel)}">
-    <div class="gcal-event-title">${escapeHtml(customer)}</div>
+  // Renk Google Takvim'deki gibi sanatciya gore; durum baslik onekiyle (✓ ⏳ 🚫) gosterilir.
+  const isOff = a.kind === 'off_day';
+  const colorStyle = !isOff && a.staff?.color_hex
+    ? `background:${escapeHtml(a.staff.color_hex)};border-left-color:rgba(255,255,255,0.55);`
+    : '';
+  const statusMark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ' }[a.status] || '';
+  const fade = a.status === 'cancelled' ? 'opacity:0.45;' : '';
+  const lightClass = colorStyle && isLightColor(a.staff.color_hex) ? ' gcal-event--light' : '';
+  return `<div class="gcal-event ${colorStyle ? '' : statusClass}${lightClass}" style="top:${topPx}px;height:${heightPx}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);${colorStyle}${fade}" title=""${escapeHtml(customer)} · ${escapeHtml(sourceLabel)}">
+    <div class="gcal-event-title">${statusMark}${escapeHtml(customer)}</div>
     ${phone ? `<div class="gcal-event-line">${escapeHtml(phone)}</div>` : ''}
     ${detailLine ? `<div class="gcal-event-line">${escapeHtml(detailLine)}</div>` : ''}
     ${a.staff?.name ? `<div class="gcal-event-line gcal-event-staff">${escapeHtml(a.staff.name)}</div>` : ''}
