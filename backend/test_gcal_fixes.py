@@ -208,6 +208,49 @@ class OutboundSyncTest(unittest.TestCase):
         self.assertEqual(calls['n'], 3)
 
 
+class GoogleReachabilityTest(unittest.TestCase):
+    """Bağlantı kontrolü yavaş ilk SYN'i (~3 sn) kopukluk sanmamalı."""
+
+    def test_default_timeout_tolerates_slow_first_connect(self):
+        self.assertGreaterEqual(gcs.GOOGLE_API_PROBE_TIMEOUT, 8)
+        seen = {}
+
+        class FakeSock:
+            closed = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                FakeSock.closed = True
+                return False
+
+        def fake_create(addr, timeout=None):
+            seen['addr'], seen['timeout'] = addr, timeout
+            return FakeSock()
+
+        with mock.patch.object(gcs.socket, 'create_connection', side_effect=fake_create):
+            self.assertTrue(gcs.google_api_reachable())
+        self.assertEqual(seen['addr'], ('oauth2.googleapis.com', 443))
+        self.assertEqual(seen['timeout'], gcs.GOOGLE_API_PROBE_TIMEOUT)
+        self.assertTrue(FakeSock.closed, 'soket kapatilmali')
+
+    def test_unreachable_returns_false(self):
+        with mock.patch.object(gcs.socket, 'create_connection', side_effect=OSError('unreachable')):
+            self.assertFalse(gcs.google_api_reachable())
+
+    def test_explicit_timeout_is_respected(self):
+        seen = {}
+
+        def fake_create(addr, timeout=None):
+            seen['timeout'] = timeout
+            raise OSError('x')
+
+        with mock.patch.object(gcs.socket, 'create_connection', side_effect=fake_create):
+            gcs.google_api_reachable(timeout=2)
+        self.assertEqual(seen['timeout'], 2)
+
+
 class EventDurationTest(unittest.TestCase):
     """Sure ve baslangic dakikasi Google'daki haliyle kaydedilir (yuvarlama yok)."""
 

@@ -1227,7 +1227,7 @@ def check_google_calendar_connection():
         return
 
     def _reachable():
-        return credentials_file_ok() and google_api_reachable(timeout=3)
+        return credentials_file_ok() and google_api_reachable()
 
     try:
         if _reachable():
