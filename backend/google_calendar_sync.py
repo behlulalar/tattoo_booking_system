@@ -57,6 +57,9 @@ _GCAL_ADVISORY_NAMESPACE = 0x6743
 
 GCAL_EVENT_ORIGIN = 'roof'
 GCAL_EVENT_ORIGIN_OFF = 'roof_off'
+# Musterinin/sanatcinin kendi yazdigi (sisteme ice aktarilan) etkinlikler bu damgayi
+# tasir; sistem bu etkinlikleri ASLA silmez (yalnizca kendi olusturdugunu siler).
+GCAL_IMPORTED_KEY = 'imported'
 _GCAL_ADVISORY_NAMESPACE_OFF = 0x6744
 _BUSY_LOOKBACK_DAYS = 3
 _BUSY_LOOKAHEAD_DAYS = 90
@@ -520,23 +523,25 @@ def _content_hash(appointment_date, appointment_time, duration_minutes, status, 
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
 
 
-def _extended_properties(appointment_id, content_hash):
-    return {
-        'private': {
-            'origin': GCAL_EVENT_ORIGIN,
-            'appointment_id': str(int(appointment_id)),
-            'content_hash': str(content_hash or ''),
-        }
+def _extended_properties(appointment_id, content_hash, imported=False):
+    private = {
+        'origin': GCAL_EVENT_ORIGIN,
+        'appointment_id': str(int(appointment_id)),
+        'content_hash': str(content_hash or ''),
     }
+    if imported:
+        private[GCAL_IMPORTED_KEY] = '1'
+    return {'private': private}
 
 
-def _off_day_extended_properties(time_off_id):
-    return {
-        'private': {
-            'origin': GCAL_EVENT_ORIGIN_OFF,
-            'time_off_id': str(int(time_off_id)),
-        }
+def _off_day_extended_properties(time_off_id, imported=False):
+    private = {
+        'origin': GCAL_EVENT_ORIGIN_OFF,
+        'time_off_id': str(int(time_off_id)),
     }
+    if imported:
+        private[GCAL_IMPORTED_KEY] = '1'
+    return {'private': private}
 
 
 def _event_private(event):
@@ -1185,6 +1190,7 @@ def _build_event_body(row):
         'extendedProperties': _extended_properties(
             appointment_id,
             _content_hash(appointment_date, appointment_time, duration_minutes, status, staff_id),
+            imported=(source == 'google'),
         ),
         'existing_event_id': google_event_id,
         # Google'dan gelen randevunun basligi/aciklamasi sanatciya aittir.
@@ -1509,6 +1515,26 @@ def _perform_event_delete(google_event_id):
 
     calendar_id = get_google_calendar_config()['calendar_id']
     try:
+        # Musterinin kendi yazdigi (ice aktarilan) etkinligi hicbir durumda silme:
+        # panelde randevu iptal/silinse bile Google takviminde kalir.
+        try:
+            existing = _google_execute(
+                lambda: _get_calendar_service().events().get(
+                    calendarId=calendar_id, eventId=google_event_id,
+                    fields='id,extendedProperties',
+                )
+            )
+        except Exception as get_exc:
+            if _is_missing_event_error(get_exc):
+                logger.info('Google Calendar etkinlik zaten yok: %s', google_event_id)
+                return 'ok'
+            raise
+        if _event_private(existing).get(GCAL_IMPORTED_KEY) == '1':
+            logger.info(
+                'Google Calendar etkinlik silinmedi (ice aktarilan, sanatciya ait): %s',
+                google_event_id,
+            )
+            return 'ok'
         _delete_calendar_event(calendar_id, google_event_id)
         logger.info('Google Calendar etkinlik silindi: %s', google_event_id)
         return 'ok'
@@ -3248,7 +3274,7 @@ def _stamp_origin_on_event(calendar_id, event_id, appointment_id, row_for_hash):
             row_for_hash[0], row_for_hash[1], row_for_hash[2], 'confirmed', row_for_hash[3],
         )
         staff_id = row_for_hash[3] if len(row_for_hash) > 3 else None
-        body = {'extendedProperties': _extended_properties(appointment_id, content_hash)}
+        body = {'extendedProperties': _extended_properties(appointment_id, content_hash, imported=True)}
         if staff_id:
             body['colorId'] = _color_id_for_staff(staff_id)
         _google_execute(
@@ -3713,7 +3739,7 @@ def _stamp_origin_on_off_day_event(calendar_id, event_id, time_off_id, staff_id,
         return
     try:
         body = {
-            'extendedProperties': _off_day_extended_properties(time_off_id),
+            'extendedProperties': _off_day_extended_properties(time_off_id, imported=True),
             'transparency': 'opaque',
             'colorId': GCAL_COLOR_GRAPHITE,
         }
@@ -4122,6 +4148,27 @@ def _handle_inbound_event(
     return 'revert'
 
 
+# Musterinin takvimi ilk baglandiginda yalnizca bu tarih araligi (dahil) ice aktarilir;
+# sonrasinda syncToken ile dogal akis devam eder. Bitis tarihi gectikten sonra
+# (ya da env bos verilirse) kullanilmaz. Yalnizca TAM senkronda gecerlidir.
+INITIAL_IMPORT_FROM = os.getenv('GCAL_INITIAL_IMPORT_FROM', '2026-10-01').strip()
+INITIAL_IMPORT_UNTIL = os.getenv('GCAL_INITIAL_IMPORT_UNTIL', '2026-10-31').strip()
+
+
+def _initial_import_window(now, tz):
+    """(time_min, time_max) ya da None. Pencere bitis gununden sonra devre disi kalir."""
+    try:
+        start = datetime.strptime(INITIAL_IMPORT_FROM, '%Y-%m-%d').date()
+        end = datetime.strptime(INITIAL_IMPORT_UNTIL, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+    if now.date() > end:
+        return None
+    time_min = datetime.combine(start, dt_time(0, 0), tzinfo=tz) if tz else datetime.combine(start, dt_time(0, 0), tzinfo=timezone.utc)
+    time_max = datetime.combine(end + timedelta(days=1), dt_time(0, 0), tzinfo=tz) if tz else datetime.combine(end + timedelta(days=1), dt_time(0, 0), tzinfo=timezone.utc)
+    return time_min, time_max
+
+
 def poll_inbound_changes():
     """syncToken ile değişen etkinlikleri işler: origin=roof taşı/sil/geri al;
     origin=roof_off Off Day taşı/sil. Elle saatli etkinlik: telefon varsa
@@ -4172,8 +4219,13 @@ def poll_inbound_changes():
                     else:
                         tz = _studio_tz()
                         now = datetime.now(tz) if tz else datetime.now(timezone.utc)
-                        kwargs['timeMin'] = (now - timedelta(days=_IMPORT_LOOKBACK_DAYS)).isoformat()
-                        kwargs['timeMax'] = (now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)).isoformat()
+                        time_min = now - timedelta(days=_IMPORT_LOOKBACK_DAYS)
+                        time_max = now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)
+                        window = _initial_import_window(now, tz)
+                        if window:
+                            time_min, time_max = window
+                        kwargs['timeMin'] = time_min.isoformat()
+                        kwargs['timeMax'] = time_max.isoformat()
                     resp = _google_execute(lambda kw=kwargs: _get_calendar_service().events().list(**kw))
                     items.extend(resp.get('items') or [])
                     page_token = resp.get('nextPageToken')
