@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS artists (
   instagram_url  VARCHAR(255),
   display_order  INTEGER DEFAULT 0,
   calendar_aliases TEXT[] NOT NULL DEFAULT '{}',
+  calendar_color_id VARCHAR(2)
+                 CHECK (calendar_color_id IS NULL OR calendar_color_id IN ('1','2','3','4','5','6','7','9','10','11')),
+  commission_percent SMALLINT NOT NULL DEFAULT 50 CHECK (commission_percent IN (30, 50, 70)),
   created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -94,6 +97,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   reminder_sent     BOOLEAN DEFAULT FALSE,
   completed_at      TIMESTAMP,
   aftercare_reminder_sent BOOLEAN DEFAULT FALSE,
+  staff_share_percent SMALLINT,
   google_event_id   VARCHAR(255),
   google_etag       VARCHAR(255),
   google_calendar_id VARCHAR(255),

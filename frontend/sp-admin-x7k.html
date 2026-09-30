@@ -17,7 +17,7 @@
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20260930190000" />
+    <link rel="stylesheet" href="admin.css?v=20260930203000" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="vendor/flatpickr/flatpickr.min.css" />
     <script src="vendor/flatpickr/flatpickr.min.js"></script>
@@ -989,7 +989,7 @@
                         <div class="stat-icon"><i class="fas fa-percentage"></i></div>
                         <div class="stat-info">
                             <span class="stat-value" id="staff-stat-share">0 ₺</span>
-                            <span class="stat-label">Personel Kazancı (%50)</span>
+                            <span class="stat-label" id="staff-stat-share-label">Personel Kazancı</span>
                         </div>
                     </div>
                     <div class="stat-card staff-stats-metric">
@@ -1081,6 +1081,24 @@
                         </select>
                     </div>
                     <input type="hidden" id="staff-role" value="staff">
+                    <div class="form-group" id="staff-color-group">
+                        <label>Takvim Rengi</label>
+                        <div id="staff-color-grid" class="color-grid" role="radiogroup" aria-label="Takvim rengi">
+                            <span class="color-loading">Renkler yükleniyor...</span>
+                        </div>
+                        <input type="hidden" id="staff-color-id" value="">
+                        <p id="staff-color-hint" class="color-hint">Google Takvim'de bu personelin randevuları bu renkte görünür.</p>
+                    </div>
+                    <div class="form-group" id="staff-commission-group" style="display: none;">
+                        <label>Personel Kazanç Yüzdesi</label>
+                        <div class="percent-buttons" id="staff-commission-buttons" role="radiogroup" aria-label="Kazanç yüzdesi">
+                            <button type="button" class="percent-btn" data-percent="30">%30</button>
+                            <button type="button" class="percent-btn active" data-percent="50">%50</button>
+                            <button type="button" class="percent-btn" data-percent="70">%70</button>
+                        </div>
+                        <input type="hidden" id="staff-commission" value="50">
+                        <p class="color-hint">Tamamlanan randevu ücretinin personele kalan kısmı. Değişiklik yalnızca bundan sonra tamamlanacak randevulara uygulanır.</p>
+                    </div>
                     <div id="staff-error" class="error-message"></div>
                     <button type="submit" class="save-btn"><i class="fas fa-save"></i> Kaydet</button>
                 </form>
@@ -1560,7 +1578,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260930190000"></script>
+    <script src="admin.js?v=20260930203000"></script>
 </body>
 
 </html>
