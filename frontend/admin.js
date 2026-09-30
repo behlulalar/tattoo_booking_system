@@ -5522,14 +5522,13 @@ function initPwaServiceWorker() {
     if (hadController) handlePanelUpdateAvailable(`sw-${Date.now() >> 16}`);
   });
   navigator.serviceWorker.register('/admin-sw.js', { scope: '/' }).then((reg) => {
-    if (reg.waiting) $('pwa-update-banner') && ($('pwa-update-banner').hidden = false);
+    if (reg.waiting) showPanelUpdateBannerIfManual();
     reg.addEventListener('updatefound', () => {
       const incoming = reg.installing;
       if (!incoming) return;
       incoming.addEventListener('statechange', () => {
         if (incoming.state === 'installed' && navigator.serviceWorker.controller) {
-          const bar = $('pwa-update-banner');
-          if (bar) bar.hidden = false;
+          showPanelUpdateBannerIfManual();
         }
       });
     });
@@ -5675,6 +5674,12 @@ function reloadForUpdate() {
 function showPanelUpdateBanner() {
   const bar = $('pwa-update-banner');
   if (bar) bar.hidden = false;
+}
+
+// Yeni service worker kurulunca sayfa kendiliğinden yenilenir (controllerchange); bant
+// yalnızca otomatik yenileme güvenli değilse (kullanıcı bir şey yazıyorsa) gösterilir.
+function showPanelUpdateBannerIfManual() {
+  if (!isSafeToAutoReload()) showPanelUpdateBanner();
 }
 
 function handlePanelUpdateAvailable(liveVersion) {
