@@ -2046,11 +2046,10 @@ def compute_start_slot_status(
         cursor, staff_id, formatted_date, exclude_appointment_id=exclude_appointment_id,
     )
 
-    req = int(duration_minutes or SLOT_STEP_MINUTES)
-    if req < SLOT_STEP_MINUTES:
+    # Gercek sure kullanilir (ör. Google'dan gelen 45 dk'lik randevu duzenlenirken).
+    req = int(duration_minutes or 0)
+    if req < 1:
         req = SLOT_STEP_MINUTES
-    if req % 30 != 0:
-        req = ((req // 30) + 1) * 30
 
     available, blocked = [], []
     for start in day_slots:
@@ -2310,9 +2309,18 @@ def _gcal_notify_imported_from_google(appointment_ids):
     finally:
         release_db_connection(conn)
 
+    studio_now = _studio_now()
     for apt_id, apt_date, apt_time, duration_minutes, price, staff_id, phone, name, surname, staff_name, staff_phone in rows:
         date_str = apt_date.strftime('%d.%m.%Y')
         time_str = str(apt_time)[:5]
+        # Sanatci gecmis bir randevuyu sonradan takvime yazdiysa "randevunuz
+        # olusturuldu" mesaji anlamsiz olur: musteriye/sanatciya bildirim yok.
+        if datetime.combine(apt_date, apt_time) < studio_now:
+            logger.info(
+                "Google gecmis tarihli randevu icin bildirim gonderilmedi | apt=%s %s %s",
+                apt_id, date_str, time_str,
+            )
+            continue
         customer_name = f"{name} {surname}".strip()
         push_notif.push_to_staff(
             staff_id, 'Yeni Randevu (Google Takvim)',
@@ -2350,9 +2358,10 @@ def _gcal_notify_imported_from_google(appointment_ids):
 def _gcal_notify_push_events(events):
     """set_push_notifier icin: events=[(staff_id, title, message), ...].
 
-    Su an sadece gcal_move_reverted (mesai/cakisma nedeniyle geri alinan
-    surukleme) bunu kullaniyor — panel-ici bell kaydi zaten transaction
-    icinde yazildi, burada sadece PWA push'u tetikliyoruz.
+    Su an gcal_move_reverted (cakisma nedeniyle geri alinan surukleme) ve
+    gcal_import_conflict (cakisma nedeniyle alinamayan etkinlik) bunu
+    kullaniyor — panel-ici bell kaydi zaten transaction icinde yazildi,
+    burada sadece PWA push'u tetikliyoruz.
     """
     for staff_id, title, message in (events or []):
         push_notif.push_to_staff(staff_id, title, message)
@@ -4248,7 +4257,10 @@ def admin_edit_appointment(appointment_id):
         duration_minutes = int(current_duration or 60)
         if data.get('duration_minutes'):
             duration_minutes = int(data['duration_minutes'])
-            if duration_minutes < 60 or duration_minutes % 60 != 0:
+            # Google'dan gelen 45/90 dk gibi randevular süresi değişmeden kaydedilebilir.
+            if duration_minutes != int(current_duration or 0) and (
+                duration_minutes < 60 or duration_minutes % 60 != 0
+            ):
                 cursor.close()
                 return jsonify({'success': False, 'message': 'Süre 60 dakikanın katı olmalı (örn. 60, 120, 180)'}), 400
 
@@ -4271,7 +4283,26 @@ def admin_edit_appointment(appointment_id):
             or duration_minutes != int(current_duration or 60)
         )
 
-        if slot_changed:
+        same_start = (
+            staff_id == current_staff_id
+            and formatted_date == current_date.strftime('%Y-%m-%d')
+            and time_str == str(current_time)[:5]
+        )
+
+        if slot_changed and same_start:
+            # Yalnızca süre değişti. Başlangıç dakikası saat listesinde olmayabilir
+            # (ör. Google'dan gelen 12:20), bu yüzden dakika bazlı çakışma kontrolü.
+            lock_staff_day(cursor, staff_id, formatted_date)
+            if not _gcal_inbound_time_free(
+                cursor, staff_id, formatted_date, time_str, duration_minutes,
+                exclude_appointment_id=appointment_id,
+            ):
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'message': 'Bu süre başka bir randevu veya izinle çakışıyor. Süreyi değiştirin.',
+                }), 409
+        elif slot_changed:
             available_starts, is_day_closed = compute_available_start_slots(
                 cursor, staff_id, formatted_date, duration_minutes,
                 exclude_appointment_id=appointment_id,

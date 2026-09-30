@@ -1525,6 +1525,8 @@ async function submitManualAppointment(e) {
 // =============================================
 let editApptDatePicker = null;
 let _editApptOriginalStaffId = null;
+// Google'dan gelen 45/90 dk gibi süreler: değiştirilmediği sürece kaydedilebilir.
+let _editApptOriginalDuration = null;
 
 function getEditApptStaffId() {
   const staff = getLoggedInStaff();
@@ -1614,7 +1616,7 @@ async function loadEditApptTimeSlots(preserveTime) {
   const staffId = getEditApptStaffId();
   const apptId = $('edit-appt-id')?.value;
 
-  if (!dateIso || !staffId || !duration || duration < 60) {
+  if (!dateIso || !staffId || !duration || duration < 1) {
     timeSel.innerHTML = '<option value="">Önce tarih ve süre seçin</option>';
     timeSel.disabled = true;
     return;
@@ -1651,8 +1653,17 @@ async function loadEditApptTimeSlots(preserveTime) {
       return;
     }
     timeSel.innerHTML = buildTimeSlotOptionsHtml(slots, busySlots, duration);
+    // Google'dan gelen 12:20 gibi saat başına denk gelmeyen mevcut saat listede yoktur;
+    // seçili kalabilmesi için "mevcut" olarak eklenir.
+    if (preserveTime && !slots.includes(preserveTime) && !busySlots.includes(preserveTime)
+        && !preserveTime.endsWith(':00')) {
+      const cur = document.createElement('option');
+      cur.value = preserveTime;
+      cur.textContent = `${preserveTime} - ${slotEndLabel(preserveTime, duration)} (mevcut)`;
+      timeSel.insertBefore(cur, timeSel.options[1] || null);
+    }
     timeSel.disabled = false;
-    if (preserveTime && slots.includes(preserveTime)) {
+    if (preserveTime && Array.from(timeSel.options).some((o) => o.value === preserveTime && !o.disabled)) {
       timeSel.value = preserveTime;
     }
   } catch (e) {
@@ -1673,7 +1684,15 @@ function openEditAppointmentModal(appointment) {
   if ($('edit-appt-phone')) $('edit-appt-phone').value = appointment.customer?.phone || '';
   if ($('edit-appt-name')) $('edit-appt-name').value = formatPersonName(appointment.customer?.name || '');
   if ($('edit-appt-surname')) $('edit-appt-surname').value = formatPersonName(appointment.customer?.surname || '');
-  if ($('edit-appt-duration')) $('edit-appt-duration').value = appointment.duration_minutes || 60;
+  _editApptOriginalDuration = parseInt(appointment.duration_minutes, 10) || 60;
+  const durInput = $('edit-appt-duration');
+  if (durInput) {
+    // Yeni süre 60'ın katı olmalı; mevcut süre 60'ın katı değilse alan ona göre esner.
+    const hourly = _editApptOriginalDuration % 60 === 0;
+    durInput.min = hourly ? '60' : '1';
+    durInput.step = hourly ? '60' : '1';
+    durInput.value = _editApptOriginalDuration;
+  }
   if ($('edit-appt-price')) $('edit-appt-price').value = parseFloat(appointment.price || 0) || '';
 
   overlay.style.display = 'flex';
@@ -1739,7 +1758,7 @@ async function submitEditAppointment(e) {
     if (errEl) { errEl.textContent = 'Tarih ve saat seçin'; errEl.style.display = 'block'; }
     return;
   }
-  if (!duration || duration < 60 || duration % 60 !== 0) {
+  if (!duration || (duration !== _editApptOriginalDuration && (duration < 60 || duration % 60 !== 0))) {
     if (errEl) { errEl.textContent = 'Süre 60\'ın katı olmalı'; errEl.style.display = 'block'; }
     return;
   }

@@ -32,13 +32,14 @@ def _load_module():
         sys.modules.setdefault(name, types.ModuleType(name))
     sys.modules['config'].DATABASE_CONFIG = {}
     sys.modules['config'].SITE_CONFIG = {'business_name': 'Roof Tattoo'}
+    sys.modules['config'].get_evolution_config = lambda: {}
     sys.modules['config'].get_google_calendar_config = lambda: {
         'enabled': True,
         'calendar_id': 'roof@group.calendar.google.com',
         'credentials_path': _TARGET,  # var olan herhangi bir dosya yeterli
         'timezone': 'Europe/Istanbul',
     }
-    for code in ('E_GCAL_001', 'E_GCAL_002', 'E_GCAL_003'):
+    for code in ('E_GCAL_001', 'E_GCAL_002', 'E_GCAL_003', 'E_GCAL_004', 'E_GCAL_005'):
         setattr(sys.modules['error_codes'], code, code)
     sys.modules['logging_setup'].log_error = lambda *a, **k: None
 
@@ -207,56 +208,94 @@ class OutboundSyncTest(unittest.TestCase):
         self.assertEqual(calls['n'], 3)
 
 
-class DurationGridTest(unittest.TestCase):
-    """GC-5: sure yuvarlama slot izgarasiyla uyumlu olmali."""
+class EventDurationTest(unittest.TestCase):
+    """Sure ve baslangic dakikasi Google'daki haliyle kaydedilir (yuvarlama yok)."""
 
-    def _window(self, minutes):
-        start = datetime(2026, 9, 20, 13, 0, tzinfo=TZ)
+    def _window(self, minutes, start_minute=0):
+        start = datetime(2026, 9, 20, 13, start_minute, tzinfo=TZ)
         return start, start + timedelta(minutes=minutes)
 
-    def test_rounds_up_to_hour_grid(self):
-        for raw, expected in ((60, 60), (75, 120), (90, 120), (120, 120), (150, 180)):
+    def test_duration_is_not_rounded(self):
+        for raw in (15, 30, 45, 60, 75, 90, 120, 150):
             start, end = self._window(raw)
-            self.assertEqual(gcs._round_duration_minutes(start, end), expected, raw)
+            self.assertEqual(gcs._event_duration_minutes(start, end), raw, raw)
 
-    def test_rounded_duration_passes_grid_check(self):
-        start, end = self._window(90)
-        minutes = gcs._round_duration_minutes(start, end)
-        self.assertTrue(
-            gcs._studio_slot_grid_ok(start, minutes),
-            '90 dk etkinlik yuvarlandiktan sonra izgaradan gecmeli',
-        )
+    def test_zero_length_event_is_at_least_one_minute(self):
+        start = datetime(2026, 9, 20, 13, 0, tzinfo=TZ)
+        self.assertEqual(gcs._event_duration_minutes(start, start), 1)
 
-    def test_exact_duration_is_not_rounded(self):
-        start, end = self._window(90)
-        self.assertEqual(gcs._exact_duration_minutes(start, end), 90)
+    def test_missing_times_give_zero(self):
+        self.assertEqual(gcs._event_duration_minutes(None, None), 0)
+
+    def test_any_start_minute_and_duration_is_valid(self):
+        for minute, dur in ((0, 60), (7, 30), (20, 50), (45, 45), (59, 1)):
+            start, _ = self._window(dur, minute)
+            self.assertTrue(gcs._inbound_time_valid(start, dur), (minute, dur))
+
+    def test_seconds_or_empty_duration_is_invalid(self):
+        start = datetime(2026, 9, 20, 13, 0, 30, tzinfo=TZ)
+        self.assertFalse(gcs._inbound_time_valid(start, 60))
+        start = datetime(2026, 9, 20, 13, 0, tzinfo=TZ)
+        self.assertFalse(gcs._inbound_time_valid(start, 0))
+        self.assertFalse(gcs._inbound_time_valid(None, 60))
 
 
 class EchoDetectionTest(unittest.TestCase):
-    """GC-5 yan etkisi: yanki, randevu suresini degistirmemeli."""
+    """Yanki (ayni randevu) ile gercek tasima ayirt edilir."""
 
-    def test_matches_grid_aligned_appointment(self):
+    def test_matches_same_start_and_duration(self):
         start = datetime(2026, 9, 20, 14, 0, tzinfo=TZ)
         self.assertTrue(
-            gcs._times_match_appointment(start, 120, '2026-09-20', '14:00', 120, 120)
+            gcs._times_match_appointment(start, 120, '2026-09-20', '14:00', 120)
         )
 
-    def test_legacy_90_minute_appointment_is_echo_not_move(self):
-        start = datetime(2026, 9, 20, 14, 0, tzinfo=TZ)
-        rounded = gcs._round_duration_minutes(start, start + timedelta(minutes=90))
-        self.assertEqual(rounded, 120)
+    def test_odd_duration_and_start_are_echo(self):
+        start = datetime(2026, 9, 20, 14, 20, tzinfo=TZ)
         self.assertTrue(
-            gcs._times_match_appointment(
-                start, rounded, '2026-09-20', '14:00', 90, exact_minutes=90,
-            ),
-            'gercek sure birebir esitse yanki sayilmali, sure 120ye cikmamali',
+            gcs._times_match_appointment(start, 45, '2026-09-20', '14:20', 45)
+        )
+
+    def test_duration_change_is_a_move(self):
+        start = datetime(2026, 9, 20, 14, 0, tzinfo=TZ)
+        self.assertFalse(
+            gcs._times_match_appointment(start, 90, '2026-09-20', '14:00', 120)
         )
 
     def test_real_move_is_still_detected(self):
         start = datetime(2026, 9, 20, 16, 0, tzinfo=TZ)
         self.assertFalse(
-            gcs._times_match_appointment(start, 120, '2026-09-20', '14:00', 120, 120)
+            gcs._times_match_appointment(start, 120, '2026-09-20', '14:00', 120)
         )
+
+
+class ImportConflictNotificationTest(unittest.TestCase):
+    """Cakisma nedeniyle alinamayan Google etkinligi icin sanatciya bildirim."""
+
+    def _call(self, cursor, push_events):
+        start = datetime(2026, 9, 25, 14, 20, tzinfo=TZ)
+        return gcs._notify_import_conflict(
+            cursor, 7, start, 50, 'Test Etkinlik', push_events,
+        )
+
+    def test_notifies_staff_and_pushes_when_new(self):
+        cursor = RecordingCursor(fetchone_queue=[None])  # 24 saatte ayni bildirim yok
+        push = []
+        self.assertTrue(self._call(cursor, push))
+        inserts = [(s, p) for s, p in cursor.executed if 'INSERT INTO notifications' in s]
+        self.assertEqual(len(inserts), 1)
+        params = inserts[0][1]
+        self.assertEqual(params[0], 7)
+        self.assertEqual(params[1], 'gcal_import_conflict')
+        self.assertIn('25.09.2026 14:20–15:10', params[3])
+        self.assertEqual(len(push), 1)
+        self.assertEqual(push[0][0], 7)
+
+    def test_same_notification_is_not_repeated_within_24h(self):
+        cursor = RecordingCursor(fetchone_queue=[(1,)])  # zaten var
+        push = []
+        self.assertFalse(self._call(cursor, push))
+        self.assertFalse(any('INSERT INTO notifications' in s for s, _ in cursor.executed))
+        self.assertEqual(push, [])
 
 
     def test_unmatched_event_is_recorded_as_busy(self):
@@ -345,6 +384,13 @@ class ArtistCacheTest(unittest.TestCase):
 
 class CancelNotificationTest(unittest.TestCase):
     """GC-7: Google'dan silinen randevuda musteri bilgilendirilmeli."""
+
+    def setUp(self):
+        # Gercekte iptal mesaji yanlis silme duzeltilebilsin diye bekletilir;
+        # testlerde bekleme yok.
+        patcher = mock.patch.object(gcs, '_cancel_notify_grace_seconds', return_value=0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         gcs.set_cancel_notifier(None)
