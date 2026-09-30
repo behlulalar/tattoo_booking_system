@@ -1,10 +1,10 @@
 /* Roof Tattoo admin PWA — API asla cache'lenmez; müşteri sitesine dokunulmaz. */
-const CACHE_VERSION = 'roof-admin-20260930170000';
+const CACHE_VERSION = 'roof-admin-20260930190000';
 const ADMIN_SHELL = [
   '/sp-admin-x7k.html',
-  '/admin.js?v=20260930170000',
-  '/admin.css?v=20260930170000',
-  '/mobile-safe.css?v=20260818131000',
+  '/admin.js',
+  '/admin.css',
+  '/mobile-safe.css',
   '/admin.webmanifest',
   '/img/logo.png',
   '/img/pwa/icon-192.png',
@@ -28,11 +28,16 @@ self.addEventListener('push', (event) => {
   } catch {
     /* JSON degilse varsayilan metin kullanilir */
   }
+  // Aynı başlık+metin tekrar gelirse (ör. saatlik "bağlantı koptu" uyarısı) öncekinin
+  // yerine geçer; farklı bildirimler ayrı ayrı görünür. renotify: yine de sesli uyarır.
+  const tag = payload.tag || `${payload.title}|${payload.body}`;
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
       icon: '/img/pwa/icon-192.png',
       badge: '/img/pwa/icon-192.png',
+      tag,
+      renotify: true,
       data: { url: payload.url || '/sp-admin-x7k.html' },
     })
   );
@@ -45,6 +50,8 @@ self.addEventListener('notificationclick', (event) => {
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
       for (const client of clients) {
         if (client.url.includes('sp-admin-x7k.html') && 'focus' in client) {
+          // Uygulama zaten açık: ilgili sayfaya geçmesi için mesaj gönder.
+          try { client.postMessage({ type: 'NAVIGATE', url: targetUrl }); } catch { /* yoksay */ }
           return client.focus();
         }
       }
@@ -125,10 +132,10 @@ async function networkFirstAdmin(req, url) {
     }
     return fresh;
   } catch (err) {
-    const cached = await caches.match(req) || await caches.match(url.pathname);
+    const cached = await caches.match(req, { ignoreSearch: true }) || await caches.match(url.pathname);
     if (cached) return cached;
     if (url.pathname === '/sp-admin-x7k.html' || req.mode === 'navigate') {
-      const shell = await caches.match('/sp-admin-x7k.html');
+      const shell = await caches.match('/sp-admin-x7k.html', { ignoreSearch: true });
       if (shell) return shell;
     }
     throw err;

@@ -62,6 +62,11 @@ _sent_errors = {}
 # tech_support'a saatte bir, super_admin'e 2 saatte bir. Diger tum kodlar sadece
 # e-posta ile gider.
 PUSH_ALERT_CODES = {'E-WA-005', 'E-GCAL-005'}
+# Bildirime dokununca panelde açılacak sayfa (frontend: ?page=<nav data-page>).
+PUSH_ALERT_URLS = {
+    'E-WA-005': '/sp-admin-x7k.html?page=api-settings',
+    'E-GCAL-005': '/sp-admin-x7k.html?page=google-calendar',
+}
 
 
 def _claim_send_db(error_key, cooldown_seconds=None):
@@ -172,7 +177,7 @@ def send_error_notification(error_type, error_message, details=None):
             roles.append('super_admin')
         for role in roles:
             try:
-                push_notif.push_to_role(role, title, error_message)
+                push_notif.push_to_role(role, title, error_message, url=PUSH_ALERT_URLS.get(error_type))
             except Exception as push_err:
                 logger.warning(f"Push bildirimi gönderilemedi ({role}): {push_err}")
 
