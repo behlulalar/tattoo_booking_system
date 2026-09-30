@@ -36,5 +36,37 @@
       "type": "image/png",
       "purpose": "maskable"
     }
+  ],
+  "categories": [
+    "business",
+    "productivity"
+  ],
+  "shortcuts": [
+    {
+      "name": "Randevular",
+      "short_name": "Randevular",
+      "description": "Randevu listesini aç",
+      "url": "/sp-admin-x7k.html?source=shortcut&page=appointments",
+      "icons": [
+        {
+          "src": "/img/pwa/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Dövme Talepleri",
+      "short_name": "Talepler",
+      "description": "Bekleyen dövme taleplerini aç",
+      "url": "/sp-admin-x7k.html?source=shortcut&page=my-tattoo-requests",
+      "icons": [
+        {
+          "src": "/img/pwa/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
   ]
 }

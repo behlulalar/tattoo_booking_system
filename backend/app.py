@@ -2231,6 +2231,7 @@ def _gcal_notify_moved_from_google(moved):
         push_notif.push_to_staff(
             staff_id, 'Randevu Saati Değişti (Google Takvim)',
             f'{customer_name or _phone_display_for_message(phone)} — {old_time} → {new_time_str} ({new_date_str})',
+            url=PUSH_URL_APPOINTMENTS,
         )
         try:
             if is_real_customer_phone(phone):
@@ -2263,6 +2264,10 @@ def _gcal_notify_moved_from_google(moved):
             logger.warning(
                 f"Google tasima bildirimi gonderilemedi apt={apt_id}: {send_err}"
             )
+
+
+# Bildirime dokununca panelde açılacak sayfa (frontend: ?page=<nav data-page>).
+PUSH_URL_APPOINTMENTS = '/sp-admin-x7k.html?page=appointments'
 
 
 def _gcal_notify_imported_from_google(appointment_ids):
@@ -2325,6 +2330,7 @@ def _gcal_notify_imported_from_google(appointment_ids):
         push_notif.push_to_staff(
             staff_id, 'Yeni Randevu (Google Takvim)',
             f'{customer_name or _phone_display_for_message(phone)} — {date_str} {time_str}',
+            url=PUSH_URL_APPOINTMENTS,
         )
         try:
             if is_real_customer_phone(phone):
@@ -2364,7 +2370,7 @@ def _gcal_notify_push_events(events):
     burada sadece PWA push'u tetikliyoruz.
     """
     for staff_id, title, message in (events or []):
-        push_notif.push_to_staff(staff_id, title, message)
+        push_notif.push_to_staff(staff_id, title, message, url=PUSH_URL_APPOINTMENTS)
 
 
 set_gcal_cancel_notifier(_gcal_notify_cancelled_from_google)

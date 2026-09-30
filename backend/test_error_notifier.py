@@ -34,10 +34,11 @@ class NotifyCadenceTest(unittest.TestCase):
             return True
 
         self.pushes = []
+        self.urls = []
         patches = [
             mock.patch.object(en, '_claim_send_db', side_effect=fake_claim),
             mock.patch.object(en.push_notif, 'push_to_role',
-                              side_effect=lambda role, title, body, url=None: self.pushes.append(role)),
+                              side_effect=lambda role, title, body, url=None: (self.pushes.append(role), self.urls.append(url))),
             mock.patch.object(en, 'is_configured', return_value=True),
             mock.patch.object(en.smtplib, 'SMTP'),
         ]
@@ -48,6 +49,7 @@ class NotifyCadenceTest(unittest.TestCase):
     def _alert(self, at_minutes, code='E-WA-005'):
         self.now = at_minutes * 60.0
         self.pushes.clear()
+        self.urls.clear()
         sent = en.send_error_notification(code, 'Bağlantı kapalı')
         return sent, sorted(self.pushes)
 
@@ -74,6 +76,12 @@ class NotifyCadenceTest(unittest.TestCase):
     def test_google_calendar_alert_uses_same_cadence(self):
         self.assertEqual(self._alert(0, 'E-GCAL-005'), (True, ['super_admin', 'tech_support']))
         self.assertEqual(self._alert(60, 'E-GCAL-005'), (True, ['tech_support']))
+
+    def test_push_opens_the_relevant_panel_page(self):
+        self._alert(0, 'E-WA-005')
+        self.assertEqual(set(self.urls), {'/sp-admin-x7k.html?page=api-settings'})
+        self._alert(10, 'E-GCAL-005')
+        self.assertEqual(set(self.urls), {'/sp-admin-x7k.html?page=google-calendar'})
 
     def test_constants(self):
         self.assertEqual(en.ERROR_COOLDOWN_SECONDS, 3600)

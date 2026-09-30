@@ -46,6 +46,10 @@ const ADMIN_REMEMBER_PHONE_KEY = 'adminRememberPhone';
 const ADMIN_SESSION_ACTIVE_KEY = 'adminSessionActive';
 const PWA_INSTALL_DISMISS_KEY = 'adminPwaInstallDismissed';
 
+function isIosDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+
 function isAdminStandalone() {
   return window.matchMedia('(display-mode: standalone)').matches
     || window.navigator.standalone === true;
@@ -995,6 +999,90 @@ async function updateAppointmentStatus(appointmentId, newStatus, extra) {
   } finally {
     hideApptStatusUpdatingOverlay();
   }
+}
+
+// Bir sekmeye geçildiğinde (ya da uygulama arka plandan dönünce) o sekmenin verisini yükler.
+// Yetkisi olmayan sekmede uyarı verip panele döner.
+async function loadPageData(page) {
+  if (page === 'dashboard') await loadDashboard();
+  if (page === 'appointments') await loadAppointments();
+  if (page === 'pending') await loadPending();
+  if (page === 'my-tattoo-requests' || page === 'undecided-requests' || page === 'preconsult-requests') {
+    if (!canAccessTattooRequests()) {
+      showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+      showSection('dashboard');
+      await loadDashboard();
+      return;
+    }
+  }
+  if (page === 'my-tattoo-requests') await loadMyTattooRequests();
+  if (page === 'undecided-requests') await loadUndecidedRequests();
+  if (page === 'preconsult-requests') await loadPreconsultRequests();
+  if (page === 'all-tattoo-requests') {
+    if (getLoggedInStaff()?.role !== 'super_admin') {
+      showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+      showSection('dashboard');
+      await loadDashboard();
+      return;
+    }
+    await loadAllTattooRequests();
+  }
+  if (page === 'staff') {
+    if (!hasStudioAccess()) {
+      showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+      showSection('dashboard');
+      await loadDashboard();
+      return;
+    }
+    await loadStaff();
+  }
+  if (page === 'schedule') {
+    if (!canAccessIncome()) {
+      showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+      showSection('dashboard');
+      await loadDashboard();
+      return;
+    }
+    await loadSchedule();
+  }
+
+  // Degraded/disabled sections in tattoo demo build
+  if (page === 'reports') {
+    if (!canAccessIncome()) {
+      showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+      showSection('dashboard');
+      await loadDashboard();
+      return;
+    }
+    // Gelir raporuna girildiğinde her zaman mevcut ay/yılı seç
+    const now = new Date();
+    const monthSel = $('report-month');
+    const yearSel  = $('report-year');
+    if (monthSel) monthSel.value = String(now.getMonth() + 1);
+    if (yearSel)  yearSel.value  = String(now.getFullYear());
+    await loadIncomeReport();
+  }
+  if (page === 'api-settings') await loadWapioSettingsPage();
+  if (page === 'message-settings') {
+    if (!hasStudioAccess()) {
+      showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+      showSection('dashboard');
+      await loadDashboard();
+      return;
+    }
+    await loadMessageSettings();
+  }
+  if (page === 'google-calendar') {
+    if (!hasStudioAccess()) {
+      showToast('Bu sayfaya erişim yetkiniz yok', 'error');
+      showSection('dashboard');
+      await loadDashboard();
+      return;
+    }
+    await loadGoogleCalendarSettings();
+  }
+  if (page === 'all-appointments') await loadAllAppointments();
+  if (page === 'past-appointments') await loadPastAppointments();
 }
 
 async function reloadActiveAdminAppointments() {
@@ -2270,6 +2358,7 @@ async function enterAdminDashboard(staff) {
   startInactivityWatcher();
   startNotificationsPolling();
   await loadDashboard();
+  consumePendingDeepLink();
 }
 
 // ---- Bildirimler ----
@@ -2289,7 +2378,18 @@ function notifRelativeTime(iso) {
   return `${diffD} gün önce`;
 }
 
+// Ana ekrandaki uygulama simgesinde okunmamış bildirim sayısı (destekleyen cihazlarda).
+function syncAppIconBadge(count) {
+  try {
+    if (count > 0 && 'setAppBadge' in navigator) navigator.setAppBadge(count).catch(() => {});
+    else if ('clearAppBadge' in navigator) navigator.clearAppBadge().catch(() => {});
+  } catch {
+    /* rozet desteklenmiyorsa sessizce geç */
+  }
+}
+
 function renderNotifBadge(count) {
+  syncAppIconBadge(count);
   const badge = $('notif-bell-badge');
   if (!badge) return;
   if (count > 0) {
@@ -2379,9 +2479,18 @@ async function refreshPushToggleState() {
   const btn = $('notif-push-toggle-btn');
   if (!btn) return;
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    btn.style.display = 'none';
+    // iPhone/iPad'de push yalnızca ana ekrana eklenmiş uygulamada çalışır: düğmeyi
+    // gizlemek yerine nedenini söyle. Diğer desteklemeyen tarayıcılarda gizli kalır.
+    if (isIosDevice() && !isAdminStandalone()) {
+      btn.style.display = '';
+      btn.dataset.iosHint = '1';
+      btn.innerHTML = '<i class="fas fa-mobile-alt"></i> Bildirim için önce ana ekrana ekleyin';
+    } else {
+      btn.style.display = 'none';
+    }
     return;
   }
+  delete btn.dataset.iosHint;
   const sub = await getExistingPushSubscription();
   const active = !!sub && Notification.permission === 'granted';
   btn.classList.toggle('active', active);
@@ -2448,6 +2557,10 @@ async function disablePushOnThisDevice() {
 $('notif-push-toggle-btn')?.addEventListener('click', async (e) => {
   e.preventDefault();
   const btn = $('notif-push-toggle-btn');
+  if (btn?.dataset.iosHint === '1') {
+    showToast('Safari\'de Paylaş → Ana Ekrana Ekle ile uygulamayı yükleyin, bildirimi oradan açın', 'success');
+    return;
+  }
   if (btn) btn.disabled = true;
   try {
     const sub = await getExistingPushSubscription();
@@ -2564,6 +2677,7 @@ async function handleAdminLoginSubmit(e) {
 function logout({ soft = false } = {}) {
   stopInactivityWatcher();
   stopNotificationsPolling();
+  syncAppIconBadge(0);
   // Bilerek sadece bu cihazda oturumu kapatir — baska bir cihazdaki
   // "Beni Hatirla" oturumunu etkilemez (token_version sunucu tarafinda
   // artirilmaz). Sifre degistirme/personel deaktivasyonu gibi gercekten
@@ -4262,6 +4376,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Profil / şifre değiştir
   $('profile-btn')?.addEventListener('click', (e) => {
     e.preventDefault();
+    closeSidebarIfOpen();
     openProfileModal();
   });
   $('close-profile-btn')?.addEventListener('click', (e) => {
@@ -4487,6 +4602,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('open-manual-appointment-btn-appt')?.addEventListener('click', openManualAppointmentModal);
   $('nav-manual-appointment')?.addEventListener('click', (e) => {
     e.preventDefault();
+    closeSidebarIfOpen();
     document.querySelectorAll('.nav-item').forEach((i) => i.classList.remove('active'));
     e.currentTarget.classList.add('active');
     openManualAppointmentModal();
@@ -4550,87 +4666,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (item.id === 'nav-manual-appointment') return;
     item.addEventListener('click', async (e) => {
       e.preventDefault();
+      // Mobilde menüden bir sekmeye geçilince yan menü kendiliğinden kapanır.
+      closeSidebarIfOpen();
       const page = item.getAttribute('data-page');
       showSection(page);
-      if (page === 'dashboard') await loadDashboard();
-      if (page === 'appointments') await loadAppointments();
-      if (page === 'pending') await loadPending();
-      if (page === 'my-tattoo-requests' || page === 'undecided-requests' || page === 'preconsult-requests') {
-        if (!canAccessTattooRequests()) {
-          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
-          showSection('dashboard');
-          await loadDashboard();
-          return;
-        }
-      }
-      if (page === 'my-tattoo-requests') await loadMyTattooRequests();
-      if (page === 'undecided-requests') await loadUndecidedRequests();
-      if (page === 'preconsult-requests') await loadPreconsultRequests();
-      if (page === 'all-tattoo-requests') {
-        if (getLoggedInStaff()?.role !== 'super_admin') {
-          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
-          showSection('dashboard');
-          await loadDashboard();
-          return;
-        }
-        await loadAllTattooRequests();
-      }
-      if (page === 'staff') {
-        if (!hasStudioAccess()) {
-          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
-          showSection('dashboard');
-          await loadDashboard();
-          return;
-        }
-        await loadStaff();
-      }
-      if (page === 'schedule') {
-        if (!canAccessIncome()) {
-          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
-          showSection('dashboard');
-          await loadDashboard();
-          return;
-        }
-        await loadSchedule();
-      }
-
-      // Degraded/disabled sections in tattoo demo build
-      if (page === 'reports') {
-        if (!canAccessIncome()) {
-          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
-          showSection('dashboard');
-          await loadDashboard();
-          return;
-        }
-        // Gelir raporuna girildiğinde her zaman mevcut ay/yılı seç
-        const now = new Date();
-        const monthSel = $('report-month');
-        const yearSel  = $('report-year');
-        if (monthSel) monthSel.value = String(now.getMonth() + 1);
-        if (yearSel)  yearSel.value  = String(now.getFullYear());
-        await loadIncomeReport();
-      }
-      if (page === 'api-settings') await loadWapioSettingsPage();
-      if (page === 'message-settings') {
-        if (!hasStudioAccess()) {
-          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
-          showSection('dashboard');
-          await loadDashboard();
-          return;
-        }
-        await loadMessageSettings();
-      }
-      if (page === 'google-calendar') {
-        if (!hasStudioAccess()) {
-          showToast('Bu sayfaya erişim yetkiniz yok', 'error');
-          showSection('dashboard');
-          await loadDashboard();
-          return;
-        }
-        await loadGoogleCalendarSettings();
-      }
-      if (page === 'all-appointments') await loadAllAppointments();
-      if (page === 'past-appointments') await loadPastAppointments();
+      await loadPageData(page);
     });
   });
 
@@ -4786,6 +4826,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 // =========================
 // MOBILE SIDEBAR (hamburger)
 // =========================
+
+function closeSidebarIfOpen() {
+  if (document.querySelector('.sidebar.active')) toggleSidebar();
+}
 
 function toggleSidebar() {
   const sidebar = document.querySelector('.sidebar');
@@ -5330,10 +5374,90 @@ function initPwaServiceWorker() {
     });
   }).catch(() => {});
 
+  navigator.serviceWorker.addEventListener('message', (event) => {
+    if (!event.data || event.data.type !== 'NAVIGATE') return;
+    const page = pageFromUrl(event.data.url);
+    if (!page) return;
+    if (isAdminLoggedInView()) goToAdminPage(page);
+    else _pendingDeepLinkPage = page; // giriş yapınca o sayfaya gidilir
+  });
+
   $('pwa-update-btn')?.addEventListener('click', async () => {
     const reg = await navigator.serviceWorker.getRegistration();
     reg?.waiting?.postMessage({ type: 'SKIP_WAITING' });
     window.location.reload();
+  });
+}
+
+// Bildirime dokununca açılacak sayfa: ?page=<nav data-page> (soğuk açılış) ya da
+// service worker'dan gelen NAVIGATE mesajı (uygulama zaten açıksa).
+let _pendingDeepLinkPage = new URLSearchParams(window.location.search).get('page') || null;
+
+function pageFromUrl(url) {
+  try {
+    return new URL(url, window.location.origin).searchParams.get('page') || null;
+  } catch {
+    return null;
+  }
+}
+
+function goToAdminPage(page) {
+  if (!page) return false;
+  const nav = [...document.querySelectorAll('.nav-item')].find((el) => el.getAttribute('data-page') === page);
+  if (!nav) return false;
+  nav.click();
+  return true;
+}
+
+function isAdminLoggedInView() {
+  const dash = $('dashboard-page');
+  return !!dash && getComputedStyle(dash).display !== 'none' && !!getAdminToken();
+}
+
+function consumePendingDeepLink() {
+  const page = _pendingDeepLinkPage;
+  if (!page) return;
+  _pendingDeepLinkPage = null;
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.delete('page');
+    window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
+  } catch {
+    /* adres temizlenemezse sorun değil */
+  }
+  goToAdminPage(page);
+}
+
+// Uygulama bir süre arka planda kaldıktan sonra öne gelince bildirimleri ve açık olan
+// liste sayfasını tazeler (mobilde arka plandaki zamanlayıcılar donar).
+const RESUME_REFRESH_MIN_AWAY_MS = 30 * 1000;
+const RESUME_REFRESH_PAGES = new Set([
+  'dashboard', 'appointments', 'pending', 'my-tattoo-requests', 'undecided-requests',
+  'preconsult-requests', 'all-tattoo-requests', 'all-appointments', 'past-appointments',
+]);
+
+async function refreshOnResume() {
+  if (!isAdminLoggedInView()) return;
+  fetchNotifications();
+  // Açık bir pencere (form/modal) varken listeyi yenileme: yazılanlar kaybolmasın.
+  if (visibleAdminOverlays().length) return;
+  const page = document.querySelector('.nav-item.active')?.getAttribute('data-page');
+  if (page && RESUME_REFRESH_PAGES.has(page)) await loadPageData(page);
+}
+
+function initResumeRefresh() {
+  let hiddenAt = 0;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      hiddenAt = Date.now();
+      return;
+    }
+    const away = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    if (away >= RESUME_REFRESH_MIN_AWAY_MS) refreshOnResume();
+  });
+  window.addEventListener('pageshow', (e) => {
+    if (e.persisted) refreshOnResume();
   });
 }
 
@@ -5345,5 +5469,6 @@ function initAdminPwa() {
   initPwaBackButton();
   initPwaInstallBanner();
   initPwaServiceWorker();
+  initResumeRefresh();
 }
 
