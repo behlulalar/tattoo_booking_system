@@ -1,5 +1,5 @@
 /* Roof Tattoo admin PWA — API asla cache'lenmez; müşteri sitesine dokunulmaz. */
-const CACHE_VERSION = 'roof-admin-20260930213000';
+const CACHE_VERSION = 'roof-admin-20260930223000';
 const ADMIN_SHELL = [
   '/sp-admin-x7k.html',
   '/admin.js',
@@ -126,7 +126,9 @@ self.addEventListener('fetch', (event) => {
 async function networkFirstAdmin(req, url) {
   try {
     const fresh = await fetch(req);
-    if (fresh && fresh.ok) {
+    // `_v` yalnızca sayfanın "yeni sürüm var mı" kontrolüdür (her seferinde farklı adres):
+    // önbelleğe yazılırsa gereksiz yere şişer.
+    if (fresh && fresh.ok && !url.searchParams.has('_v')) {
       const cache = await caches.open(CACHE_VERSION);
       cache.put(req, fresh.clone());
     }
