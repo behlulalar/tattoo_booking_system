@@ -415,18 +415,27 @@ def _stable_time_off_event_id(time_off_id):
     return f'rtso{int(time_off_id):010d}'
 
 
-def _upsert_calendar_event(calendar_id, body, existing_id, stable_id):
+def _upsert_calendar_event(calendar_id, body, existing_id, stable_id, patch_body=None):
     """Etkinligi guncelle veya olustur. Timeout sonrasi mukerrer insert olmaz.
 
     Donus: (event_id, etag). stable_id Google kurallarina uymuyorsa gonderilmez.
+    patch_body verilirse mevcut etkinlik yalnizca o alanlarla yamalanir (baslik ve
+    aciklama sanatcida kalir); etkinlik yoksa tam body ile yeniden olusturulur.
     """
     if existing_id:
         try:
-            event = _google_execute(
-                lambda: _get_calendar_service().events().update(
-                    calendarId=calendar_id, eventId=existing_id, body=body
+            if patch_body is not None:
+                event = _google_execute(
+                    lambda: _get_calendar_service().events().patch(
+                        calendarId=calendar_id, eventId=existing_id, body=patch_body
+                    )
                 )
-            )
+            else:
+                event = _google_execute(
+                    lambda: _get_calendar_service().events().update(
+                        calendarId=calendar_id, eventId=existing_id, body=body
+                    )
+                )
             return event.get('id') or existing_id, event.get('etag')
         except Exception as exc:
             if not _is_missing_event_error(exc):
@@ -1107,6 +1116,7 @@ def _build_event_body(row):
         request_description,
         reference_number,
         google_event_id,
+        source,
     ) = row
 
     customer = _customer_display(customer_name, customer_surname, customer_phone)
@@ -1173,6 +1183,8 @@ def _build_event_body(row):
             _content_hash(appointment_date, appointment_time, duration_minutes, status, staff_id),
         ),
         'existing_event_id': google_event_id,
+        # Google'dan gelen randevunun basligi/aciklamasi sanatciya aittir.
+        'preserve_text': source == 'google' and bool(google_event_id),
     }
     return body
 
@@ -1267,7 +1279,8 @@ def _fetch_appointment_row(cursor, appointment_id):
             COALESCE(tr.tattoo_style, ''),
             tr.description,
             tr.reference_number,
-            a.google_event_id
+            a.google_event_id,
+            a.source
         FROM appointments a
         JOIN customers c ON a.customer_id = c.id
         JOIN artists s ON a.staff_id = s.id
@@ -1319,6 +1332,7 @@ def _perform_appointment_sync(appointment_id):
 
         payload = _build_event_body(row)
         existing_id = payload.pop('existing_event_id', None)
+        preserve_text = payload.pop('preserve_text', False)
         calendar_id = get_google_calendar_config()['calendar_id']
         body = {
             key: payload[key]
@@ -1328,12 +1342,19 @@ def _perform_appointment_sync(appointment_id):
             )
             if key in payload
         }
+        patch_body = None
+        if preserve_text:
+            patch_body = {
+                key: value for key, value in body.items()
+                if key not in ('summary', 'description', 'location')
+            }
 
         event_id, etag = _upsert_calendar_event(
             calendar_id,
             body,
             existing_id,
             _stable_appointment_event_id(appointment_id),
+            patch_body=patch_body,
         )
         if existing_id and event_id == existing_id:
             logger.info(
