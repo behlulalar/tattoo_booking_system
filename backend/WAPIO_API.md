@@ -54,4 +54,4 @@ Webhook URL: `{RANDEVU_URL}/api/whatsapp/webhook` veya `WAPIO_WEBHOOK_URL`.
 `.env` ayarları:
 - `REMINDER_HOURS_BEFORE=1` — randevudan kaç saat önce hatırlatma
 - `WEBHOOK_COOLDOWN_SECONDS=86400` — aynı numaraya karşılama mesajı aralığı (24 saat)
-- `AFTERCARE_REMINDER_HOURS=2` — bakım hatırlatması gecikmesi
+- `AFTERCARE_REMINDER_MINUTES=10` — randevu "tamamlandı" yapıldıktan sonra bakım hatırlatması gecikmesi (dk)
