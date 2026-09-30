@@ -127,6 +127,9 @@ from loyalty_points import (
 )
 import push_notifications as push_notif
 import staff_settings
+from customer_contact import (
+    is_placeholder_phone, make_placeholder_phone, normalize_instagram,
+)
 import os
 import random
 import time
@@ -1387,6 +1390,12 @@ def send_wapio_message(phone, message, retry_count=0, queue_on_failure=True, cou
     edilir ve basarili gonderim loglanir. OTP gibi musteri bekleyen tekil
     gonderimler bu parametreyi HIC gecmemeli (tavana dahil edilmemeli).
     """
+    # Telefonu olmayan musteri (yer tutucu numara): hicbir mesaj gonderilmez,
+    # kuyruga da alinmaz. Numara sonradan girilince normal akis devam eder.
+    if is_placeholder_phone(phone):
+        logger.info("WhatsApp atlandi (musterinin telefonu yok): %s", message[:40].replace('\n', ' '))
+        return False
+
     if count_for_cap:
         reached, period = _bulk_send_cap_reached()
         if reached:
@@ -2930,6 +2939,34 @@ def ensure_artist_token_version_column():
         release_db_connection(conn)
 
 
+def ensure_customer_instagram_column():
+    """Telefonu olmayan musteriyi Instagram adiyla tanimak icin customers.instagram."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE customers ADD COLUMN IF NOT EXISTS instagram VARCHAR(40)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_customers_instagram ON customers (instagram) WHERE instagram IS NOT NULL")
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_customer_instagram_column: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
+def _new_placeholder_phone(cursor):
+    """Telefonu olmayan musteri icin benzersiz yer tutucu numara (asla gosterilmez/mesaj gitmez)."""
+    for _ in range(20):
+        candidate = make_placeholder_phone()
+        cursor.execute("SELECT 1 FROM customers WHERE phone = %s", (candidate,))
+        if not cursor.fetchone():
+            return candidate
+    raise RuntimeError('Yer tutucu numara uretilemedi')
+
+
 def ensure_customer_phone_length():
     """customers.phone eskiden VARCHAR(10) idi (yalniz Turk numaralari
     icin yetiyordu) — yurt disi musteri numaralari (ulke kodu dahil,
@@ -3748,7 +3785,8 @@ def get_admin_appointments():
                 tr.description,
                 tr.reference_image,
                 COALESCE(a.price, 0) as price,
-                a.source
+                a.source,
+                c.instagram as customer_instagram
             FROM appointments a
             JOIN customers c ON a.customer_id = c.id
             JOIN artists s ON a.staff_id = s.id
@@ -3858,7 +3896,8 @@ def get_admin_appointments():
                     'id': row[6],
                     'name': row[7] or None,
                     'surname': row[8] or None,
-                    'phone': row[9],
+                    'phone': '' if is_placeholder_phone(row[9]) else row[9],
+                    'instagram': row[19] or None,
                     'full_name': customer_full or None
                 },
                 'staff': {
@@ -3947,24 +3986,41 @@ def admin_lookup_customers():
     if digits.startswith('0'):
         digits = digits.lstrip('0')
 
+    insta_q = raw.lstrip('@').strip().lower()
+    by_instagram = by == 'instagram' or raw.startswith('@')
     name_q = raw
-    use_phone = by == 'phone' or (by != 'name' and len(digits) >= 3 and not any(ch.isalpha() for ch in raw))
+    use_phone = (
+        not by_instagram
+        and (by == 'phone' or (by != 'name' and len(digits) >= 3 and not any(ch.isalpha() for ch in raw)))
+    )
 
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        if use_phone:
+        if by_instagram:
+            cursor.execute(
+                """
+                SELECT id, phone, name, surname, instagram
+                  FROM customers
+                 WHERE instagram ILIKE %s
+                 ORDER BY instagram, id DESC
+                 LIMIT 20
+                """,
+                (f'{insta_q}%',),
+            )
+        elif use_phone:
             like_prefix = f'{digits}%'
             like_suffix = f'%{digits}'
             like_cc = f'90{digits}%'
             cursor.execute(
                 """
-                SELECT id, phone, name, surname
+                SELECT id, phone, name, surname, instagram
                   FROM customers
-                 WHERE phone LIKE %s
+                 WHERE (phone LIKE %s
                     OR phone LIKE %s
-                    OR phone LIKE %s
+                    OR phone LIKE %s)
+                   AND phone !~ '^1[0-9]{9}$'
                  ORDER BY
                     CASE WHEN COALESCE(name, '') <> '' THEN 0 ELSE 1 END,
                     CASE WHEN phone = %s THEN 0 ELSE 1 END,
@@ -3979,7 +4035,7 @@ def admin_lookup_customers():
             if needle:
                 cursor.execute(
                     """
-                    SELECT id, phone, name, surname
+                    SELECT id, phone, name, surname, instagram
                       FROM customers
                      WHERE COALESCE(TRIM(name), '') <> ''
                        AND (
@@ -3995,7 +4051,7 @@ def admin_lookup_customers():
             else:
                 cursor.execute(
                     """
-                    SELECT id, phone, name, surname
+                    SELECT id, phone, name, surname, instagram
                       FROM customers
                      WHERE COALESCE(TRIM(name), '') <> ''
                      ORDER BY name, surname, id DESC
@@ -4011,7 +4067,8 @@ def admin_lookup_customers():
             full_name = ' '.join(p for p in (name, surname) if p)
             items.append({
                 'id': row[0],
-                'phone': row[1],
+                'phone': '' if is_placeholder_phone(row[1]) else row[1],
+                'instagram': row[4] or None,
                 'name': name or None,
                 'surname': surname or None,
                 'full_name': full_name or None,
@@ -4042,8 +4099,15 @@ def admin_create_manual_appointment():
     staff_id_raw = data.get('staff_id')
     tattoo_request_id_raw = data.get('tattoo_request_id')
 
-    if not phone_raw or not name or not surname:
-        return jsonify({'success': False, 'message': 'Telefon, ad ve soyad zorunludur'}), 400
+    try:
+        instagram = normalize_instagram(data.get('instagram'))
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+
+    if not name or not surname:
+        return jsonify({'success': False, 'message': 'Ad ve soyad zorunludur'}), 400
+    if not phone_raw and not instagram:
+        return jsonify({'success': False, 'message': 'Telefon veya Instagram kullanıcı adı zorunludur'}), 400
     if not date_str or not time_str:
         return jsonify({'success': False, 'message': 'Tarih ve saat zorunludur'}), 400
     if duration_minutes < 60 or duration_minutes % 60 != 0:
@@ -4053,9 +4117,11 @@ def admin_create_manual_appointment():
     if price < 0:
         price = 0
 
-    phone = parse_mobile_number(phone_raw)
-    if not phone:
-        return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
+    phone = None
+    if phone_raw:
+        phone = parse_mobile_number(phone_raw)
+        if not phone:
+            return jsonify({'success': False, 'message': MOBILE_ERROR}), 400
 
     formatted_date = parse_tr_date(date_str)
     if not formatted_date:
@@ -4121,19 +4187,28 @@ def admin_create_manual_appointment():
                 'message': 'Saat artık uygun değil (takvim güncellendi). Lütfen saatleri yenileyip tekrar deneyin.'
             }), 409
 
-        existing = find_customer_by_phone(cursor, phone)
+        if phone:
+            existing = find_customer_by_phone(cursor, phone)
+        else:
+            # Telefonsuz musteri Instagram adiyla taninir: ayni ad varsa ayni kayit.
+            cursor.execute(
+                "SELECT id FROM customers WHERE instagram = %s ORDER BY id LIMIT 1",
+                (instagram,),
+            )
+            existing = cursor.fetchone()
         if existing:
             cursor.execute("""
-                UPDATE customers SET name = %s, surname = %s
+                UPDATE customers SET name = %s, surname = %s,
+                       instagram = COALESCE(%s, instagram)
                 WHERE id = %s
-                RETURNING id, phone, name, surname
-            """, (name, surname, existing[0]))
+                RETURNING id, phone, name, surname, instagram
+            """, (name, surname, instagram, existing[0]))
         else:
             cursor.execute("""
-                INSERT INTO customers (phone, name, surname)
-                VALUES (%s, %s, %s)
-                RETURNING id, phone, name, surname
-            """, (phone, name, surname))
+                INSERT INTO customers (phone, name, surname, instagram)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, phone, name, surname, instagram
+            """, (phone or _new_placeholder_phone(cursor), name, surname, instagram))
         cust = cursor.fetchone()
         customer_id = cust[0]
 
@@ -4192,7 +4267,8 @@ def admin_create_manual_appointment():
         kick_gcal_queue()
 
         staff_name, staff_phone = staff_row[1], staff_row[2]
-        customer_phone_display = phone
+        customer_phone_display = cust[1]
+        customer_has_phone = not is_placeholder_phone(customer_phone_display)
 
         if send_whatsapp:
             try:
@@ -4205,7 +4281,8 @@ def admin_create_manual_appointment():
                     customer_name=f'{name} {surname}'.strip() or None,
                     discount_info=discount_info,
                 )
-                send_wapio_message(customer_phone_display, customer_msg)
+                if customer_has_phone:
+                    send_wapio_message(customer_phone_display, customer_msg)
                 if staff_phone:
                     staff_msg = build_appointment_created_staff_message(
                         customer_phone_display,
@@ -4215,6 +4292,7 @@ def admin_create_manual_appointment():
                         price,
                         customer_name=f'{name} {surname}'.strip(),
                         manual=True,
+                        customer_instagram=cust[4],
                     )
                     send_wapio_message(staff_phone, staff_msg)
             except Exception as wa_err:
@@ -4242,7 +4320,8 @@ def admin_create_manual_appointment():
             'loyalty_discount': discount_info,
             'customer': {
                 'id': cust[0],
-                'phone': cust[1],
+                'phone': cust[1] if customer_has_phone else '',
+                'instagram': cust[4],
                 'name': cust[2],
                 'surname': cust[3],
             },
@@ -4408,6 +4487,18 @@ def admin_edit_appointment(appointment_id):
         name = data.get('name')
         surname = data.get('surname')
         phone_raw = (data.get('phone') or '').strip() if data.get('phone') is not None else None
+        instagram_provided = 'instagram' in data
+        instagram = None
+        if instagram_provided:
+            try:
+                instagram = normalize_instagram(data.get('instagram'))
+            except ValueError as e:
+                cursor.close()
+                return jsonify({'success': False, 'message': str(e)}), 400
+        current_is_placeholder = is_placeholder_phone(current_phone)
+        if current_is_placeholder and not phone_raw and instagram_provided and not instagram:
+            cursor.close()
+            return jsonify({'success': False, 'message': 'Telefon veya Instagram kullanıcı adı gerekli'}), 400
 
         if phone_raw:
             phone = parse_mobile_number(phone_raw)
@@ -4418,6 +4509,24 @@ def admin_edit_appointment(appointment_id):
                 existing = find_customer_by_phone(cursor, phone)
                 if existing:
                     customer_id = existing[0]
+                    if current_is_placeholder:
+                        # Telefonsuz kaydin Instagram adi, numarasi olan kayda tasinir.
+                        cursor.execute(
+                            "UPDATE customers SET instagram = COALESCE(instagram, (SELECT instagram FROM customers WHERE id = %s)) WHERE id = %s",
+                            (current_customer_id, customer_id),
+                        )
+                    if name or surname:
+                        cursor.execute(
+                            "UPDATE customers SET name = COALESCE(%s, name), surname = COALESCE(%s, surname) WHERE id = %s",
+                            (format_person_name(name) if name else None, format_person_name(surname) if surname else None, customer_id),
+                        )
+                elif current_is_placeholder:
+                    # Numara sonradan ogrenildi: ayni musteri kaydi (gecmis randevular,
+                    # Instagram adi) korunur, yer tutucu numara gercek numarayla degisir.
+                    cursor.execute(
+                        "UPDATE customers SET phone = %s WHERE id = %s",
+                        (phone, current_customer_id),
+                    )
                     if name or surname:
                         cursor.execute(
                             "UPDATE customers SET name = COALESCE(%s, name), surname = COALESCE(%s, surname) WHERE id = %s",
@@ -4438,6 +4547,12 @@ def admin_edit_appointment(appointment_id):
             cursor.execute(
                 "UPDATE customers SET name = COALESCE(%s, name), surname = COALESCE(%s, surname) WHERE id = %s",
                 (format_person_name(name) if name else None, format_person_name(surname) if surname else None, customer_id),
+            )
+
+        if instagram_provided:
+            cursor.execute(
+                "UPDATE customers SET instagram = %s WHERE id = %s",
+                (instagram, customer_id),
             )
 
         update_fields = [
@@ -7015,6 +7130,7 @@ def send_appointment_reminders():
               AND a.appointment_time > %s
               AND a.appointment_time <= %s
               AND (a.reminder_sent IS NULL OR a.reminder_sent = FALSE)
+              AND c.phone !~ '^1[0-9]{9}$'
             FOR UPDATE OF a SKIP LOCKED
         """, (today, current_time, reminder_until_time))
 
@@ -7151,6 +7267,7 @@ def send_aftercare_cream_reminders():
               AND a.completed_at IS NOT NULL
               AND a.completed_at <= %s
               AND (a.aftercare_reminder_sent IS NULL OR a.aftercare_reminder_sent = FALSE)
+              AND c.phone !~ '^1[0-9]{9}$'
             FOR UPDATE OF a SKIP LOCKED
         """, (cutoff,))
 
@@ -7731,6 +7848,7 @@ ensure_artist_is_active_column()
 ensure_artist_token_version_column()
 ensure_staff_color_and_commission_columns()
 ensure_customer_phone_length()
+ensure_customer_instagram_column()
 
 def _shutdown_scheduler_and_lock():
     if scheduler.running:

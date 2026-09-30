@@ -101,7 +101,7 @@ class OutboundSyncTest(unittest.TestCase):
         appointment_row = (
             42, '2026-09-20', '14:00', 'confirmed', 120, 3500.0,
             'Ayse', 'Yilmaz', '5551112233', 2, 'Tuncer',
-            'forearm', 'orta', 'blackwork', 'kol icin desen', 'REF-9', None, 'admin',
+            'forearm', 'orta', 'blackwork', 'kol icin desen', 'REF-9', None, 'admin', None,
         )
         cursor = RecordingCursor(fetchone_queue=[
             (True,),            # pg_try_advisory_xact_lock
@@ -136,7 +136,7 @@ class OutboundSyncTest(unittest.TestCase):
         appointment_row = (
             7, '2026-09-21', '10:00', 'confirmed', 60, 0,
             'Can', 'Demir', '5559998877', 1, 'Berke',
-            '', '', '', None, None, 'stale_event', 'admin',
+            '', '', '', None, None, 'stale_event', 'admin', None,
         )
         cursor = RecordingCursor(fetchone_queue=[(True,), appointment_row, (7,)])
         conn = FakeConn(cursor)
@@ -159,7 +159,7 @@ class OutboundSyncTest(unittest.TestCase):
         return (
             9, '2026-09-23', '15:00', 'completed', 90, 0,
             'Ali', 'Veli', '5551234567', 2, 'Tuncer',
-            '', '', '', None, None, event_id, 'google',
+            '', '', '', None, None, event_id, 'google', None,
         )
 
     def test_google_source_update_patches_only_time_color_not_text(self):
@@ -211,7 +211,7 @@ class OutboundSyncTest(unittest.TestCase):
         appointment_row = (
             3, '2026-09-22', '11:00', 'confirmed', 60, 0,
             'Ece', 'Kaya', '5550001122', 1, 'Berke',
-            '', '', '', None, None, None, 'admin',
+            '', '', '', None, None, None, 'admin', None,
         )
         cursor = RecordingCursor(fetchone_queue=[(True,), appointment_row, (3,)])
         conn = FakeConn(cursor)
