@@ -271,14 +271,21 @@ def credentials_file_ok():
     return bool(cred_path and os.path.isfile(cred_path))
 
 
-def google_api_reachable(timeout=2.5):
+# Barındırıcının ağında Google'a YENİ bir bağlantının ilk SYN paketi bazen kayboluyor;
+# yeniden gönderilince bağlantı ~3 sn'de kuruluyor (bkz. 2026-09-30: 3 sn'lik sınır
+# kontrollerin %75'inde yalancı "bağlantı kopuk" alarmı üretti). Sınır bu gecikmeyi
+# rahatça karşılayacak kadar geniş; gerçek bir kopukluk yine bu sürede yakalanır.
+GOOGLE_API_PROBE_TIMEOUT = 10
+
+
+def google_api_reachable(timeout=GOOGLE_API_PROBE_TIMEOUT):
     """Sunucunun Google OAuth uç noktasına TCP ile çıkıp çıkamadığı.
 
-    Tam Calendar API çağrısı yapmaz; admin ayar sayfasını 45 sn askiya almaz.
+    Tam Calendar API çağrısı yapmaz; admin ayar sayfasını askıya almaz.
     """
     try:
-        socket.create_connection(('oauth2.googleapis.com', 443), timeout=timeout)
-        return True
+        with socket.create_connection(('oauth2.googleapis.com', 443), timeout=timeout):
+            return True
     except OSError:
         return False
 

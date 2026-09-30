@@ -66,7 +66,7 @@ def check_google_calendar_uptime() -> tuple[str, dict]:
             'component': 'google-calendar',
             'reason': 'Takvim kimliği yok',
         }
-    if not google_api_reachable(timeout=3):
+    if not google_api_reachable():
         return PROBE_DOWN, {
             'component': 'google-calendar',
             'reason': 'Google sunucularına ulaşılamıyor',
