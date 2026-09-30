@@ -596,7 +596,7 @@ Sayın {customer_name},
 Randevunuzun tarih/saati güncellenmiştir.
 
 📋 *Yeni Randevu Detayları:*
-🖋️ Sanatçı: {staff_name}
+👤 Sanatçı: {staff_name}
 📅 Tarih: {new_date_str}
 ⏰ Saat: {new_time_str}
 🕒 Süre: {duration_minutes} dk
