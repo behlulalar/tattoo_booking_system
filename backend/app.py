@@ -6866,7 +6866,7 @@ def send_appointment_reminders():
         release_db_connection(conn)
 
 
-AFTERCARE_REMINDER_HOURS = float(os.getenv('AFTERCARE_REMINDER_HOURS', '2'))
+AFTERCARE_REMINDER_MINUTES = float(os.getenv('AFTERCARE_REMINDER_MINUTES', '10'))
 
 
 def _reset_aftercare_flag(apt_id):
@@ -6891,7 +6891,8 @@ def _reset_aftercare_flag(apt_id):
 
 
 def send_aftercare_cream_reminders():
-    """Tamamlanan randevulardan 2 saat sonra krem bakım hatırlatması (WhatsApp).
+    """Randevu "tamamlandı" yapıldıktan AFTERCARE_REMINDER_MINUTES (varsayılan 10) dk sonra
+    krem bakım hatırlatması (WhatsApp).
 
     Iki asamali calisir (bkz. send_appointment_reminders): flag guncellemeleri
     hemen commit edilip kilitler birakilir, WhatsApp gonderimleri (ve
@@ -6907,8 +6908,8 @@ def send_aftercare_cream_reminders():
         conn.autocommit = False
         cursor = conn.cursor()
 
-        delay_hours = max(0.5, AFTERCARE_REMINDER_HOURS)
-        cutoff = _studio_now() - timedelta(hours=delay_hours)
+        delay_minutes = max(1.0, AFTERCARE_REMINDER_MINUTES)
+        cutoff = _studio_now() - timedelta(minutes=delay_minutes)
 
         cursor.execute("""
             SELECT
@@ -7400,7 +7401,7 @@ def start_scheduler_if_master():
         # Lock alındı, scheduler'ı başlat
         if not scheduler.running:
             scheduler.add_job(func=send_appointment_reminders, trigger="interval", minutes=5, id='send_reminders', replace_existing=True, max_instances=1)
-            scheduler.add_job(func=send_aftercare_cream_reminders, trigger="interval", minutes=5, id='send_aftercare_reminders', replace_existing=True, max_instances=1)
+            scheduler.add_job(func=send_aftercare_cream_reminders, trigger="interval", minutes=2, id='send_aftercare_reminders', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_expired_verification_codes, trigger="interval", minutes=5, id='cleanup_verification_codes', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_expired_webhook_messages, trigger="interval", hours=1, id='cleanup_webhook_messages', replace_existing=True, max_instances=1)
             scheduler.add_job(func=cleanup_old_cancelled_appointments, trigger="interval", days=7, id='cleanup_cancelled_appointments', replace_existing=True, max_instances=1)
@@ -7422,7 +7423,7 @@ def start_scheduler_if_master():
             import os
             logger.info(f"Scheduler başlatıldı (PID: {os.getpid()}, Advisory Lock ID: {advisory_lock_id})")
             logger.info("   - Randevu hatırlatma: her 5 dakikada bir (max_instances=1)")
-            logger.info(f"   - Krem bakım hatırlatması: her 5 dk (tamamlandıktan {AFTERCARE_REMINDER_HOURS} saat sonra)")
+            logger.info(f"   - Krem bakım hatırlatması: her 2 dk (tamamlandıktan {AFTERCARE_REMINDER_MINUTES:g} dk sonra)")
             logger.info("   - Verification codes cleanup: her 5 dakikada bir")
             logger.info("   - Webhook messages cleanup: her 1 saatte bir")
             logger.info("   - Cancelled appointments cleanup: her 7 günde bir")
