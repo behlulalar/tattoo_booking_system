@@ -1166,6 +1166,14 @@ _WA_DOWN_LOG_INTERVAL_SECONDS = 600
 _wa_bulk_state = {'down_since': None, 'last_logged': 0.0}
 
 
+def _whatsapp_connected_now():
+    """Tek olcumluk hizli baglanti kontrolu (hata verirse kopuk sayilir)."""
+    try:
+        return bool(check_whatsapp_health().get('healthy'))
+    except Exception:
+        return False
+
+
 def _whatsapp_session_ready_for_bulk_send():
     """Toplu gonderim oncesi WhatsApp oturumu saglikli mi diye bakar.
 
@@ -1248,7 +1256,7 @@ def check_google_calendar_connection():
         log_error(logger, E_GCAL_005, "Google Takvim bağlantı kontrolü başarısız", exc=e)
 
 
-WHATSAPP_QUEUE_MAX_AGE_HOURS = float(os.getenv('WHATSAPP_QUEUE_MAX_AGE_HOURS', '6'))
+WHATSAPP_QUEUE_MAX_AGE_HOURS = float(os.getenv('WHATSAPP_QUEUE_MAX_AGE_HOURS', '1'))
 
 
 def _expire_stale_whatsapp_queue():
@@ -1411,7 +1419,13 @@ def send_wapio_message(phone, message, retry_count=0, queue_on_failure=True, cou
         _record_bulk_send()
 
     if not ok and queue_on_failure:
-        _enqueue_whatsapp_retry(phone, message)
+        # Oturum kopukken mesaj BIRIKTIRILMEZ: baglanti donunca eski mesajlarin
+        # hepsi bir anda gider (spam + ban riski). Yalnizca baglantiyken olusan
+        # gecici hatalar yeniden denenir.
+        if _wa_bulk_state['down_since'] is not None or not _whatsapp_connected_now():
+            logger.warning("WhatsApp kopuk — mesaj kuyruga alinmadi (birikme engellendi) | phone=%s", phone)
+        else:
+            _enqueue_whatsapp_retry(phone, message)
     return ok
 
 
@@ -2382,15 +2396,9 @@ def _gcal_notify_imported_from_google(appointment_ids):
             url=PUSH_URL_APPOINTMENTS,
         )
         try:
-            if is_real_customer_phone(phone):
-                send_wapio_message(
-                    phone,
-                    build_appointment_created_customer_message(
-                        date_str, time_str, duration_minutes, price,
-                        staff_name=staff_name,
-                        customer_name=customer_name or None,
-                    ),
-                )
+            # Takvimden aktarilan randevuda musteriye otomatik mesaj GONDERILMEZ
+            # (musteri randevuyu zaten sanatciyla konusarak aldi). Yalnizca
+            # sanatciya WhatsApp + push bildirimi gider.
             if staff_phone:
                 send_wapio_message(
                     staff_phone,
