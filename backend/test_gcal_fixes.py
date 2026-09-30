@@ -268,6 +268,44 @@ class EchoDetectionTest(unittest.TestCase):
         )
 
 
+class BlockReasonTest(unittest.TestCase):
+    """Reddedilen taşıma / içe alma için sanatçıya gösterilen neden."""
+
+    def _reason(self, hour, minute, duration, fetchall_queue=None):
+        cursor = RecordingCursor(fetchall_queue=fetchall_queue)
+        start = datetime(2026, 9, 25, hour, minute, tzinfo=TZ)
+        return gcs._inbound_block_reason(cursor, 7, start, duration)
+
+    def test_crossing_midnight(self):
+        self.assertEqual(self._reason(23, 30, 60), 'midnight')
+
+    def test_full_day_off(self):
+        self.assertEqual(self._reason(14, 0, 60, [[(None, None)]]), 'closed_day')
+
+    def test_partial_time_off(self):
+        from datetime import time as dtime
+        rows = [[(dtime(14, 0), dtime(15, 0))]]
+        self.assertEqual(self._reason(14, 30, 60, rows), 'time_off')
+
+    def test_time_off_that_does_not_overlap_is_ignored(self):
+        from datetime import time as dtime
+        rows = [[(dtime(9, 0), dtime(10, 0))], []]  # izin, sonra harici etkinlik yok
+        self.assertEqual(self._reason(14, 0, 60, rows), 'appointment')
+
+    def test_external_event(self):
+        start = datetime(2026, 9, 25, 18, 0, tzinfo=TZ)
+        rows = [[], [(start, start + timedelta(hours=1))]]  # izin yok, harici etkinlik var
+        self.assertEqual(self._reason(18, 30, 60, rows), 'external')
+
+    def test_default_is_another_appointment(self):
+        self.assertEqual(self._reason(14, 0, 60, [[], []]), 'appointment')
+
+    def test_every_reason_has_text(self):
+        for key in ('midnight', 'closed_day', 'time_off', 'external', 'appointment'):
+            self.assertTrue(gcs._BLOCK_REASON_TEXT[key])
+        self.assertNotIn('mesai', ' '.join(gcs._BLOCK_REASON_TEXT.values()).lower())
+
+
 class ImportConflictNotificationTest(unittest.TestCase):
     """Cakisma nedeniyle alinamayan Google etkinligi icin sanatciya bildirim."""
 
@@ -289,6 +327,13 @@ class ImportConflictNotificationTest(unittest.TestCase):
         self.assertIn('25.09.2026 14:20–15:10', params[3])
         self.assertEqual(len(push), 1)
         self.assertEqual(push[0][0], 7)
+
+    def test_reason_text_is_used_in_message(self):
+        cursor = RecordingCursor(fetchone_queue=[None])
+        start = datetime(2026, 9, 25, 14, 20, tzinfo=TZ)
+        gcs._notify_import_conflict(cursor, 7, start, 50, 'Test', [], 'closed_day')
+        params = [p for s_, p in cursor.executed if 'INSERT INTO notifications' in s_][0]
+        self.assertIn('tam gün izinli', params[3])
 
     def test_same_notification_is_not_repeated_within_24h(self):
         cursor = RecordingCursor(fetchone_queue=[(1,)])  # zaten var
