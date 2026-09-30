@@ -2613,6 +2613,61 @@ def load_external_busy_minutes(cursor, formatted_date):
     return intervals
 
 
+# Bir Google etkinliği / taşıması sisteme alınamadığında sanatçıya gösterilen neden
+# metinleri (yalnızca bildirim için; karar _inbound_slot_allowed'da verilir).
+_BLOCK_REASON_TEXT = {
+    'midnight': 'gece yarısını aştığı için (bir randevu tek bir güne sığmalı)',
+    'closed_day': 'o gün tam gün izinli (Off Day) olduğu için',
+    'time_off': 'o saatlerde izin (Off Day) olduğu için',
+    'external': (
+        'o saatlerde takvimde sisteme alınmamış başka bir etkinlik olduğu için '
+        '(etkinliği "Müsait" olarak işaretleyebilir ya da başlığına sanatçı adını yazabilirsiniz)'
+    ),
+    'appointment': 'başka bir randevuyla çakıştığı için',
+}
+
+
+def _time_value_minutes(value):
+    return value.hour * 60 + value.minute
+
+
+def _inbound_block_reason(cursor, staff_id, start_dt, duration_minutes):
+    """Slot neden uygun değil: 'midnight' | 'closed_day' | 'time_off' |
+    'external' | 'appointment'. Yalnızca bildirim metni içindir."""
+    start_m = start_dt.hour * 60 + start_dt.minute
+    end_m = start_m + int(duration_minutes or 0)
+    if end_m > 24 * 60:
+        return 'midnight'
+    date_iso = start_dt.date().isoformat()
+    offs = []
+    try:
+        cursor.execute('SAVEPOINT gcal_block_reason')
+        cursor.execute(
+            'SELECT start_time, end_time FROM time_off WHERE staff_id = %s AND off_date = %s',
+            (int(staff_id), date_iso),
+        )
+        offs = cursor.fetchall() or []
+        cursor.execute('RELEASE SAVEPOINT gcal_block_reason')
+    except Exception:
+        try:
+            cursor.execute('ROLLBACK TO SAVEPOINT gcal_block_reason')
+        except Exception:
+            pass
+    if any(st is None for st, _et in offs):
+        return 'closed_day'
+    for st, et in offs:
+        off_s = _time_value_minutes(st)
+        off_e = 24 * 60 if et is None or _time_value_minutes(et) in (0, 24 * 60) else _time_value_minutes(et)
+        if off_e <= off_s:
+            off_e = 24 * 60
+        if start_m < off_e and off_s < end_m:
+            return 'time_off'
+    for b0, b1 in load_external_busy_minutes(cursor, date_iso):
+        if start_m < b1 and b0 < end_m:
+            return 'external'
+    return 'appointment'
+
+
 def _list_events_window(service, calendar_id, time_min, time_max):
     events = []
     page_token = None
@@ -3260,7 +3315,9 @@ def refresh_google_event_colors(limit=400):
         _disconnect(conn)
 
 
-def _notify_import_conflict(cursor, staff_id, start_dt, duration_minutes, summary, push_events=None):
+def _notify_import_conflict(
+    cursor, staff_id, start_dt, duration_minutes, summary, push_events=None, reason_key='appointment',
+):
     """Google'da yazilan etkinlik cakisma/kapali gun nedeniyle sisteme alinamadi:
     sanatciya panel bildirimi + push. Ayni etkinlik her senkron turunda yeniden
     denendiginden, ayni metin 24 saat icinde tekrar bildirilmez."""
@@ -3268,10 +3325,12 @@ def _notify_import_conflict(cursor, staff_id, start_dt, duration_minutes, summar
     title = 'Google etkinliği sisteme alınamadı'
     label = (summary or '').strip()[:80] or 'Başlıksız etkinlik'
     message = (
-        "Google Takvim'de %s %s–%s için yazdığınız \"%s\" etkinliği başka bir randevu, "
-        "izin veya kapalı gün ile çakıştığı için sisteme alınmadı. Çakışmayı giderip "
-        "etkinliği taşıyın ya da silin."
-    ) % (start_dt.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'), end_dt.strftime('%H:%M'), label)
+        "Google Takvim'de %s %s–%s için yazdığınız \"%s\" etkinliği %s sisteme alınmadı. "
+        "Sorunu giderip etkinliği taşıyın ya da silin."
+    ) % (
+        start_dt.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'), end_dt.strftime('%H:%M'),
+        label, _BLOCK_REASON_TEXT.get(reason_key, _BLOCK_REASON_TEXT['appointment']),
+    )
     try:
         cursor.execute(
             """
@@ -3292,8 +3351,9 @@ def _notify_import_conflict(cursor, staff_id, start_dt, duration_minutes, summar
         push_events.append((
             staff_id,
             title,
-            '%s %s–%s etkinliği çakışma nedeniyle sisteme alınamadı.' % (
+            '%s %s–%s etkinliği sisteme alınamadı: %s' % (
                 start_dt.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'), end_dt.strftime('%H:%M'),
+                _BLOCK_REASON_TEXT.get(reason_key, _BLOCK_REASON_TEXT['appointment']).split(' (')[0],
             ),
         ))
     return True
@@ -3405,6 +3465,7 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None, p
         if local_date >= today:
             _notify_import_conflict(
                 cursor, staff_id, start_dt, duration_minutes, summary, push_events,
+                _inbound_block_reason(cursor, staff_id, start_dt, duration_minutes),
             )
         return 'conflict'
 
@@ -3900,18 +3961,21 @@ def _handle_inbound_event(
     )
     if not allowed:
         enqueue_appointment_sync(cursor, appointment_id)
+        reason = _BLOCK_REASON_TEXT[
+            _inbound_block_reason(cursor, staff_id, start_dt, duration_minutes)
+        ]
         create_notification(
             cursor,
             staff_id,
             'gcal_move_reverted',
             'Google Calendar taşıması geri alındı',
             (
-                'Randevu Google Calendar\'da %s %s\'e taşınmak istendi ama '
-                'çakışma veya kapalı gün nedeniyle uygun olmadığı için eski '
-                'saatine (%s) geri alındı.'
+                'Randevu Google Calendar\'da %s %s\'e taşınmak istendi ama %s '
+                'eski saatine (%s) geri alındı.'
             ) % (
                 local_date.strftime('%d.%m.%Y'),
                 local_time,
+                reason,
                 str(apt_time)[:5],
             ),
             appointment_id,
@@ -3920,8 +3984,8 @@ def _handle_inbound_event(
             push_events.append((
                 staff_id,
                 'Google Calendar taşıması geri alındı',
-                'Randevu %s %s\'e taşınmak istendi ama çakışma veya kapalı gün nedeniyle eski saatine geri alındı.' % (
-                    local_date.strftime('%d.%m.%Y'), local_time,
+                'Randevu %s %s\'e taşınmak istendi ama %s eski saatine geri alındı.' % (
+                    local_date.strftime('%d.%m.%Y'), local_time, reason,
                 ),
             ))
         return 'revert'
