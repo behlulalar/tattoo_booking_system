@@ -100,5 +100,21 @@ class ImportSafetyTest(unittest.TestCase):
         self.assertEqual(gcs._off_day_extended_properties(5, imported=True)['private']['imported'], '1')
 
 
+class ImplicitInstagramTest(unittest.TestCase):
+    def test_bare_handle_detected(self):
+        import google_calendar_sync as gcs
+        self.assertEqual(gcs._implicit_instagram('Tuncer - Eren - erenkaracn'), ('erenkaracn', 'Tuncer - Eren'))
+
+    def test_not_detected_when_phone_or_capitalised_or_short(self):
+        import google_calendar_sync as gcs
+        for title in ('Tuncer - Eymen - 05403723135', 'Tuncer - Eren - Karaca', 'Tuncer - Eren', 'Tuncer - Eren - ali', 'Tuncer - Eren Karaca'):
+            self.assertEqual(gcs._implicit_instagram(title), (None, title), title)
+
+    def test_import_floor_is_october(self):
+        import google_calendar_sync as gcs
+        from datetime import date
+        self.assertEqual(gcs._import_floor_date(), date(2026, 10, 1))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -855,6 +855,36 @@ def _log_unmatched_artist(event_id, summary):
     )
 
 
+_DASH_SPLIT_RE = re.compile(r'\s+[-\u2013\u2014]\s+')
+_BARE_HANDLE_RE = re.compile(r'^[a-z0-9._]{4,30}$')
+
+
+def _implicit_instagram(summary):
+    """"Sanatci - Ad - kullaniciadi" basliginda @ yazilmamis Instagram adini yakalar.
+
+    Yalniz su durumda: telefon yok, en az 3 tire-ayrili parca var ve SON parca
+    tek kelimelik, tamamen kucuk harfli ASCII bir kullanici adi. Dogru bicim @ ile
+    yazmaktir; bu yalnizca unutulan @ icin yardimci bir tahmindir.
+    """
+    title = (summary or '').strip()
+    if not title or _GCAL_PHONE_RE.search(title):
+        return None, summary
+    parts = _DASH_SPLIT_RE.split(title)
+    if len(parts) < 3:
+        return None, summary
+    last = parts[-1].strip()
+    if _BARE_HANDLE_RE.match(last) and any(ch.isalpha() for ch in last):
+        return last, ' - '.join(parts[:-1])
+    return None, summary
+
+
+def _import_floor_date():
+    try:
+        return datetime.strptime(INITIAL_IMPORT_FROM, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+
 def _parse_manual_event_title(summary, artist_rows):
     """Başliktan sanatçı, müşteri adı ve telefon çıkar. Sanatçı yoksa staff_id None."""
     title = (summary or '').strip()
@@ -3517,6 +3547,8 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None, p
     # "@kullanici" = Instagram adi (telefonu olmayan musteri); basliktan ayrilir ki
     # musteri adina/soyadina karismasin.
     instagram, summary = extract_instagram(event.get('summary') or '')
+    if not instagram:
+        instagram, summary = _implicit_instagram(summary)
     staff_id, staff_name, has_keyword, phone, reason = _parse_off_day_from_title(
         summary, artists
     )
@@ -3531,6 +3563,11 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None, p
     if start_dt is not None:
         today = datetime.now(start_dt.tzinfo).date() if start_dt.tzinfo else datetime.now().date()
         if (today - start_dt.date()).days > _IMPORT_LOOKBACK_DAYS:
+            return 'skip'
+        # Sistem canliya alinmadan onceki tarihler (INITIAL_IMPORT_FROM oncesi) hic
+        # ice alinmaz: takvimde duran eski kayitlar her senkronda geri gelmesin.
+        floor = _import_floor_date()
+        if floor and start_dt.date() < floor:
             return 'skip'
 
     # "sanatci eslesti + telefon yok" tek basina Off Day sayilmaz: elle
