@@ -17,7 +17,7 @@
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20261001024239" />
+    <link rel="stylesheet" href="admin.css?v=20261001025540" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="vendor/flatpickr/flatpickr.min.css" />
     <script src="vendor/flatpickr/flatpickr.min.js"></script>
@@ -294,6 +294,9 @@
                         <button id="view-table-btn" class="view-btn" title="Tablo Görünümü">
                             <i class="fas fa-table"></i>
                         </button>
+                        <button id="view-month-btn" class="view-btn" title="Aylık Görünüm">
+                            <i class="fas fa-calendar-alt"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -309,6 +312,11 @@
                     <div id="all-appointments-table" class="apt-table-wrap">
                         <p class="empty-message">Yükleniyor...</p>
                     </div>
+                </div>
+
+                <!-- Aylık Görünüm -->
+                <div id="appointments-month-view" class="appointments-view-container" style="display: none;">
+                    <div id="all-appointments-month" class="month-wrap"></div>
                 </div>
             </section>
 
@@ -418,6 +426,9 @@
                         <button id="all-view-table-btn" class="view-btn" title="Tablo Görünümü">
                             <i class="fas fa-table"></i>
                         </button>
+                        <button id="all-view-month-btn" class="view-btn" title="Aylık Görünüm">
+                            <i class="fas fa-calendar-alt"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -433,6 +444,11 @@
                     <div id="all-appointments-table-container" class="apt-table-wrap">
                         <p class="empty-message">Yükleniyor...</p>
                     </div>
+                </div>
+
+                <!-- Aylık Görünüm -->
+                <div id="all-appointments-month-view" class="appointments-view-container" style="display: none;">
+                    <div id="all-appointments-month-container" class="month-wrap"></div>
                 </div>
             </section>
 
@@ -1321,6 +1337,17 @@
     </div>
 
     <!-- ===== RANDEVU DÜZENLE MODAL ===== -->
+    <!-- Randevu detayı / gün listesi (aylık görünüm) -->
+    <div id="apt-detail-overlay" class="modal-overlay" style="display:none;">
+        <div class="profile-modal apt-detail-modal">
+            <div class="modal-header">
+                <h2 id="apt-detail-title"></h2>
+                <button type="button" class="close-btn" id="apt-detail-close"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body" id="apt-detail-body"></div>
+        </div>
+    </div>
+
     <div id="edit-appointment-overlay" class="modal-overlay" style="display:none;">
         <div class="profile-modal manual-appointment-modal">
             <div class="modal-header">
@@ -1585,7 +1612,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20261001024239"></script>
+    <script src="admin.js?v=20261001025540"></script>
 </body>
 
 </html>

@@ -3176,6 +3176,61 @@ async function reloadNewTattooRequestPages() {
   }
 }
 
+function appointmentCardHtml(a) {
+  const customer = customerDisplayName(a.customer);
+  const artist   = a.staff?.name || '-';
+  const tr       = a.tattoo_request || {};
+  const price    = parseFloat(a.price || 0);
+  const priceRow = price > 0
+    ? `<div class="apt-detail-row">
+         <span class="apt-detail-icon"><i class="fas fa-tag"></i></span>
+         <span class="apt-detail-label">Fiyat:</span>
+         <span class="apt-detail-value" style="color:var(--accent);font-weight:400;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
+       </div>`
+    : '';
+  return `
+    <div class="appointment-card status-${escapeHtml(a.status)}" data-apt-id="${a.id}">
+      <div class="apt-card-top">
+        <div class="apt-datetime">
+          <div class="appointment-time"><i class="fas fa-clock"></i> ${escapeHtml(a.time)}</div>
+        </div>
+        <div class="apt-card-badges">
+          ${appointmentSourceBadgeHtml(a.source)}
+          ${tr.body_area === 'Ön görüşme' ? '<span class="status-badge preconsult"><i class="fas fa-comments"></i> Ön Görüşme</span>' : ''}
+          <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
+        </div>
+      </div>
+      <div class="apt-card-body">
+        <div class="apt-detail-row">
+          <span class="apt-detail-icon"><i class="fas fa-user"></i></span>
+          <span class="apt-detail-label">Müşteri:</span>
+          <span class="apt-detail-value">${escapeHtml(customer)}</span>
+        </div>
+        <div class="apt-detail-row">
+          <span class="apt-detail-icon"><i class="fas fa-paint-brush"></i></span>
+          <span class="apt-detail-label">Sanatçı:</span>
+          <span class="apt-detail-value">${escapeHtml(artist)}</span>
+        </div>
+        <div class="apt-detail-row">
+          <span class="apt-detail-icon"><i class="fas fa-clock"></i></span>
+          <span class="apt-detail-label">Süre:</span>
+          <span class="apt-detail-value">${a.duration_minutes || 30} dk</span>
+        </div>
+        ${tr.body_area && tr.body_area !== 'Ön görüşme' ? `<div class="apt-detail-row">
+          <span class="apt-detail-icon"><i class="fas fa-map-marker-alt"></i></span>
+          <span class="apt-detail-label">Bölge:</span>
+          <span class="apt-detail-value">${escapeHtml(tr.body_area)}</span>
+        </div>` : ''}
+        ${priceRow}
+        ${googlePriceHintRow(a)}
+      </div>
+      <div class="apt-card-footer">
+        ${renderAppointmentStatusControls(a.id, a.status, a)}
+        ${renderWhatsAppBtnHtml(a.customer?.phone)}
+      </div>
+    </div>`;
+}
+
 function renderAppointmentsGrouped(containerId, items) {
   const container = $(containerId);
   if (!container) return;
@@ -3218,58 +3273,7 @@ function renderAppointmentsGrouped(containerId, items) {
       </div>
       <div class="apt-date-cards">`;
     dayItems.forEach((a) => {
-      const customer = customerDisplayName(a.customer);
-      const artist   = a.staff?.name || '-';
-      const tr       = a.tattoo_request || {};
-      const price    = parseFloat(a.price || 0);
-      const priceRow = price > 0
-        ? `<div class="apt-detail-row">
-             <span class="apt-detail-icon"><i class="fas fa-tag"></i></span>
-             <span class="apt-detail-label">Fiyat:</span>
-             <span class="apt-detail-value" style="color:var(--accent);font-weight:400;">${price.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</span>
-           </div>`
-        : '';
-      html += `
-        <div class="appointment-card status-${escapeHtml(a.status)}" data-apt-id="${a.id}">
-          <div class="apt-card-top">
-            <div class="apt-datetime">
-              <div class="appointment-time"><i class="fas fa-clock"></i> ${escapeHtml(a.time)}</div>
-            </div>
-            <div class="apt-card-badges">
-              ${appointmentSourceBadgeHtml(a.source)}
-              ${tr.body_area === 'Ön görüşme' ? '<span class="status-badge preconsult"><i class="fas fa-comments"></i> Ön Görüşme</span>' : ''}
-              <span class="status-badge ${escapeHtml(a.status)}">${escapeHtml(statusText(a.status))}</span>
-            </div>
-          </div>
-          <div class="apt-card-body">
-            <div class="apt-detail-row">
-              <span class="apt-detail-icon"><i class="fas fa-user"></i></span>
-              <span class="apt-detail-label">Müşteri:</span>
-              <span class="apt-detail-value">${escapeHtml(customer)}</span>
-            </div>
-            <div class="apt-detail-row">
-              <span class="apt-detail-icon"><i class="fas fa-paint-brush"></i></span>
-              <span class="apt-detail-label">Sanatçı:</span>
-              <span class="apt-detail-value">${escapeHtml(artist)}</span>
-            </div>
-            <div class="apt-detail-row">
-              <span class="apt-detail-icon"><i class="fas fa-clock"></i></span>
-              <span class="apt-detail-label">Süre:</span>
-              <span class="apt-detail-value">${a.duration_minutes || 30} dk</span>
-            </div>
-            ${tr.body_area && tr.body_area !== 'Ön görüşme' ? `<div class="apt-detail-row">
-              <span class="apt-detail-icon"><i class="fas fa-map-marker-alt"></i></span>
-              <span class="apt-detail-label">Bölge:</span>
-              <span class="apt-detail-value">${escapeHtml(tr.body_area)}</span>
-            </div>` : ''}
-            ${priceRow}
-            ${googlePriceHintRow(a)}
-          </div>
-          <div class="apt-card-footer">
-            ${renderAppointmentStatusControls(a.id, a.status, a)}
-            ${renderWhatsAppBtnHtml(a.customer?.phone)}
-          </div>
-        </div>`;
+      html += appointmentCardHtml(a);
     });
     html += `</div></div>`;
   });
@@ -3434,6 +3438,7 @@ async function loadAppointments() {
   if (tableView && tableView.style.display !== 'none') {
     void renderAppointmentsTable(_appointmentsData, 'all-appointments-table');
   }
+  refreshMonthViewsIfVisible();
 }
 
 // =============================================
@@ -3830,25 +3835,209 @@ async function renderAppointmentsTable(itemsRaw, tableContainerId) {
   wrap.querySelector('[data-week-nav="today"]')?.addEventListener('click', () => nav('today'));
 }
 
-function setupViewToggle(listBtnId, tableBtnId, listViewId, tableViewId, tableContainerId) {
+// =============================================
+// AYLIK GORUNUM (Google Takvim tarzi, ufak sanatci-renkli etiketler)
+// =============================================
+const _monthStartByContainer = {};
+const MONTH_CHIP_LIMIT_DESKTOP = 4;
+const MONTH_CHIP_LIMIT_MOBILE = 3;
+
+function monthStartFor(containerId) {
+  if (!_monthStartByContainer[containerId]) {
+    const n = new Date();
+    _monthStartByContainer[containerId] = new Date(n.getFullYear(), n.getMonth(), 1);
+  }
+  return _monthStartByContainer[containerId];
+}
+
+function isMobileMonthView() {
+  return window.matchMedia('(max-width: 700px)').matches;
+}
+
+function monthItemsFor(containerId) {
+  const isAll = containerId === 'all-appointments-month-container';
+  const apts = (isAll ? _allAppointmentsData : _appointmentsData) || [];
+  const offs = (isAll ? _allAppointmentsOffDays : _appointmentsOffDays) || [];
+  const staffFilter = isAll ? ($('all-appointments-staff-filter')?.value || '') : '';
+  const aptItems = apts.filter((a) => !staffFilter || String(a.staff?.id) === String(staffFilter));
+  const offItems = offs
+    .filter((t) => !staffFilter || !t.staff?.id || String(t.staff.id) === String(staffFilter))
+    .map((t) => ({
+      id: `off-${t.id}`,
+      kind: 'off_day',
+      date: t.date,
+      time: t.is_full_day || !t.start_time ? '00:00' : t.start_time,
+      status: 'off_day',
+      customer: { full_name: t.reason ? `Off · ${t.reason}` : 'Off Day' },
+      staff: t.staff || {},
+      _offLabel: `${t.staff?.name ? t.staff.name.split(' ')[0] + ' · ' : ''}Off Day${t.reason ? ' · ' + t.reason : ''}`,
+    }));
+  return aptItems.concat(offItems);
+}
+
+function monthChipHtml(a, mobile) {
+  const isOff = a.kind === 'off_day';
+  const hex = isOff ? '#616161' : (a.staff?.color_hex || '#616161');
+  const light = !isOff && isLightColor(hex);
+  const first = (a.customer?.full_name || '').trim() || customerContactLabel(a.customer, 'Müşteri');
+  const mark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ' }[a.status] || '';
+  const label = isOff ? a._offLabel : `${mobile ? '' : `${String(a.time).slice(0, 5)} `}${mark}${first}`;
+  const fade = a.status === 'cancelled' ? 'opacity:.45;' : '';
+  return `<button type="button" class="month-chip${light ? ' month-chip--light' : ''}${isOff ? ' month-chip--off' : ''}" data-apt-ref="${escapeHtml(String(a.id))}" style="background:${escapeHtml(hex)};${fade}" title="${escapeHtml(`${String(a.time).slice(0, 5)} · ${first}`)}">${escapeHtml(label)}</button>`;
+}
+
+function renderAppointmentsMonth(containerId) {
+  const wrap = $(containerId);
+  if (!wrap) return;
+  const start = monthStartFor(containerId);
+  const year = start.getFullYear();
+  const month = start.getMonth();
+  const mobile = isMobileMonthView();
+  const limit = mobile ? MONTH_CHIP_LIMIT_MOBILE : MONTH_CHIP_LIMIT_DESKTOP;
+  const gridStart = getMondayOfWeek(start);
+  const last = new Date(year, month + 1, 0);
+  const weeks = Math.ceil(((getMondayOfWeek(last).getTime() - gridStart.getTime()) / 86400000 + 7) / 7);
+  const items = monthItemsFor(containerId);
+  const byDate = {};
+  items.forEach((a) => { (byDate[a.date] = byDate[a.date] || []).push(a); });
+  Object.values(byDate).forEach((list) => list.sort((x, y) => String(x.time).localeCompare(String(y.time))));
+
+  const todayStr = formatTrDate(normalizeDateOnly(new Date()));
+  const monthNames = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+  const dayNames = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+  let cells = '';
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = addDays(gridStart, i);
+    const ds = formatTrDate(d);
+    const list = byDate[ds] || [];
+    const outside = d.getMonth() !== month;
+    const shown = list.slice(0, limit).map((a) => monthChipHtml(a, mobile)).join('');
+    const more = list.length > limit ? `<span class="month-more">+${list.length - limit}</span>` : '';
+    cells += `<div class="month-cell${outside ? ' is-outside' : ''}${ds === todayStr ? ' is-today' : ''}" data-date="${ds}">
+      <span class="month-daynum">${d.getDate()}</span>${shown}${more}
+    </div>`;
+  }
+  wrap.innerHTML = `<div class="month-nav">
+      <button type="button" class="month-nav-btn" data-month-nav="-1" aria-label="Önceki ay"><i class="fas fa-chevron-left"></i></button>
+      <div class="month-title">${monthNames[month]} ${year}</div>
+      <button type="button" class="month-nav-btn" data-month-nav="1" aria-label="Sonraki ay"><i class="fas fa-chevron-right"></i></button>
+      <button type="button" class="month-today-btn" data-month-nav="0">Bugün</button>
+    </div>
+    <div class="month-grid">
+      ${dayNames.map((n) => `<div class="month-dow">${n}</div>`).join('')}
+      ${cells}
+    </div>`;
+
+  wrap.querySelectorAll('[data-month-nav]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const dir = parseInt(btn.getAttribute('data-month-nav'), 10);
+      if (dir === 0) {
+        const n = new Date();
+        _monthStartByContainer[containerId] = new Date(n.getFullYear(), n.getMonth(), 1);
+      } else {
+        _monthStartByContainer[containerId] = new Date(year, month + dir, 1);
+      }
+      renderAppointmentsMonth(containerId);
+    });
+  });
+  wrap.querySelectorAll('.month-cell').forEach((cell) => {
+    cell.addEventListener('click', (e) => {
+      const date = cell.getAttribute('data-date');
+      const chip = e.target.closest('.month-chip');
+      const list = byDate[date] || [];
+      if (!list.length) return;
+      if (chip && !mobile) {
+        const apt = list.find((a) => String(a.id) === chip.getAttribute('data-apt-ref'));
+        if (apt && apt.kind !== 'off_day') { openAppointmentDetail(apt); return; }
+      }
+      openMonthDaySheet(date, list);
+    });
+  });
+}
+
+function refreshMonthViewsIfVisible() {
+  [['appointments-month-view', 'all-appointments-month'],
+   ['all-appointments-month-view', 'all-appointments-month-container']].forEach(([viewId, containerId]) => {
+    const view = $(viewId);
+    if (view && view.style.display !== 'none') renderAppointmentsMonth(containerId);
+  });
+}
+
+function closeAppointmentDetail() {
+  const overlay = $('apt-detail-overlay');
+  if (overlay) overlay.style.display = 'none';
+  document.body.classList.remove('manual-appt-modal-open');
+}
+
+function showAppointmentDetailOverlay(title, html) {
+  const overlay = $('apt-detail-overlay');
+  if (!overlay) return null;
+  $('apt-detail-title').textContent = title;
+  const body = $('apt-detail-body');
+  body.innerHTML = html;
+  overlay.style.display = 'flex';
+  body.scrollTop = 0;
+  return body;
+}
+
+function openAppointmentDetail(a) {
+  const dateLabel = formatDateParts(a.date).label;
+  const body = showAppointmentDetailOverlay(`${dateLabel} · ${String(a.time).slice(0, 5)}`, appointmentCardHtml(a));
+  if (!body) return;
+  const done = async () => { closeAppointmentDetail(); await reloadActiveAdminAppointments(); };
+  bindAppointmentStatusControls(body, done);
+  body.querySelectorAll('.apt-edit-btn').forEach((btn) => btn.addEventListener('click', closeAppointmentDetail));
+}
+
+function openMonthDaySheet(date, list) {
+  const { label, dayName } = formatDateParts(date);
+  const rows = list.map((a) => {
+    const isOff = a.kind === 'off_day';
+    const hex = isOff ? '#616161' : (a.staff?.color_hex || '#616161');
+    const name = isOff ? a._offLabel : customerDisplayName(a.customer);
+    const mark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ', cancelled: '✕ ' }[a.status] || '';
+    return `<button type="button" class="day-sheet-row" data-apt-ref="${escapeHtml(String(a.id))}" ${isOff ? 'disabled' : ''}>
+      <span class="day-sheet-dot" style="background:${escapeHtml(hex)}"></span>
+      <span class="day-sheet-time">${isOff ? 'Tüm gün' : escapeHtml(String(a.time).slice(0, 5))}</span>
+      <span class="day-sheet-main"><strong>${mark}${escapeHtml(name)}</strong>${isOff ? '' : `<small>${escapeHtml(a.staff?.name || '')} · ${a.duration_minutes || 30} dk</small>`}</span>
+    </button>`;
+  }).join('');
+  const body = showAppointmentDetailOverlay(`${label} ${dayName} · ${list.length} kayıt`, `<div class="day-sheet">${rows}</div>`);
+  if (!body) return;
+  body.querySelectorAll('.day-sheet-row:not([disabled])').forEach((row) => {
+    row.addEventListener('click', () => {
+      const apt = list.find((a) => String(a.id) === row.getAttribute('data-apt-ref'));
+      if (apt) openAppointmentDetail(apt);
+    });
+  });
+}
+
+function setupViewToggle(listBtnId, tableBtnId, listViewId, tableViewId, tableContainerId, monthBtnId, monthViewId, monthContainerId) {
   const listBtn   = $(listBtnId);
   const tableBtn  = $(tableBtnId);
   const listView  = $(listViewId);
   const tableView = $(tableViewId);
+  const monthBtn  = monthBtnId ? $(monthBtnId) : null;
+  const monthView = monthViewId ? $(monthViewId) : null;
   if (!listBtn || !tableBtn) return;
+  const showOnly = (active) => {
+    [[listBtn, listView, 'list'], [tableBtn, tableView, 'table'], [monthBtn, monthView, 'month']].forEach(([btn, view, key]) => {
+      if (btn) btn.classList.toggle('active', key === active);
+      if (view) view.style.display = key === active ? 'block' : 'none';
+    });
+  };
 
-  listBtn.addEventListener('click', () => {
-    listBtn.classList.add('active');
-    tableBtn.classList.remove('active');
-    if (listView)  listView.style.display  = 'block';
-    if (tableView) tableView.style.display = 'none';
-  });
+  listBtn.addEventListener('click', () => showOnly('list'));
+
+  if (monthBtn) {
+    monthBtn.addEventListener('click', () => {
+      showOnly('month');
+      renderAppointmentsMonth(monthContainerId);
+    });
+  }
 
   tableBtn.addEventListener('click', () => {
-    tableBtn.classList.add('active');
-    listBtn.classList.remove('active');
-    if (listView)  listView.style.display  = 'none';
-    if (tableView) tableView.style.display = 'block';
+    showOnly('table');
     // İlk kez tablo açılıyorsa render et
     const data = tableContainerId === 'all-appointments-table' ? _appointmentsData : _allAppointmentsData;
     void renderAppointmentsTable(data, tableContainerId);
@@ -3892,6 +4081,7 @@ async function loadAllAppointments() {
   if (tableView && tableView.style.display !== 'none') {
     void renderAppointmentsTable(_allAppointmentsData, 'all-appointments-table-container');
   }
+  refreshMonthViewsIfVisible();
 }
 
 async function populateStaffFilter(selectId) {
@@ -4977,11 +5167,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // View toggle — Randevular
   setupViewToggle('view-list-btn', 'view-table-btn',
-    'appointments-list-view', 'appointments-table-view', 'all-appointments-table');
+    'appointments-list-view', 'appointments-table-view', 'all-appointments-table',
+    'view-month-btn', 'appointments-month-view', 'all-appointments-month');
 
   // View toggle — Tüm Randevular (super admin)
   setupViewToggle('all-view-list-btn', 'all-view-table-btn',
-    'all-appointments-list-view', 'all-appointments-table-view', 'all-appointments-table-container');
+    'all-appointments-list-view', 'all-appointments-table-view', 'all-appointments-table-container',
+    'all-view-month-btn', 'all-appointments-month-view', 'all-appointments-month-container');
+  $('apt-detail-close')?.addEventListener('click', closeAppointmentDetail);
+  $('apt-detail-overlay')?.addEventListener('click', (e) => { if (e.target.id === 'apt-detail-overlay') closeAppointmentDetail(); });
+  window.addEventListener('resize', () => refreshMonthViewsIfVisible());
 
   // Tüm Randevular filtre butonu
   $('load-all-appointments-btn')?.addEventListener('click', loadAllAppointments);
@@ -4996,6 +5191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (tableView && tableView.style.display !== 'none') {
       void renderAppointmentsTable(_allAppointmentsData, 'all-appointments-table-container');
     }
+    refreshMonthViewsIfVisible();
   });
 
   // Geçmiş Randevular filtre butonları
