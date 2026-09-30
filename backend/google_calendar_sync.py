@@ -29,6 +29,7 @@ from error_codes import E_GCAL_001, E_GCAL_002, E_GCAL_003, E_GCAL_004
 from logging_setup import log_error
 from whatsapp_messages import format_try
 from notifications import create_notification
+import staff_settings
 
 logger = logging.getLogger(__name__)
 
@@ -91,79 +92,62 @@ _MIN_ARTIST_KEY_LEN = 3
 _unmatched_artist_logged = set()
 _UNMATCHED_LOG_CAP = 400
 
-# Google Calendar etkinlik renkleri (colorId 1–11)
-# https://developers.google.com/workspace/calendar/api/v3/reference/colors
-GCAL_COLOR_TOMATO = '11'      # Domates
-GCAL_COLOR_SAGE = '2'         # Adaçayı
-GCAL_COLOR_TANGERINE = '6'    # Mandalina
-GCAL_COLOR_BANANA = '5'       # Muz
-GCAL_COLOR_GRAPHITE = '8'      # Granit / Grafit
+# Google Calendar etkinlik renkleri (colorId 1–11): tanım ve adlar staff_settings.py içinde.
+# Personelin rengi artık veritabanında (artists.calendar_color_id); panelden seçilir.
+GCAL_COLOR_GRAPHITE = staff_settings.RESERVED_COLOR_ID  # Off Day etkinlikleri (personele atanmaz)
+GCAL_COLOR_NAMES = {c['id']: c['name_en'] for c in staff_settings.CALENDAR_COLORS}
 
-GCAL_COLOR_NAMES = {
-    '1': 'Lavender',
-    '2': 'Sage',
-    '3': 'Grape',
-    '4': 'Flamingo',
-    '5': 'Banana',
-    '6': 'Tangerine',
-    '7': 'Peacock',
-    '8': 'Graphite',
-    '9': 'Blueberry',
-    '10': 'Basil',
-    '11': 'Tomato',
-}
+_STAFF_COLOR_CACHE_TTL_SECONDS = 30
+_staff_color_lock = threading.Lock()
+_staff_color_cache = {'map': None, 'at': 0.0}
 
-# İsim (katlanmış ilk kelime) — stüdyo paleti
-GCAL_STAFF_COLOR_BY_NAME = {
-    'tuncer': GCAL_COLOR_TOMATO,
-    'mert': GCAL_COLOR_SAGE,
-    'berke': GCAL_COLOR_TANGERINE,
-    'ibrahim': GCAL_COLOR_BANANA,
-}
 
-# staff_id yedek eşleme (Roof production)
-GCAL_STAFF_COLOR_BY_ID = {
-    1: GCAL_COLOR_TANGERINE,  # Berke — Mandalina
-    2: GCAL_COLOR_TOMATO,     # Tuncer — Domates
-    3: GCAL_COLOR_BANANA,     # İbrahim — Muz
-    4: GCAL_COLOR_SAGE,       # Mert — Adaçayı
-}
+def reset_staff_color_cache():
+    """Personelin rengi değişince önbelleği düşür."""
+    with _staff_color_lock:
+        _staff_color_cache['map'] = None
+        _staff_color_cache['at'] = 0.0
 
-# Bilinmeyen sanatçı için dönüşümlü palet
-GCAL_STAFF_COLOR_IDS = (
-    GCAL_COLOR_TANGERINE,
-    GCAL_COLOR_TOMATO,
-    GCAL_COLOR_BANANA,
-    GCAL_COLOR_SAGE,
-    '7',
-    '10',
-    '9',
-    '4',
-    '3',
-    '1',
-)
+
+def _staff_color_map():
+    """{staff_id: calendar_color_id} (kısa ömürlü önbellek). DB'ye ulaşılamazsa son bilinen değer."""
+    now = time.time()
+    with _staff_color_lock:
+        cached = _staff_color_cache['map']
+        if cached is not None and (now - _staff_color_cache['at']) < _STAFF_COLOR_CACHE_TTL_SECONDS:
+            return cached
+    conn = None
+    try:
+        conn = _connect()
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, calendar_color_id FROM artists')
+        rows = cursor.fetchall() or []
+        cursor.close()
+        fresh = {int(r[0]): (str(r[1]) if r[1] else None) for r in rows}
+        with _staff_color_lock:
+            _staff_color_cache['map'] = fresh
+            _staff_color_cache['at'] = time.time()
+        return fresh
+    except Exception as exc:
+        logger.warning('Personel renkleri okunamadi, son bilinen deger kullanilacak: %s', str(exc)[:160])
+        return cached if cached is not None else {}
+    finally:
+        _disconnect(conn)
 
 
 def _color_id_for_staff(staff_id, staff_name=None):
-    """Sanatçıya sabit Google Calendar colorId (1-11)."""
-    if staff_name:
-        first = _fold_tr(str(staff_name).split()[0] if str(staff_name).split() else '')
-        if first in GCAL_STAFF_COLOR_BY_NAME:
-            return GCAL_STAFF_COLOR_BY_NAME[first]
+    """Sanatçının Google Calendar colorId'si (1-11): panelden seçilen renk; atanmamışsa
+    sabit yedek renk. staff_name geriye dönük uyumluluk için duruyor, artık kullanılmıyor."""
     try:
         sid = int(staff_id) if staff_id else None
     except (TypeError, ValueError):
         sid = None
-    if sid in GCAL_STAFF_COLOR_BY_ID:
-        return GCAL_STAFF_COLOR_BY_ID[sid]
     if not sid:
         return GCAL_COLOR_GRAPHITE
-    return GCAL_STAFF_COLOR_IDS[(max(sid, 1) - 1) % len(GCAL_STAFF_COLOR_IDS)]
-
-
-def _staff_color_label(staff_id, staff_name=None):
-    color_id = _color_id_for_staff(staff_id, staff_name)
-    return GCAL_COLOR_NAMES.get(color_id, color_id)
+    chosen = _staff_color_map().get(sid)
+    if chosen in staff_settings.SELECTABLE_COLOR_IDS:
+        return chosen
+    return staff_settings.fallback_color_id(sid)
 
 
 _STATUS_LABELS = {
@@ -3075,6 +3059,7 @@ def reset_artists_cache():
     with _artists_cache_lock:
         _artists_cache['rows'] = None
         _artists_cache['at'] = 0.0
+    reset_staff_color_cache()
 
 
 def _load_bookable_artists(cursor):
@@ -3320,6 +3305,74 @@ def refresh_google_event_colors(limit=400):
         # conn.close() havuzdan alinan baglantiyi havuza geri vermez; slot
         # kalici olarak sizardi. _disconnect dogru saglayiciyi kullanir.
         _disconnect(conn)
+
+
+def recolor_staff_events(staff_id, days_back=30):
+    """Bir personelin (son `days_back` gün + gelecek) etkinliklerinin YALNIZCA rengini günceller;
+    başlık/açıklama dokunulmaz (Google'dan elle yazılmış etkinlikler bozulmasın)."""
+    if not is_google_calendar_enabled():
+        return {'ok': False, 'reason': 'disabled'}
+    calendar_id = get_google_calendar_config()['calendar_id']
+    color_id = _color_id_for_staff(staff_id)
+    conn = None
+    updated = 0
+    failed = 0
+    try:
+        conn = _connect()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, google_event_id
+              FROM appointments
+             WHERE staff_id = %s
+               AND google_event_id IS NOT NULL
+               AND status IS DISTINCT FROM 'cancelled'
+               AND appointment_date >= CURRENT_DATE - %s::int
+             ORDER BY appointment_date, id
+            """,
+            (int(staff_id), int(days_back)),
+        )
+        rows = cursor.fetchall() or []
+        cursor.close()
+        for apt_id, event_id in rows:
+            try:
+                _google_execute(
+                    lambda eid=event_id: (
+                        _get_calendar_service().events().patch(
+                            calendarId=calendar_id,
+                            eventId=eid,
+                            body={'colorId': color_id},
+                        )
+                    )
+                )
+                updated += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    'Personel rengi guncellenemedi | apt=%s event=%s hata=%s',
+                    apt_id, event_id, str(exc)[:160],
+                )
+        logger.info(
+            'Personel etkinlik renkleri guncellendi | staff=%s renk=%s ok=%s fail=%s',
+            staff_id, color_id, updated, failed,
+        )
+        return {'ok': True, 'updated': updated, 'failed': failed, 'total': len(rows)}
+    except Exception as e:
+        log_error(logger, E_GCAL_001, 'Personel etkinlik renkleri guncellenemedi', exc=e)
+        return {'ok': False, 'updated': updated, 'failed': failed, 'error': str(e)[:200]}
+    finally:
+        _disconnect(conn)
+
+
+def recolor_staff_events_async(staff_id, days_back=30):
+    """recolor_staff_events'i arka plan thread'inde çalıştırır (istek bloklanmasın)."""
+    def _run():
+        try:
+            recolor_staff_events(staff_id, days_back)
+        except Exception as exc:
+            logger.warning('Personel renk guncelleme thread hatasi: %s', str(exc)[:160])
+
+    threading.Thread(target=_run, name=f'gcal-recolor-{staff_id}', daemon=True).start()
 
 
 def _notify_import_conflict(

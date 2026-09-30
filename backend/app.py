@@ -48,6 +48,7 @@ from whatsapp_messages import (
     format_try,
 )
 from google_calendar_sync import (
+    recolor_staff_events_async,
     link_open_tattoo_request,
     enqueue_appointment_sync,
     enqueue_time_off_sync,
@@ -126,6 +127,7 @@ from loyalty_points import (
 )
 from notifications import create_notification
 import push_notifications as push_notif
+import staff_settings
 import os
 import json
 import random
@@ -2810,6 +2812,51 @@ def ensure_artist_is_active_column():
         release_db_connection(conn)
 
 
+def ensure_staff_color_and_commission_columns():
+    """Personel takvim rengi / kazanç yüzdesi sütunları (idempotent).
+
+    - artists.calendar_color_id: Google Takvim etkinlik rengi (colorId 1-11, Grafit hariç).
+      İlk kurulumda mevcut personelin eski (koda gömülü) renkleri aynen aktarılır.
+    - artists.commission_percent: personel kazanç yüzdesi (30 / 50 / 70, varsayılan 50).
+    - appointments.staff_share_percent: randevu "tamamlandı" yapıldığı andaki yüzde
+      (yüzdeyi sonradan değiştirmek geçmiş ayların hesabını oynatmasın diye).
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT pg_advisory_xact_lock(7426003)')
+        cursor.execute('ALTER TABLE artists ADD COLUMN IF NOT EXISTS calendar_color_id VARCHAR(2)')
+        cursor.execute('ALTER TABLE artists ADD COLUMN IF NOT EXISTS commission_percent SMALLINT NOT NULL DEFAULT 50')
+        cursor.execute('ALTER TABLE appointments ADD COLUMN IF NOT EXISTS staff_share_percent SMALLINT')
+        cursor.execute('ALTER TABLE artists DROP CONSTRAINT IF EXISTS artists_calendar_color_id_check')
+        cursor.execute(
+            "ALTER TABLE artists ADD CONSTRAINT artists_calendar_color_id_check "
+            "CHECK (calendar_color_id IS NULL OR calendar_color_id IN ('1','2','3','4','5','6','7','9','10','11'))"
+        )
+        cursor.execute('ALTER TABLE artists DROP CONSTRAINT IF EXISTS artists_commission_percent_check')
+        cursor.execute(
+            'ALTER TABLE artists ADD CONSTRAINT artists_commission_percent_check '
+            'CHECK (commission_percent IN (30, 50, 70))'
+        )
+        # Roof production: Berke=Mandalina, Tuncer=Domates, Ibrahim=Muz, Mert=Adaçayı.
+        cursor.execute(
+            """
+            UPDATE artists
+               SET calendar_color_id = CASE id WHEN 1 THEN '6' WHEN 2 THEN '11' WHEN 3 THEN '5' WHEN 4 THEN '2' END
+             WHERE calendar_color_id IS NULL AND id IN (1, 2, 3, 4)
+            """
+        )
+        conn.commit()
+        cursor.close()
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.warning('ensure_staff_color_and_commission_columns: %s', e)
+    finally:
+        release_db_connection(conn)
+
+
 def ensure_artist_token_version_column():
     """artists.token_version: admin JWT'lerini gecersiz kilmak icin.
 
@@ -4604,7 +4651,10 @@ def update_appointment_status(appointment_id):
                 if new_status == 'completed':
                     cursor.execute("""
                         UPDATE appointments
-                        SET status = %s, completed_at = CURRENT_TIMESTAMP
+                        SET status = %s, completed_at = CURRENT_TIMESTAMP,
+                            staff_share_percent = (
+                                SELECT commission_percent FROM artists WHERE id = appointments.staff_id
+                            )
                         WHERE id = %s
                     """, (new_status, appointment_id))
                 else:
@@ -4803,7 +4853,8 @@ def get_staff_list():
 
         cursor.execute("""
             SELECT id, name, phone, role, profile_photo, COALESCE(display_order, 0) as display_order,
-                   instagram_url, COALESCE(calendar_aliases, '{}'::text[]), COALESCE(is_active, TRUE)
+                   instagram_url, COALESCE(calendar_aliases, '{}'::text[]), COALESCE(is_active, TRUE),
+                   calendar_color_id, commission_percent
             FROM artists
             ORDER BY display_order ASC, name
         """)
@@ -4811,9 +4862,10 @@ def get_staff_list():
         rows = cursor.fetchall()
         cursor.close()
 
+        show_commission = can_access_income()
         staff_list = []
         for row in rows:
-            staff_list.append({
+            item = {
                 'id': row[0],
                 'name': row[1],
                 'phone': row[2],
@@ -4823,14 +4875,60 @@ def get_staff_list():
                 'instagram_url': row[6] or '',
                 'calendar_aliases': list(row[7] or []),
                 'is_active': bool(row[8]),
-            })
+                'calendar_color_id': row[9],
+            }
+            # Kazanç yüzdesi gelir bilgisidir: yalnızca süper admin görür.
+            if show_commission:
+                item['commission_percent'] = int(row[10] or staff_settings.DEFAULT_COMMISSION_PERCENT)
+            staff_list.append(item)
         
-        return jsonify({'success': True, 'staff': staff_list})
+        return jsonify({
+            'success': True,
+            'staff': staff_list,
+            # Liste ve formda renk adı + örnek renk göstermek için (personele atanamayan Grafit dahil).
+            'colors': [
+                {k: c[k] for k in ('id', 'name_tr', 'name_en', 'hex')}
+                for c in staff_settings.CALENDAR_COLORS
+            ],
+        })
     except Exception as e:
         logger.error(f"get_staff_list hatası: {e}")
         return jsonify({'success': False, 'message': 'Personel listesi alınamadı'}), 500
     finally:
         release_db_connection(conn)
+
+@app.route('/api/admin/calendar-colors', methods=['GET'])
+@token_required
+def get_calendar_colors():
+    """Personel formundaki renk seçici: seçilebilir Google Takvim renkleri (ad + örnek renk)
+    ve her rengi şu an kullanan aktif personel."""
+    if not is_studio_admin():
+        return jsonify({'success': False, 'message': 'Bu sayfaya erişim yetkiniz yok'}), 403
+
+    exclude_staff_id = request.args.get('exclude_staff_id', type=int)
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        used = staff_settings.colors_in_use(cursor, exclude_staff_id)
+        cursor.close()
+        colors = [
+            {
+                'id': c['id'],
+                'name_tr': c['name_tr'],
+                'name_en': c['name_en'],
+                'hex': c['hex'],
+                'in_use_by': used.get(c['id'], []),
+            }
+            for c in staff_settings.SELECTABLE_COLORS
+        ]
+        return jsonify({'success': True, 'colors': colors})
+    except Exception as e:
+        logger.error(f"get_calendar_colors hatası: {e}")
+        return jsonify({'success': False, 'message': 'Renkler alınamadı'}), 500
+    finally:
+        release_db_connection(conn)
+
 
 @app.route('/api/admin/staff/<int:staff_id>/display-order', methods=['PATCH'])
 @token_required
@@ -4900,6 +4998,22 @@ def add_staff():
         instagram_url = normalize_instagram_url(instagram_raw)
         if not instagram_url:
             return jsonify({'success': False, 'message': 'Geçerli bir Instagram kullanıcı adı veya linki girin'}), 400
+
+    # Takvim rengi (panelden seçilir; boşsa kullanılmayan ilk renk atanır) ve kazanç yüzdesi.
+    try:
+        color_id = staff_settings.normalize_color_id(data.get('calendar_color_id'))
+    except ValueError as err:
+        return jsonify({'success': False, 'message': str(err)}), 400
+    commission_percent = staff_settings.DEFAULT_COMMISSION_PERCENT
+    raw_commission = data.get('commission_percent')
+    if raw_commission not in (None, '') and role == 'staff':
+        # Kazanç yüzdesini yalnızca süper admin belirler; diğerleri için varsayılan uygulanır.
+        if not can_access_income():
+            return jsonify({'success': False, 'message': 'Kazanç yüzdesini yalnızca süper admin belirleyebilir'}), 403
+        try:
+            commission_percent = staff_settings.normalize_commission_percent(raw_commission)
+        except ValueError as err:
+            return jsonify({'success': False, 'message': str(err)}), 400
     
     conn = None
     try:
@@ -4911,16 +5025,34 @@ def add_staff():
         if cursor.fetchone():
             cursor.close()
             return jsonify({'success': False, 'message': 'Bu telefon numarası zaten kayıtlı'}), 400
+
+        if role != 'tech_support':
+            if color_id is None:
+                color_id = staff_settings.first_free_color_id(cursor)
+            else:
+                used = staff_settings.colors_in_use(cursor).get(color_id)
+                if used and not data.get('allow_duplicate_color'):
+                    cursor.close()
+                    return jsonify({
+                        'success': False,
+                        'code': 'color_in_use',
+                        'message': f"Bu renk {', '.join(used)} tarafından kullanılıyor.",
+                        'used_by': used,
+                    }), 409
+        else:
+            color_id = None
         
         # Şifreyi hashle
         hashed_password = hash_password_bcrypt(password)
         aliases = parse_calendar_aliases(data.get('calendar_aliases'))
         
         cursor.execute("""
-            INSERT INTO artists (name, phone, password, role, profile_photo, instagram_url, calendar_aliases)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO artists (name, phone, password, role, profile_photo, instagram_url, calendar_aliases,
+                                 calendar_color_id, commission_percent)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (name, phone, hashed_password, role, profile_photo, instagram_url, aliases))
+        """, (name, phone, hashed_password, role, profile_photo, instagram_url, aliases,
+              color_id, commission_percent))
         
         new_id = cursor.fetchone()[0]
         conn.commit()
@@ -4964,7 +5096,8 @@ def update_staff(staff_id):
 
         cursor.execute(
             """
-            SELECT role, name, COALESCE(calendar_aliases, '{}'::text[])
+            SELECT role, name, COALESCE(calendar_aliases, '{}'::text[]),
+                   calendar_color_id, commission_percent
               FROM artists WHERE id = %s
             """,
             (staff_id,),
@@ -4979,10 +5112,52 @@ def update_staff(staff_id):
             return role_err
         current_name = existing[1] or ''
         current_aliases = list(existing[2] or [])
+        current_color_id = existing[3]
+        current_commission = int(existing[4] or staff_settings.DEFAULT_COMMISSION_PERCENT)
+        effective_role = role or existing[0]
+        color_changed = False
         
         # Dinamik güncelleme
         updates = []
         params = []
+
+        # Takvim rengi: boş değer mevcut rengi korur. Başka personelde kullanılıyorsa
+        # onay (allow_duplicate_color) istenir.
+        raw_color = data.get('calendar_color_id')
+        if raw_color not in (None, '') and effective_role != 'tech_support':
+            try:
+                new_color_id = staff_settings.normalize_color_id(raw_color)
+            except ValueError as err:
+                cursor.close()
+                return jsonify({'success': False, 'message': str(err)}), 400
+            if new_color_id and new_color_id != current_color_id:
+                used = staff_settings.colors_in_use(cursor, exclude_staff_id=staff_id).get(new_color_id)
+                if used and not data.get('allow_duplicate_color'):
+                    cursor.close()
+                    return jsonify({
+                        'success': False,
+                        'code': 'color_in_use',
+                        'message': f"Bu renk {', '.join(used)} tarafından kullanılıyor.",
+                        'used_by': used,
+                    }), 409
+                updates.append("calendar_color_id = %s")
+                params.append(new_color_id)
+                color_changed = True
+
+        # Kazanç yüzdesi (yalnızca personel rolü için geçerli; süper admin'e uygulanmaz).
+        raw_commission = data.get('commission_percent')
+        if raw_commission not in (None, '') and effective_role == 'staff':
+            try:
+                new_commission = staff_settings.normalize_commission_percent(raw_commission)
+            except ValueError as err:
+                cursor.close()
+                return jsonify({'success': False, 'message': str(err)}), 400
+            if new_commission != current_commission:
+                if not can_access_income():
+                    cursor.close()
+                    return jsonify({'success': False, 'message': 'Kazanç yüzdesini yalnızca süper admin değiştirebilir'}), 403
+                updates.append("commission_percent = %s")
+                params.append(new_commission)
         
         if name:
             updates.append("name = %s")
@@ -5052,6 +5227,9 @@ def update_staff(staff_id):
         conn.commit()
         cursor.close()
         reset_gcal_artists_cache()
+        if color_changed:
+            # Takvimdeki mevcut etkinlikler (son 30 gün + gelecek) yeni renge boyanır.
+            recolor_staff_events_async(staff_id)
         
         logger.info(f"Personel güncellendi: id={staff_id}")
         
@@ -5406,12 +5584,9 @@ def delete_time_off(time_off_id):
         release_db_connection(conn)
 
 
-STAFF_COMMISSION_RATE = Decimal('0.50')
-
-
-def _staff_share_amount(full_price):
-    """Personelin net kazancı — yapılan işin %50'si (Decimal, kuruş hassasiyetinde)."""
-    return (Decimal(full_price or 0) * STAFF_COMMISSION_RATE).quantize(Decimal('0.01'))
+def _staff_share_amount(full_price, percent=staff_settings.DEFAULT_COMMISSION_PERCENT):
+    """Personelin net kazancı — yapılan işin %percent'i (Decimal, kuruş hassasiyetinde)."""
+    return staff_settings.staff_share_amount(full_price, percent)
 
 
 @app.route('/api/admin/staff/<int:staff_id>/stats', methods=['GET'])
@@ -5439,14 +5614,19 @@ def get_staff_stats(staff_id):
         cursor = conn.cursor()
         
         # 1. Personel bilgilerini al
-        cursor.execute("SELECT name, role, profile_photo FROM artists WHERE id = %s", (staff_id,))
+        cursor.execute(
+            "SELECT name, role, profile_photo, commission_percent FROM artists WHERE id = %s",
+            (staff_id,),
+        )
         staff_info = cursor.fetchone()
         
         if not staff_info:
             cursor.close()
             return jsonify({'success': False, 'message': 'Personel bulunamadı'}), 404
 
+        # Stüdyo sahibi (super_admin) için personel payı uygulanmaz.
         apply_commission = (staff_info[1] or '') != 'super_admin'
+        staff_percent = int(staff_info[3] or staff_settings.DEFAULT_COMMISSION_PERCENT)
         
         # 2. Aylık istatistikler (dövme randevuları: appointments.price)
         cursor.execute("""
@@ -5467,7 +5647,6 @@ def get_staff_stats(staff_id):
         appointment_count = int(stats[1] or 0)
         total_income = Decimal(stats[2] or 0)
         total_minutes = int(stats[3] or 0)
-        staff_share_total = _staff_share_amount(total_income) if apply_commission else None
 
         # 3. Tamamlanan randevu gelir kalemleri
         cursor.execute("""
@@ -5477,7 +5656,8 @@ def get_staff_stats(staff_id):
                 a.appointment_time,
                 a.price,
                 COALESCE(c.name, ''),
-                COALESCE(c.surname, '')
+                COALESCE(c.surname, ''),
+                a.staff_share_percent
             FROM appointments a
             JOIN customers c ON a.customer_id = c.id
             WHERE a.staff_id = %s
@@ -5488,6 +5668,7 @@ def get_staff_stats(staff_id):
         """, (staff_id, month, year))
 
         completed_revenue_items = []
+        staff_share_total = Decimal('0.00') if apply_commission else None
         for row in cursor.fetchall():
             cust = f"{row[4]} {row[5]}".strip() or 'Müşteri'
             full_amount = Decimal(row[3] or 0)
@@ -5499,7 +5680,12 @@ def get_staff_stats(staff_id):
                 'customer_name': cust,
             }
             if apply_commission:
-                item['staff_share'] = float(_staff_share_amount(full_amount))
+                # Randevunun tamamlandığı andaki yüzde; yoksa personelin şimdiki yüzdesi.
+                item_percent = int(row[6]) if row[6] else staff_percent
+                item_share = _staff_share_amount(full_amount, item_percent)
+                item['share_percent'] = item_percent
+                item['staff_share'] = float(item_share)
+                staff_share_total += item_share
             completed_revenue_items.append(item)
         
         cursor.close()
@@ -5521,7 +5707,7 @@ def get_staff_stats(staff_id):
                 'appointment_count': appointment_count,
                 'total_income': float(total_income),
                 'staff_share_total': float(staff_share_total) if staff_share_total is not None else None,
-                'commission_percent': int(STAFF_COMMISSION_RATE * 100) if apply_commission else 0,
+                'commission_percent': staff_percent if apply_commission else 0,
                 'total_duration_minutes': total_minutes,
                 'completed_revenue_items': completed_revenue_items,
             }
@@ -7525,6 +7711,7 @@ start_scheduler_if_master()
 ensure_artist_instagram_column()
 ensure_artist_is_active_column()
 ensure_artist_token_version_column()
+ensure_staff_color_and_commission_columns()
 ensure_customer_phone_length()
 
 def _shutdown_scheduler_and_lock():

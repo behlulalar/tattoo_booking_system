@@ -722,6 +722,96 @@ async function apiCall(endpoint, options = {}) {
 // =========================
 
 let staffModalState = { mode: 'create', staffId: null };
+// Google Takvim renk tablosu (GET /admin/staff ile gelir) ve formdaki seçilebilir renkler.
+let staffColorTable = [];
+let staffColorChoices = [];
+
+function staffColorInfo(colorId) {
+  return staffColorTable.find((c) => String(c.id) === String(colorId)) || null;
+}
+
+function safeHexColor(hex) {
+  return /^#[0-9A-Fa-f]{6}$/.test(String(hex || '')) ? hex : '#888888';
+}
+
+function staffFormRole() {
+  return ($('staff-role-select')?.value || $('staff-role')?.value || 'staff').trim();
+}
+
+// Rol'e göre alanlar: teknik destek takvimde randevu almaz (renk yok); kazanç yüzdesi yalnızca
+// personel sanatçı için ve yalnızca süper admin görür/değiştirir.
+function updateStaffFormRoleFields() {
+  const role = staffFormRole();
+  const colorGroup = $('staff-color-group');
+  if (colorGroup) colorGroup.style.display = role === 'tech_support' ? 'none' : '';
+  const commissionGroup = $('staff-commission-group');
+  if (commissionGroup) commissionGroup.style.display = (role === 'staff' && canAccessIncome()) ? '' : 'none';
+}
+
+function setStaffCommissionValue(percent) {
+  const value = [30, 50, 70].includes(Number(percent)) ? Number(percent) : 50;
+  if ($('staff-commission')) $('staff-commission').value = String(value);
+  document.querySelectorAll('#staff-commission-buttons .percent-btn').forEach((btn) => {
+    btn.classList.toggle('active', Number(btn.getAttribute('data-percent')) === value);
+  });
+}
+
+function updateStaffColorHint() {
+  const hint = $('staff-color-hint');
+  if (!hint) return;
+  const selected = $('staff-color-id')?.value || '';
+  const choice = staffColorChoices.find((c) => String(c.id) === String(selected));
+  if (choice && choice.in_use_by && choice.in_use_by.length) {
+    hint.textContent = `Bu renk ${choice.in_use_by.join(', ')} tarafından kullanılıyor; kaydederken onay istenecek.`;
+    hint.classList.add('warn');
+  } else {
+    hint.textContent = "Google Takvim'de bu personelin randevuları bu renkte görünür.";
+    hint.classList.remove('warn');
+  }
+}
+
+function renderStaffColorGrid() {
+  const grid = $('staff-color-grid');
+  if (!grid) return;
+  const selected = $('staff-color-id')?.value || '';
+  if (!staffColorChoices.length) {
+    grid.innerHTML = '<span class="color-loading">Renkler alınamadı</span>';
+    return;
+  }
+  grid.innerHTML = staffColorChoices.map((c) => {
+    const used = (c.in_use_by || []).length ? `<small class="color-used">${escapeHtml(c.in_use_by.join(', '))}</small>` : '';
+    return `
+      <button type="button" class="color-swatch-btn ${String(c.id) === String(selected) ? 'selected' : ''}"
+              data-color-id="${escapeHtml(String(c.id))}" role="radio" aria-checked="${String(c.id) === String(selected)}">
+        <span class="color-dot" style="background:${safeHexColor(c.hex)}"></span>
+        <span class="color-meta"><span>${escapeHtml(c.name_tr)}</span>${used}</span>
+      </button>`;
+  }).join('');
+  grid.querySelectorAll('.color-swatch-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if ($('staff-color-id')) $('staff-color-id').value = btn.getAttribute('data-color-id');
+      renderStaffColorGrid();
+      updateStaffColorHint();
+    });
+  });
+}
+
+async function loadStaffColorChoices(excludeStaffId, selectedId) {
+  const grid = $('staff-color-grid');
+  if (grid) grid.innerHTML = '<span class="color-loading">Renkler yükleniyor...</span>';
+  const qs = excludeStaffId ? `?exclude_staff_id=${encodeURIComponent(String(excludeStaffId))}` : '';
+  const { ok, data } = await apiCall(`/admin/calendar-colors${qs}`, { method: 'GET' });
+  staffColorChoices = (ok && data.success) ? (data.colors || []) : [];
+  let value = selectedId || '';
+  // Yeni personelde kimsenin kullanmadığı ilk rengi öner.
+  if (!value) {
+    const free = staffColorChoices.find((c) => !(c.in_use_by || []).length);
+    value = free ? String(free.id) : '';
+  }
+  if ($('staff-color-id')) $('staff-color-id').value = value;
+  renderStaffColorGrid();
+  updateStaffColorHint();
+}
 let staffPhotoData = undefined;
 let staffPhotoChanged = false;
 
@@ -830,6 +920,11 @@ function openStaffModal({ mode, staff } = { mode: 'create', staff: null }) {
   staffPhotoData = undefined;
   staffPhotoChanged = false;
   resetStaffPhotoPreview(staff?.profile_photo || null);
+
+  // Takvim rengi ve kazanç yüzdesi
+  setStaffCommissionValue(staff?.commission_percent || 50);
+  updateStaffFormRoleFields();
+  loadStaffColorChoices(staff?.id ?? null, staff?.calendar_color_id || '');
 
   if (overlay) overlay.style.display = 'flex';
 }
@@ -3938,6 +4033,14 @@ function renderStaff(items) {
       const roleClass = s.role === 'super_admin' ? 'super_admin' : (s.role === 'tech_support' ? 'tech_support' : '');
       const canEditTarget = viewerIncome || s.role !== 'super_admin';
       const phonePretty = formatPhonePretty(s.phone);
+      const colorInfo = staffColorInfo(s.calendar_color_id);
+      const colorTag = colorInfo
+        ? `<div class="staff-color-tag" title="Takvim rengi"><span class="color-dot" style="background:${safeHexColor(colorInfo.hex)}"></span>${escapeHtml(colorInfo.name_tr)}${
+            viewerIncome && s.role === 'staff' && s.commission_percent
+              ? `<span class="staff-commission-tag" title="Kazanç yüzdesi">%${escapeHtml(String(s.commission_percent))}</span>`
+              : ''
+          }</div>`
+        : '';
       return `
         <div class="staff-card">
           <div class="staff-order-badge">#${escapeHtml(String(s.display_order ?? 0))}</div>
@@ -3946,6 +4049,7 @@ function renderStaff(items) {
           </div>
           <div class="staff-name">${escapeHtml(s.name)}</div>
           <div class="staff-role ${roleClass}">${escapeHtml(roleLabel(s.role))}</div>
+          ${colorTag}
           <div class="staff-phone"><i class="fas fa-phone"></i> ${escapeHtml(phonePretty)}</div>
 
           <div class="staff-order-input-group">
@@ -4046,6 +4150,7 @@ async function loadStaff() {
     container.innerHTML = `<p class="empty-message">Hata: ${escapeHtml(data.message || 'Yüklenemedi')}</p>`;
     return;
   }
+  staffColorTable = data.colors || [];
   renderStaff((data.staff || []).filter((s) => isBookableStaffRole(s.role)));
 }
 
@@ -4152,10 +4257,14 @@ async function loadStaffStats() {
   const shareEl = $('staff-stat-share');
   const customersEl = $('staff-stat-customers');
   const appointmentsEl = $('staff-stat-appointments');
-  const commissionPct = Number(stats.commission_percent || 50);
+  const commissionPct = Number(stats.commission_percent || 0);
   if (incomeEl) incomeEl.textContent = fmtMoney(stats.total_income);
   if (shareEl && !_staffStatsIsOwner) {
-    shareEl.textContent = fmtMoney(stats.staff_share_total ?? (Number(stats.total_income || 0) * 0.5));
+    shareEl.textContent = fmtMoney(stats.staff_share_total ?? 0);
+  }
+  const shareLabelEl = $('staff-stat-share-label');
+  if (shareLabelEl) {
+    shareLabelEl.textContent = commissionPct ? `Personel Kazancı (%${commissionPct})` : 'Personel Kazancı';
   }
   if (customersEl) customersEl.textContent = String(stats.customer_count || 0);
   if (appointmentsEl) appointmentsEl.textContent = String(stats.appointment_count || 0);
@@ -4175,10 +4284,12 @@ async function loadStaffStats() {
     } else {
       revList.innerHTML = items.map((item) => {
         const full = Number(item.amount || 0);
-        const share = Number(item.staff_share ?? full * 0.5);
+        const share = Number(item.staff_share ?? 0);
+        // Randevu, tamamlandığı andaki yüzdeyle hesaplanır (yüzde sonradan değişmiş olabilir).
+        const itemPct = Number(item.share_percent || commissionPct);
         const shareHtml = _staffStatsIsOwner
           ? ''
-          : `<span class="adj-share">Kazanç %${commissionPct}: ${fmtMoney(share)}</span>`;
+          : `<span class="adj-share">Kazanç %${itemPct}: ${fmtMoney(share)}</span>`;
         return `
         <div class="adj-row">
           <div class="adj-info">
@@ -4413,6 +4524,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     resetStaffPhotoPreview(null);
   });
 
+  $('staff-role-select')?.addEventListener('change', () => {
+    if ($('staff-role')) $('staff-role').value = staffFormRole();
+    updateStaffFormRoleFields();
+  });
+  document.querySelectorAll('#staff-commission-buttons .percent-btn').forEach((btn) => {
+    btn.addEventListener('click', () => setStaffCommissionValue(btn.getAttribute('data-percent')));
+  });
+
   // Staff modal submit
   $('staff-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -4431,6 +4550,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const payload = { name, phone, role, instagram_url: ($('staff-instagram-url')?.value || '').trim() };
     payload.calendar_aliases = ($('staff-calendar-aliases')?.value || '').trim();
+    if (role !== 'tech_support' && $('staff-color-id')?.value) {
+      payload.calendar_color_id = $('staff-color-id').value;
+    }
+    if (role === 'staff' && canAccessIncome() && $('staff-commission')?.value) {
+      payload.commission_percent = parseInt($('staff-commission').value, 10);
+    }
     if (password) payload.password = password;
     if (staffModalState.mode === 'create' && staffPhotoData) {
       payload.profile_photo = staffPhotoData;
@@ -4451,10 +4576,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const method = staffModalState.mode === 'edit' ? 'PUT' : 'POST';
 
-    const { ok, data } = await apiCall(endpoint, {
+    let { ok, data } = await apiCall(endpoint, {
       method,
       body: JSON.stringify(payload),
     });
+
+    // Seçilen renk başka personelde kullanılıyorsa: onay iste, onaylanırsa yine de kaydet.
+    if (!ok && data?.code === 'color_in_use') {
+      const accepted = await customConfirm(
+        'Renk kullanımda',
+        `${data.message} Takvimde ayırt etmek zorlaşabilir. Yine de bu rengi vermek istiyor musunuz?`
+      );
+      if (!accepted) return;
+      ({ ok, data } = await apiCall(endpoint, {
+        method,
+        body: JSON.stringify({ ...payload, allow_duplicate_color: true }),
+      }));
+    }
 
     if (!ok || !data.success) {
       $('staff-error').textContent = data.message || 'İşlem başarısız';
