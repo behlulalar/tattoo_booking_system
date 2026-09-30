@@ -101,7 +101,7 @@ class OutboundSyncTest(unittest.TestCase):
         appointment_row = (
             42, '2026-09-20', '14:00', 'confirmed', 120, 3500.0,
             'Ayse', 'Yilmaz', '5551112233', 2, 'Tuncer',
-            'forearm', 'orta', 'blackwork', 'kol icin desen', 'REF-9', None,
+            'forearm', 'orta', 'blackwork', 'kol icin desen', 'REF-9', None, 'admin',
         )
         cursor = RecordingCursor(fetchone_queue=[
             (True,),            # pg_try_advisory_xact_lock
@@ -136,7 +136,7 @@ class OutboundSyncTest(unittest.TestCase):
         appointment_row = (
             7, '2026-09-21', '10:00', 'confirmed', 60, 0,
             'Can', 'Demir', '5559998877', 1, 'Berke',
-            '', '', '', None, None, 'stale_event',
+            '', '', '', None, None, 'stale_event', 'admin',
         )
         cursor = RecordingCursor(fetchone_queue=[(True,), appointment_row, (7,)])
         conn = FakeConn(cursor)
@@ -155,6 +155,51 @@ class OutboundSyncTest(unittest.TestCase):
         insert_body = service.events.return_value.insert.call_args.kwargs['body']
         self.assertEqual(insert_body['id'], gcs._stable_appointment_event_id(7))
 
+    def _google_source_row(self, event_id):
+        return (
+            9, '2026-09-23', '15:00', 'completed', 90, 0,
+            'Ali', 'Veli', '5551234567', 2, 'Tuncer',
+            '', '', '', None, None, event_id, 'google',
+        )
+
+    def test_google_source_update_patches_only_time_color_not_text(self):
+        cursor = RecordingCursor(fetchone_queue=[(True,), self._google_source_row('evt_g'), (9,)])
+        conn = FakeConn(cursor)
+        gcs.set_connection_provider(lambda: conn, lambda c: None)
+        service = mock.MagicMock()
+        service.events.return_value.patch.return_value.execute.return_value = {
+            'id': 'evt_g', 'etag': '"p"',
+        }
+        with mock.patch.object(gcs, '_get_calendar_service', return_value=service):
+            status, event_id = gcs._perform_appointment_sync(9)
+
+        self.assertEqual((status, event_id), ('ok', 'evt_g'))
+        service.events.return_value.update.assert_not_called()
+        body = service.events.return_value.patch.call_args.kwargs['body']
+        for key in ('summary', 'description', 'location'):
+            self.assertNotIn(key, body)
+        self.assertEqual(body['start']['dateTime'], '2026-09-23T15:00:00')
+        self.assertEqual(body['end']['dateTime'], '2026-09-23T16:30:00')
+        self.assertIn('colorId', body)
+        self.assertEqual(body['extendedProperties']['private']['appointment_id'], '9')
+
+    def test_google_source_recreates_with_full_body_when_event_missing(self):
+        cursor = RecordingCursor(fetchone_queue=[(True,), self._google_source_row('gone_evt'), (9,)])
+        conn = FakeConn(cursor)
+        gcs.set_connection_provider(lambda: conn, lambda c: None)
+        service = mock.MagicMock()
+        service.events.return_value.patch.return_value.execute.side_effect = Exception('404 not found')
+        service.events.return_value.insert.return_value.execute.return_value = {
+            'id': 'evt_new', 'etag': '"t"',
+        }
+        with mock.patch.object(gcs, '_get_calendar_service', return_value=service):
+            status, event_id = gcs._perform_appointment_sync(9)
+
+        self.assertEqual((status, event_id), ('ok', 'evt_new'))
+        insert_body = service.events.return_value.insert.call_args.kwargs['body']
+        self.assertIn('summary', insert_body)
+        self.assertIn('description', insert_body)
+
     def test_stable_event_ids_match_google_alphabet(self):
         apt = gcs._stable_appointment_event_id(42)
         off = gcs._stable_time_off_event_id(9)
@@ -166,7 +211,7 @@ class OutboundSyncTest(unittest.TestCase):
         appointment_row = (
             3, '2026-09-22', '11:00', 'confirmed', 60, 0,
             'Ece', 'Kaya', '5550001122', 1, 'Berke',
-            '', '', '', None, None, None,
+            '', '', '', None, None, None, 'admin',
         )
         cursor = RecordingCursor(fetchone_queue=[(True,), appointment_row, (3,)])
         conn = FakeConn(cursor)
