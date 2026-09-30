@@ -1214,8 +1214,8 @@ def _whatsapp_session_ready_for_bulk_send():
 
 def check_google_calendar_connection():
     """Google Takvim baglantisini periyodik olarak dener; kopuksa E-GCAL-005
-    ile loglar (bu, super_admin'e aninda push + e-posta bildirimi tetikler,
-    bkz. error_notifier.PUSH_ALERT_CODES).
+    ile loglar (bu, e-posta + tech_support'a saatte bir, super_admin'e 2 saatte bir
+    push bildirimi tetikler, bkz. error_notifier.PUSH_ALERT_CODES).
 
     Senkron kapaliysa (is_google_calendar_enabled() False) hicbir sey
     yapmaz — o zaten kasitli bir durum, hata degil. WhatsApp kontrolundeki
