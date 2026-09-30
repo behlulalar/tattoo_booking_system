@@ -2031,8 +2031,6 @@ def _gcal_inbound_time_free(
 
 def compute_start_slot_status(
     cursor, staff_id, formatted_date, duration_minutes,
-    skip_past_filter=False,
-    past_filter_mode='buffer',
     exclude_appointment_id=None,
 ):
     """Belirli gün/personel için başlangıç saatlerini duruma göre ayırır.
@@ -2041,7 +2039,8 @@ def compute_start_slot_status(
     - available: seçilebilir başlangıç saatleri
     - blocked: gün içinde başlayan ama randevu / izin / Google'daki meşgul
       zamanla çakıştığı için dolu olan başlangıç saatleri
-    Geçmiş saatler ve gece yarısını aşan başlangıçlar iki listede de yer almaz.
+    Gece yarısını aşan başlangıçlar iki listede de yer almaz. Geçmiş saatler de
+    listelenir: randevuları sanatçılar yönetir, geçmişe kayıt açabilirler.
     """
     day_slots, is_day_closed, busy_intervals = _staff_day_schedule(
         cursor, staff_id, formatted_date, exclude_appointment_id=exclude_appointment_id,
@@ -2053,14 +2052,6 @@ def compute_start_slot_status(
     if req % 30 != 0:
         req = ((req // 30) + 1) * 30
 
-    # Bugünse geçmiş başlangıç saatlerini çıkar
-    from datetime import date as dt_date
-    cutoff = None
-    if not skip_past_filter and formatted_date == dt_date.today().isoformat():
-        now = datetime.now()
-        now_mins = now.hour * 60 + now.minute
-        cutoff = now_mins if past_filter_mode == 'strict' else now_mins + SLOT_STEP_MINUTES
-
     available, blocked = [], []
     for start in day_slots:
         start_m = _time_str_to_minutes(start)
@@ -2068,8 +2059,6 @@ def compute_start_slot_status(
         # Gün aşımı (gece yarısını geçme) engellenir: appointment_date /
         # appointment_time tek bir takvim gününe ait, çakışma hesabı da aynı güne bakar.
         if end_m > 24 * 60:
-            continue
-        if cutoff is not None and start_m <= cutoff:
             continue
         if any(_ranges_overlap(start_m, end_m, b0, b1) for b0, b1 in busy_intervals):
             blocked.append(start)
@@ -2081,8 +2070,6 @@ def compute_start_slot_status(
 
 def compute_available_start_slots(
     cursor, staff_id, formatted_date, duration_minutes,
-    skip_past_filter=False,
-    past_filter_mode='buffer',
     exclude_appointment_id=None,
 ):
     """Belirli gün/personel için uygun başlangıç saatlerini döndürür.
@@ -2091,8 +2078,6 @@ def compute_available_start_slots(
     """
     available, _blocked, is_day_closed = compute_start_slot_status(
         cursor, staff_id, formatted_date, duration_minutes,
-        skip_past_filter=skip_past_filter,
-        past_filter_mode=past_filter_mode,
         exclude_appointment_id=exclude_appointment_id,
     )
     return available, is_day_closed
@@ -3852,8 +3837,6 @@ def admin_manual_appointment_available_slots():
             int(staff_id),
             formatted_date,
             duration_minutes,
-            skip_past_filter=False,
-            past_filter_mode='strict',
             exclude_appointment_id=exclude_appointment_id,
         )
         cursor.close()

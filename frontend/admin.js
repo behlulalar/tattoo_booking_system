@@ -1077,12 +1077,48 @@ function initManualApptDatePicker() {
     dateFormat: 'Y-m-d',
     altInput: true,
     altFormat: 'd.m.Y',
-    minDate: 'today',
     disableMobile: true,
     allowInput: false,
     clickOpens: true,
-    onChange: () => loadManualAppointmentTimeSlots(),
+    onChange: () => {
+      loadManualAppointmentTimeSlots();
+      syncManualApptPastNotice();
+    },
   });
+}
+
+// Geçmiş tarih/saate açılan randevuda müşteriye "randevunuz oluşturuldu" mesajı
+// anlamsız olur: WhatsApp bildirimi otomatik kapatılır (istenirse tekrar açılabilir).
+let _manualApptWaAutoOff = false;
+
+function isManualApptInPast() {
+  const dateIso = manualApptDatePicker?.selectedDates?.[0]
+    ? manualApptDatePicker.formatDate(manualApptDatePicker.selectedDates[0], 'Y-m-d')
+    : ($('manual-appt-date')?.value || '');
+  const time = $('manual-appt-time')?.value;
+  if (!dateIso) return false;
+  const [y, mo, d] = dateIso.split('-').map((n) => parseInt(n, 10));
+  const [hh, mm] = (time || '23:59').split(':').map((n) => parseInt(n, 10) || 0);
+  return new Date(y, mo - 1, d, hh, mm) < new Date();
+}
+
+function syncManualApptPastNotice() {
+  const chk = $('manual-appt-whatsapp');
+  const hint = $('manual-appt-past-hint');
+  if (!chk) return;
+  if (isManualApptInPast()) {
+    if (chk.checked) {
+      chk.checked = false;
+      _manualApptWaAutoOff = true;
+    }
+    if (hint) hint.hidden = false;
+  } else {
+    if (_manualApptWaAutoOff) {
+      chk.checked = true;
+      _manualApptWaAutoOff = false;
+    }
+    if (hint) hint.hidden = true;
+  }
 }
 
 async function loadManualAppointmentTimeSlots() {
@@ -1151,6 +1187,8 @@ function openManualAppointmentModal(prefill = null) {
   $('manual-appointment-form')?.reset();
   if ($('manual-appt-duration')) $('manual-appt-duration').value = '120';
   if ($('manual-appt-whatsapp')) $('manual-appt-whatsapp').checked = true;
+  _manualApptWaAutoOff = false;
+  if ($('manual-appt-past-hint')) $('manual-appt-past-hint').hidden = true;
   const errEl = $('manual-appt-error');
   if (errEl) { errEl.textContent = ''; errEl.style.display = 'none'; }
   overlay.style.display = 'flex';
@@ -1530,7 +1568,6 @@ function initEditApptDatePicker() {
     dateFormat: 'Y-m-d',
     altInput: true,
     altFormat: 'd.m.Y',
-    minDate: 'today',
     disableMobile: true,
     allowInput: false,
     clickOpens: true,
@@ -4470,6 +4507,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   ['manual-appt-duration', 'manual-appt-staff'].forEach((id) => {
     $(id)?.addEventListener('change', loadManualAppointmentTimeSlots);
   });
+  $('manual-appt-time')?.addEventListener('change', syncManualApptPastNotice);
 
   // Randevu düzenleme modalı
   bindManualApptPhoneInput($('edit-appt-phone'));
