@@ -68,15 +68,14 @@ _BUSY_LOOKAHEAD_DAYS = 90
 # Tam ±X gun listeleme her 2 dakikada yapilmasin; incremental inbound
 # eslesmeyen etkinlikleri busy tablosuna yazar. Tam yenileme emniyet agi.
 _BUSY_REFRESH_MIN_SECONDS = int(os.getenv('GOOGLE_CALENDAR_BUSY_REFRESH_SECONDS', '900'))
-# Studio slot izgarasi saatlik (app.py SLOT_STEP_MINUTES ile ayni). Randevu
-# olusturan iki uc nokta da duration_minutes % 60 == 0 sartini dayatiyor.
-SLOT_GRID_MINUTES = 60
-# Google Calendar'dan gelen (surukle-birak ile degistirilen) randevu
-# baslangiclari icin izin verilen dakika hassasiyeti. Musteri/admin randevu
-# ekranlari hala saat basi slot gosterir (SLOT_GRID_MINUTES=60) — bu sadece
-# Google'dan gelen bir surukleme "gecerli" sayilip GERCEK dakikasiyla
-# kaydedilsin mi, yoksa reddedilip eski saatine mi donsun karari icin.
-INBOUND_START_STEP_MINUTES = 15
+# Randevular sanatcilar tarafindan yonetiliyor: Google Takvim'den gelen etkinlik
+# baslangic dakikasi ve suresiyle AYNEN sisteme yazilir (yuvarlama/izgara yok).
+# Panel formlari saat basi secim sunmaya devam eder, bu yalnizca Google icin.
+#
+# Gecmis tarihli etkinlikler bu kadar gun geriye kadar randevu olarak ice alinir
+# (daha eskiler — aylar once yazilmis kayitlar — her turda veritabanini
+# sismesin diye atlanir). Tam senkron da ayni pencereye bakar.
+_IMPORT_LOOKBACK_DAYS = 30
 # Google client-supplied event id: ^[a-v0-9]{5,1024}$
 # Timeout sonrasi tekrar insert mukerrer etkinlik uretmesin diye sabit id.
 _STABLE_EVENT_ID_RE = re.compile(r'^[a-v0-9]{5,1024}$')
@@ -2334,8 +2333,9 @@ def set_push_notifier(fn):
     """Panel-ici bildirim (bell) + PWA push icin genel kanca.
 
     fn(events) transaction COMMIT edildikten sonra cagrilir. events:
-    [(staff_id, title, message), ...]. Su an sadece gcal_move_reverted
-    (mesai/cakisma nedeniyle geri alinan surukleme) bunu kullaniyor;
+    [(staff_id, title, message), ...]. Su an gcal_move_reverted
+    (cakisma nedeniyle geri alinan surukleme) ve gcal_import_conflict
+    (cakisma nedeniyle alinamayan etkinlik) bunu kullaniyor;
     diger bildirimler (tasima/iptal/manuel import) zaten kendi WhatsApp
     dispatcher'lari icinde push_to_staff'i ayrica cagiriyor.
     """
@@ -2514,45 +2514,29 @@ def _lock_staff_day(cursor, staff_id, formatted_date):
     )
 
 
-def _round_duration_minutes(start_dt, end_dt):
-    """Google etkinlik suresini studio izgarasina (60 dk) YUKARI yuvarla.
-
-    30 dk'ya yuvarlamak _studio_slot_grid_ok ile celisiyordu: 90 dakikalik elle
-    olusturulan etkinlik hicbir zaman iceri alinamiyordu. Yukari yuvarlama en
-    fazla bir saat fazla bloklar; asagi yuvarlamak randevunun uzerine slot
-    acardi.
-    """
-    seconds = max(0, int((end_dt - start_dt).total_seconds()))
-    minutes = max(SLOT_GRID_MINUTES, int(round(seconds / 60.0)))
-    if minutes % SLOT_GRID_MINUTES:
-        minutes = ((minutes // SLOT_GRID_MINUTES) + 1) * SLOT_GRID_MINUTES
-    return minutes
-
-
-def _exact_duration_minutes(start_dt, end_dt):
-    """Etkinligin yuvarlanmamis suresi (yanki tespitinde kullanilir)."""
+def _event_duration_minutes(start_dt, end_dt):
+    """Etkinligin gercek suresi (dakika, en az 1) — yuvarlama yok."""
     if not start_dt or not end_dt:
         return 0
-    return max(0, int(round((end_dt - start_dt).total_seconds() / 60.0)))
+    seconds = max(0, int((end_dt - start_dt).total_seconds()))
+    return max(1, int(round(seconds / 60.0)))
 
 
-def _studio_slot_grid_ok(start_dt, duration_minutes):
-    """Stüdyo slotu: başlangıç INBOUND_START_STEP_MINUTES'in katı, süre 60/120/180…"""
+def _inbound_time_valid(start_dt, duration_minutes):
+    """Google etkinligi sisteme yazilabilir mi (yalnizca biçim): baslangic
+    saniyesiz, sure pozitif. Dakika veya sure izgarasi sartı yoktur."""
     if not start_dt:
-        return False
-    if int(getattr(start_dt, 'minute', 0) or 0) % INBOUND_START_STEP_MINUTES != 0:
         return False
     if int(getattr(start_dt, 'second', 0) or 0) != 0:
         return False
-    dur = int(duration_minutes or 0)
-    return dur >= SLOT_GRID_MINUTES and dur % SLOT_GRID_MINUTES == 0
+    return int(duration_minutes or 0) >= 1
 
 
 def _inbound_slot_allowed(
     cursor, staff_id, start_dt, duration_minutes,
     exclude_appointment_id=None, body_area=None,
 ):
-    if not staff_id or not _studio_slot_grid_ok(start_dt, duration_minutes):
+    if not staff_id or not _inbound_time_valid(start_dt, duration_minutes):
         return False
     if _slot_validator is None:
         return True
@@ -2752,11 +2736,15 @@ def refresh_external_busy(force=False):
         cursor = conn.cursor()
         imported = 0
         imported_ids = []
+        push_events = []
         for event in events:
             imported_marker = len(imported_ids)
+            push_marker = len(push_events)
             try:
                 cursor.execute('SAVEPOINT gcal_busy_import')
-                result = _import_manual_google_event(cursor, event, calendar_id, imported_ids)
+                result = _import_manual_google_event(
+                    cursor, event, calendar_id, imported_ids, push_events,
+                )
                 cursor.execute('RELEASE SAVEPOINT gcal_busy_import')
                 if result == 'imported':
                     imported += 1
@@ -2766,6 +2754,7 @@ def refresh_external_busy(force=False):
                 except Exception:
                     pass
                 del imported_ids[imported_marker:]
+                del push_events[push_marker:]
                 logger.warning(
                     'Google busy import atlandi | event=%s hata=%s',
                     (event.get('id') or '')[:80],
@@ -2860,6 +2849,7 @@ def refresh_external_busy(force=False):
         conn.commit()
         cursor.close()
         _dispatch_import_notifications(imported_ids)
+        _dispatch_push_events(push_events)
         logger.info(
             'Google dis mesguliyet yenilendi: %s aralik, manuel randevu: %s',
             len(rows), imported,
@@ -2905,9 +2895,7 @@ def reset_inbound_state(old_calendar_id=None):
         _disconnect(conn)
 
 
-def _times_match_appointment(
-    start_dt, duration_minutes, apt_date, apt_time, apt_duration, exact_minutes=None,
-):
+def _times_match_appointment(start_dt, duration_minutes, apt_date, apt_time, apt_duration):
     """Google etkinligi yereldeki randevuyla ayni mi (yani mi, tasima mi)."""
     if not start_dt:
         return False
@@ -2915,13 +2903,7 @@ def _times_match_appointment(
         return False
     if start_dt.strftime('%H:%M') != _time_to_str(apt_time):
         return False
-    stored = int(apt_duration or 0)
-    if int(duration_minutes or 0) == stored:
-        return True
-    # Izgaraya uymayan eski kayitlar (ornegin 90 dk): Google'daki gercek sure
-    # birebir ayniysa bu bir yankidir, tasima degil. Yuvarlanmis degere bakip
-    # tasima saymak randevu suresini sessizce buyuturdu.
-    return exact_minutes is not None and int(exact_minutes) == stored
+    return int(duration_minutes or 0) == int(apt_duration or 0)
 
 
 def _load_appointment_for_inbound(cursor, appointment_id):
@@ -3278,7 +3260,46 @@ def refresh_google_event_colors(limit=400):
         _disconnect(conn)
 
 
-def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None):
+def _notify_import_conflict(cursor, staff_id, start_dt, duration_minutes, summary, push_events=None):
+    """Google'da yazilan etkinlik cakisma/kapali gun nedeniyle sisteme alinamadi:
+    sanatciya panel bildirimi + push. Ayni etkinlik her senkron turunda yeniden
+    denendiginden, ayni metin 24 saat icinde tekrar bildirilmez."""
+    end_dt = start_dt + timedelta(minutes=int(duration_minutes or 0))
+    title = 'Google etkinliği sisteme alınamadı'
+    label = (summary or '').strip()[:80] or 'Başlıksız etkinlik'
+    message = (
+        "Google Takvim'de %s %s–%s için yazdığınız \"%s\" etkinliği başka bir randevu, "
+        "izin veya kapalı gün ile çakıştığı için sisteme alınmadı. Çakışmayı giderip "
+        "etkinliği taşıyın ya da silin."
+    ) % (start_dt.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'), end_dt.strftime('%H:%M'), label)
+    try:
+        cursor.execute(
+            """
+            SELECT 1 FROM notifications
+             WHERE staff_id = %s AND type = 'gcal_import_conflict' AND message = %s
+               AND created_at > NOW() - INTERVAL '24 hours'
+             LIMIT 1
+            """,
+            (int(staff_id), message),
+        )
+        if cursor.fetchone():
+            return False
+    except Exception as exc:
+        logger.warning('Google cakisma bildirimi kontrolu atlandi: %s', str(exc)[:160])
+        return False
+    create_notification(cursor, staff_id, 'gcal_import_conflict', title, message)
+    if push_events is not None:
+        push_events.append((
+            staff_id,
+            title,
+            '%s %s–%s etkinliği çakışma nedeniyle sisteme alınamadı.' % (
+                start_dt.strftime('%d.%m.%Y'), start_dt.strftime('%H:%M'), end_dt.strftime('%H:%M'),
+            ),
+        ))
+    return True
+
+
+def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None, push_events=None):
     """Elle Google etkinliği: Off Day veya (telefon varsa) source=google randevu."""
     if (event.get('status') or '') == 'cancelled':
         return 'skip'
@@ -3301,16 +3322,15 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None):
     )
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
 
-    # Gecmis tarihli etkinlikler HICBIR sekilde randevu/Off Day olarak
-    # ice alinmaz — sync token'in tam/artimli calismasindan bagimsiz,
-    # kesin bir emniyet siniri. Gecmis gunler zaten rezerve edilemez,
-    # icine musaitlik hesabi acisindan da bir anlami yok; sadece
-    # musterinin takviminde AYLARCA once yazilmis, sanatci adiyla
-    # eslesen eski kayitlarin her sync turunde tekrar tekrar "yeni
-    # randevu" sanilip veritabanini sismesini onler.
+    # Gecmis tarihli etkinlikler _IMPORT_LOOKBACK_DAYS (30 gun) geriye kadar
+    # randevu olarak ice alinir (sanatci unuttugu bir randevuyu sonradan takvime
+    # yazabilir). Daha eskileri atlanir: takvimde AYLARCA once yazilmis,
+    # sanatci adiyla eslesen eski kayitlarin her turda yeniden "yeni randevu"
+    # sanilip veritabanini sismesi onlenir.
+    today = None
     if start_dt is not None:
         today = datetime.now(start_dt.tzinfo).date() if start_dt.tzinfo else datetime.now().date()
-        if start_dt.date() < today:
+        if (today - start_dt.date()).days > _IMPORT_LOOKBACK_DAYS:
             return 'skip'
 
     # "sanatci eslesti + telefon yok" tek basina Off Day sayilmaz: elle
@@ -3338,6 +3358,9 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None):
         or (staff_id and not phone and all_day and not has_real_customer_name)
     )
     if is_off_day:
+        # Gecmis bir Off Day'in musaitlik hesabina etkisi yok: ice alinmaz.
+        if start_dt is not None and start_dt.date() < today:
+            return 'skip'
         if not staff_id:
             _log_unmatched_artist(event_id, summary)
             return 'unmatched'
@@ -3348,7 +3371,7 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None):
     if all_day or not start_dt or not end_dt:
         return 'skip'
 
-    duration_minutes = _round_duration_minutes(start_dt, end_dt)
+    duration_minutes = _event_duration_minutes(start_dt, end_dt)
     local_date = start_dt.date()
     local_time = start_dt.strftime('%H:%M') + ':00'
 
@@ -3374,9 +3397,15 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None):
     )
     if not _inbound_slot_allowed(cursor, staff_id, start_dt, duration_minutes):
         logger.warning(
-            'Google manuel randevu slot/cakisma nedeniyle yazilmadi | event=%s staff=%s %s %s %s dk',
+            'Google manuel randevu cakisma nedeniyle yazilmadi | event=%s staff=%s %s %s %s dk',
             event_id, staff_id, local_date, local_time, duration_minutes,
         )
+        # Sanatci takvimde gorunen ama sisteme alinmayan bir etkinlikten haberdar
+        # olsun (yalnizca bugun ve sonrasi; gecmis icin gurultu yapmayalim).
+        if local_date >= today:
+            _notify_import_conflict(
+                cursor, staff_id, start_dt, duration_minutes, summary, push_events,
+            )
         return 'conflict'
 
     try:
@@ -3758,7 +3787,7 @@ def _handle_inbound_event(
                 time_off_id = found[0] if found else None
         if time_off_id:
             return _handle_inbound_time_off(cursor, event, calendar_id, time_off_id)
-        return _import_manual_google_event(cursor, event, calendar_id, imported_ids)
+        return _import_manual_google_event(cursor, event, calendar_id, imported_ids, push_events)
 
     appointment_id = _our_appointment_id_from_event(event)
     if not appointment_id:
@@ -3783,7 +3812,7 @@ def _handle_inbound_event(
                 time_off_id = found[0] if found else None
         if time_off_id:
             return _handle_inbound_time_off(cursor, event, calendar_id, time_off_id)
-        return _import_manual_google_event(cursor, event, calendar_id, imported_ids)
+        return _import_manual_google_event(cursor, event, calendar_id, imported_ids, push_events)
 
     deleted = (event.get('status') or '') == 'cancelled'
 
@@ -3801,28 +3830,19 @@ def _handle_inbound_event(
         return 'skip'
 
     start_dt, end_dt, all_day = _parse_event_datetimes(event)
-    duration_minutes = _round_duration_minutes(start_dt, end_dt) if start_dt and end_dt else 0
-    exact_minutes = _exact_duration_minutes(start_dt, end_dt)
+    duration_minutes = _event_duration_minutes(start_dt, end_dt)
 
-    # Google Calendar'da bir randevuyu suruklemek cogunlukla saat basina
-    # denk gelmeyen bir baslangic uretir (15/30 dk'lik izgaraya kilitli).
-    # Once bu INBOUND_START_STEP_MINUTES'in (15 dk) katiysa GERCEK dakikasiyla
-    # kabul edilir (14:15 -> 14:15, mesaj/panel de dogru saati gosterir).
-    # Yine de hizaya gelmeyen bir deger gelirse (ör. saniye tasmasi, farkli
-    # bir istemciden 7dk gibi degerler) eskiden oldugu gibi asagi yuvarlanir
-    # ki _inbound_slot_allowed sessizce reddedip degisikligi eski saatine
-    # geri dondurmesin.
-    if start_dt is not None and not all_day and (start_dt.minute or start_dt.second):
-        if start_dt.minute % INBOUND_START_STEP_MINUTES != 0 or start_dt.second:
-            floored_minute = (start_dt.minute // INBOUND_START_STEP_MINUTES) * INBOUND_START_STEP_MINUTES
-            start_dt = start_dt.replace(minute=floored_minute, second=0, microsecond=0)
+    # Baslangic dakikasi Google'daki haliyle kabul edilir; sadece saniye/mikrosaniye
+    # kirintilari atilir (saniyeli bir deger _inbound_time_valid'den gecemez).
+    if start_dt is not None and not all_day and (start_dt.second or start_dt.microsecond):
+        start_dt = start_dt.replace(second=0, microsecond=0)
 
     if status == 'completed':
         if deleted:
             enqueue_appointment_sync(cursor, appointment_id)
             return 'revert'
         if all_day or not _times_match_appointment(
-            start_dt, duration_minutes, apt_date, apt_time, apt_duration, exact_minutes
+            start_dt, duration_minutes, apt_date, apt_time, apt_duration
         ):
             enqueue_appointment_sync(cursor, appointment_id)
             return 'revert'
@@ -3860,7 +3880,7 @@ def _handle_inbound_event(
     local_time = start_dt.strftime('%H:%M')
 
     if _times_match_appointment(
-        start_dt, duration_minutes, apt_date, apt_time, apt_duration, exact_minutes
+        start_dt, duration_minutes, apt_date, apt_time, apt_duration
     ):
         if event.get('etag') and event.get('etag') != stored_etag:
             cursor.execute(
@@ -3886,8 +3906,8 @@ def _handle_inbound_event(
             'gcal_move_reverted',
             'Google Calendar taşıması geri alındı',
             (
-                'Randevu Google Calendar\'da %s %s\'e taşınmak istendi ama mesai '
-                'saati dışında veya çakışma nedeniyle uygun olmadığı için eski '
+                'Randevu Google Calendar\'da %s %s\'e taşınmak istendi ama '
+                'çakışma veya kapalı gün nedeniyle uygun olmadığı için eski '
                 'saatine (%s) geri alındı.'
             ) % (
                 local_date.strftime('%d.%m.%Y'),
@@ -3900,7 +3920,7 @@ def _handle_inbound_event(
             push_events.append((
                 staff_id,
                 'Google Calendar taşıması geri alındı',
-                'Randevu %s %s\'e taşınmak istendi ama uygun olmadığı için eski saatine geri alındı.' % (
+                'Randevu %s %s\'e taşınmak istendi ama çakışma veya kapalı gün nedeniyle eski saatine geri alındı.' % (
                     local_date.strftime('%d.%m.%Y'), local_time,
                 ),
             ))
@@ -3974,7 +3994,7 @@ def poll_inbound_changes():
                     else:
                         tz = _studio_tz()
                         now = datetime.now(tz) if tz else datetime.now(timezone.utc)
-                        kwargs['timeMin'] = (now - timedelta(days=_BUSY_LOOKBACK_DAYS)).isoformat()
+                        kwargs['timeMin'] = (now - timedelta(days=_IMPORT_LOOKBACK_DAYS)).isoformat()
                         kwargs['timeMax'] = (now + timedelta(days=_BUSY_LOOKAHEAD_DAYS)).isoformat()
                     resp = _google_execute(lambda kw=kwargs: _get_calendar_service().events().list(**kw))
                     items.extend(resp.get('items') or [])
