@@ -9,6 +9,7 @@ import re
 from urllib.parse import urlparse
 
 from config import SITE_CONFIG, get_evolution_config
+from customer_contact import NO_PHONE_LABEL, is_placeholder_phone
 
 MESSAGE_SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'message_settings.json')
 WELCOME_MESSAGE_MAX_LEN = 4000
@@ -36,11 +37,15 @@ def _phone_display(phone: str) -> str:
     s = str(phone or '').strip()
     if not s:
         return '-'
+    if is_placeholder_phone(s):
+        return NO_PHONE_LABEL
     return s if s.startswith('0') else f'0{s}'
 
 
-def _customer_line(phone: str, customer_name: str | None = None) -> str:
+def _customer_line(phone: str, customer_name: str | None = None, instagram: str | None = None) -> str:
     display = _phone_display(phone)
+    if display == NO_PHONE_LABEL and instagram:
+        display = f'@{instagram}'
     if customer_name and str(customer_name).strip():
         return f'📞 Müşteri: {customer_name.strip()} ({display})'
     return f'📞 Müşteri: {display}'
@@ -365,6 +370,7 @@ def build_appointment_created_staff_message(
     tattoo_size: str | None = None,
     description: str | None = None,
     pre_consultation: bool = False,
+    customer_instagram: str | None = None,
 ) -> str:
     """Sanatçıya: yeni randevu bildirimi."""
     b = _biz()
@@ -378,7 +384,7 @@ def build_appointment_created_staff_message(
     lines = [
         f'🔔 *{title}!*',
         '',
-        _customer_line(customer_phone, customer_name),
+        _customer_line(customer_phone, customer_name, customer_instagram),
     ]
     lines.extend(
         _tattoo_detail_lines(

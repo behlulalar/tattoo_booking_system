@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS customers (
   phone       VARCHAR(10) NOT NULL UNIQUE,
   name        VARCHAR(50),
   surname     VARCHAR(50),
+  instagram   VARCHAR(40),
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

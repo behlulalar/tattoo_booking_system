@@ -1238,12 +1238,16 @@
                 <form id="manual-appointment-form">
                     <div class="form-row-2">
                         <div class="form-group">
-                            <label for="manual-appt-phone">Telefon <span>*</span></label>
+                            <label for="manual-appt-phone">Telefon</label>
                             <div class="manual-appt-phone-wrap">
-                                <input type="tel" id="manual-appt-phone" maxlength="20" placeholder="5XX XXX XX XX veya +ülke kodu" required autocomplete="off" />
+                                <input type="tel" id="manual-appt-phone" maxlength="20" placeholder="5XX XXX XX XX veya +ülke kodu" autocomplete="off" />
                                 <div id="manual-appt-customer-suggest" class="manual-appt-suggest" hidden></div>
                             </div>
                             <p id="manual-appt-customer-hint" class="manual-appt-customer-hint" hidden></p>
+                        </div>
+                        <div class="form-group">
+                            <label for="manual-appt-instagram">Instagram <small>(telefon yoksa)</small></label>
+                            <input type="text" id="manual-appt-instagram" maxlength="31" placeholder="@kullaniciadi" autocomplete="off" autocapitalize="none" />
                         </div>
                         <div class="form-group" id="manual-appt-staff-group" style="display:none;">
                             <label for="manual-appt-staff">Sanatçı</label>
@@ -1328,8 +1332,12 @@
                     <input type="hidden" id="edit-appt-id" />
                     <div class="form-row-2">
                         <div class="form-group">
-                            <label for="edit-appt-phone">Telefon <span>*</span></label>
-                            <input type="tel" id="edit-appt-phone" maxlength="20" required autocomplete="off" />
+                            <label for="edit-appt-phone">Telefon</label>
+                            <input type="tel" id="edit-appt-phone" maxlength="20" placeholder="Tel no yok" autocomplete="off" />
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-appt-instagram">Instagram <small>(telefon yoksa)</small></label>
+                            <input type="text" id="edit-appt-instagram" maxlength="31" placeholder="@kullaniciadi" autocomplete="off" autocapitalize="none" />
                         </div>
                         <div class="form-group" id="edit-appt-staff-group" style="display:none;">
                             <label for="edit-appt-staff">Sanatçı</label>
@@ -1577,7 +1585,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20260930204618"></script>
+    <script src="admin.js?v=20261001015158"></script>
 </body>
 
 </html>

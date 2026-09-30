@@ -1465,10 +1465,11 @@ function applyManualApptCustomer(customer) {
   const trPhone = parseTrMobile(customer.phone);
   const rawDigits = String(customer.phone || '').replace(/\D/g, '');
   const phone = trPhone || (rawDigits ? `+${rawDigits}` : '');
-  if ($('manual-appt-phone') && phone) $('manual-appt-phone').value = phone;
+  if ($('manual-appt-phone')) $('manual-appt-phone').value = phone;
+  if ($('manual-appt-instagram')) $('manual-appt-instagram').value = customer.instagram ? `@${customer.instagram}` : '';
   if ($('manual-appt-name')) $('manual-appt-name').value = formatPersonName(customer.name || '');
   if ($('manual-appt-surname')) $('manual-appt-surname').value = formatPersonName(customer.surname || '');
-  _manualApptFilledFromSuggest = phone;
+  _manualApptFilledFromSuggest = phone || `@${customer.instagram || ''}`;
   hideManualApptSuggestList();
   const hint = $('manual-appt-customer-hint');
   if (hint) {
@@ -1494,7 +1495,7 @@ function renderManualApptSuggestions(customers, boxId = 'manual-appt-customer-su
   box.hidden = false;
   box.innerHTML = customers.map((c) => {
     const name = escapeHtml((c.full_name || `${c.name || ''} ${c.surname || ''}`).trim() || 'Ad kayıtlı değil');
-    const phone = escapeHtml(formatPhoneDisplay(c.phone) || c.phone || '');
+    const phone = escapeHtml(customerContactLabel(c));
     return `<button type="button" class="manual-appt-suggest-item" data-customer-id="${Number(c.id)}">
       <span class="manual-appt-suggest-name">${name}</span>
       <span class="manual-appt-suggest-phone">${phone}</span>
@@ -1547,6 +1548,19 @@ async function lookupManualApptCustomers() {
   }
 }
 
+async function lookupManualApptByInstagram() {
+  const value = ($('manual-appt-instagram')?.value || '').trim();
+  if (value.replace('@', '').length < 2) {
+    hideManualApptSuggestBox('manual-appt-customer-suggest');
+    return;
+  }
+  const seq = ++_manualApptLookupSeq;
+  const { ok, data } = await apiCall(`/admin/customers/lookup?by=instagram&q=${encodeURIComponent(value)}`, { method: 'GET' });
+  if (seq !== _manualApptLookupSeq) return;
+  if (!ok || !data.success) return;
+  renderManualApptSuggestions(data.customers || [], 'manual-appt-customer-suggest');
+}
+
 function scheduleManualApptCustomerLookup() {
   clearTimeout(_manualApptLookupTimer);
   _manualApptLookupTimer = setTimeout(() => {
@@ -1597,6 +1611,7 @@ async function submitManualAppointment(e) {
   const phone = isIntlPhone
     ? (isPlausibleIntlPhoneAdmin(rawPhone) ? rawPhone.replace(/\D/g, '') : '')
     : normalizePhone10(rawPhone);
+  const instagram = ($('manual-appt-instagram')?.value || '').trim();
   const name = formatPersonName($('manual-appt-name')?.value || '');
   const surname = formatPersonName($('manual-appt-surname')?.value || '');
   const dateIso = manualApptDatePicker?.selectedDates?.[0]
@@ -1608,13 +1623,17 @@ async function submitManualAppointment(e) {
   const sendWhatsapp = $('manual-appt-whatsapp')?.checked !== false;
   const staffId = getManualApptStaffId();
 
-  if (!phone) {
+  if (rawPhone && !phone) {
     if (errEl) {
       errEl.textContent = isIntlPhone
         ? 'Geçerli bir numara girin, ülke koduyla birlikte (ör. +44 7911 123456)'
         : 'Geçerli cep numarası girin (5XX XXX XX XX, başında 0 yok) — yurt dışı için + ile başlayın';
       errEl.style.display = 'block';
     }
+    return;
+  }
+  if (!phone && !instagram) {
+    if (errEl) { errEl.textContent = 'Telefon veya Instagram kullanıcı adı girin'; errEl.style.display = 'block'; }
     return;
   }
   if (!name || !surname) {
@@ -1650,7 +1669,6 @@ async function submitManualAppointment(e) {
   }
 
   const body = {
-    phone,
     name,
     surname,
     date: isoDateToTr(dateIso),
@@ -1659,6 +1677,8 @@ async function submitManualAppointment(e) {
     price,
     send_whatsapp: sendWhatsapp,
   };
+  if (phone) body.phone = phone;
+  if (instagram) body.instagram = instagram;
   if (staffId) body.staff_id = staffId;
   const linkedRequestId = _manualApptTattooRequestId;
   if (linkedRequestId) body.tattoo_request_id = linkedRequestId;
@@ -1865,6 +1885,7 @@ function openEditAppointmentModal(appointment) {
   _editApptOriginalStaffId = appointment.staff?.id != null ? parseInt(appointment.staff.id, 10) : null;
   if ($('edit-appt-id')) $('edit-appt-id').value = appointment.id;
   if ($('edit-appt-phone')) $('edit-appt-phone').value = appointment.customer?.phone || '';
+  if ($('edit-appt-instagram')) $('edit-appt-instagram').value = appointment.customer?.instagram ? `@${appointment.customer.instagram}` : '';
   if ($('edit-appt-name')) $('edit-appt-name').value = formatPersonName(appointment.customer?.name || '');
   if ($('edit-appt-surname')) $('edit-appt-surname').value = formatPersonName(appointment.customer?.surname || '');
   _editApptOriginalDuration = parseInt(appointment.duration_minutes, 10) || 60;
@@ -1913,6 +1934,7 @@ async function submitEditAppointment(e) {
   const phone = isIntlPhone
     ? (isPlausibleIntlPhoneAdmin(rawPhone) ? rawPhone.replace(/\D/g, '') : '')
     : normalizePhone10(rawPhone);
+  const instagram = ($('edit-appt-instagram')?.value || '').trim();
   const name = formatPersonName($('edit-appt-name')?.value || '');
   const surname = formatPersonName($('edit-appt-surname')?.value || '');
   const dateIso = editApptDatePicker?.selectedDates?.[0]
@@ -1924,13 +1946,17 @@ async function submitEditAppointment(e) {
   const staffId = getEditApptStaffId();
 
   if (!apptId) return;
-  if (!phone) {
+  if (rawPhone && !phone) {
     if (errEl) {
       errEl.textContent = isIntlPhone
         ? 'Geçerli bir numara girin, ülke koduyla birlikte (ör. +44 7911 123456)'
         : 'Geçerli cep numarası girin (5XX XXX XX XX)';
       errEl.style.display = 'block';
     }
+    return;
+  }
+  if (!phone && !instagram) {
+    if (errEl) { errEl.textContent = 'Telefon veya Instagram kullanıcı adı girin'; errEl.style.display = 'block'; }
     return;
   }
   if (!name || !surname) {
@@ -1951,14 +1977,15 @@ async function submitEditAppointment(e) {
   if (errEl) errEl.style.display = 'none';
 
   const body = {
-    phone,
     name,
     surname,
+    instagram,
     date: isoDateToTr(dateIso),
     time,
     duration_minutes: duration,
     price,
   };
+  if (phone) body.phone = phone;
   if (staffId) body.staff_id = staffId;
 
   closeEditAppointmentModal();
@@ -2810,6 +2837,21 @@ function formatPhoneDisplay(phone) {
   return d || '';
 }
 
+// Telefonu olmayan musteri: numara yerine @instagram, o da yoksa "Tel no yok".
+function customerContactLabel(customer, fallback = '') {
+  const phone = formatPhoneDisplay(customer?.phone);
+  if (phone) return phone;
+  if (customer?.instagram) return `@${customer.instagram}`;
+  return fallback || 'Tel no yok';
+}
+
+// Liste/kart basligi: ad soyad; telefon yoksa yanina iletisim (@instagram / Tel no yok).
+function customerDisplayName(customer) {
+  const name = customer?.full_name || '';
+  if (!name) return customerContactLabel(customer, '-');
+  return formatPhoneDisplay(customer?.phone) ? name : `${name} · ${customerContactLabel(customer)}`;
+}
+
 function formatPersonName(name) {
   return String(name || '')
     .trim()
@@ -3176,7 +3218,7 @@ function renderAppointmentsGrouped(containerId, items) {
       </div>
       <div class="apt-date-cards">`;
     dayItems.forEach((a) => {
-      const customer = a.customer?.full_name ? a.customer.full_name : (formatPhoneDisplay(a.customer?.phone) || '-');
+      const customer = customerDisplayName(a.customer);
       const artist   = a.staff?.name || '-';
       const tr       = a.tattoo_request || {};
       const price    = parseFloat(a.price || 0);
@@ -3260,7 +3302,7 @@ function renderAppointments(containerId, items) {
 
   container.innerHTML = items
     .map((a) => {
-      const customer = a.customer?.full_name ? a.customer.full_name : (formatPhoneDisplay(a.customer?.phone) || '-');
+      const customer = customerDisplayName(a.customer);
       const artist = a.staff?.name || '-';
       const tr = a.tattoo_request || {};
       const price = parseFloat(a.price || 0);
@@ -3633,8 +3675,8 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
 
   const customer = a.kind === 'off_day'
     ? (a.customer?.full_name || 'Off Day')
-    : (a.customer?.full_name || (formatPhoneDisplay(a.customer?.phone) || 'Müşteri'));
-  const phone = a.kind === 'off_day' ? '' : formatPhoneDisplay(a.customer?.phone);
+    : (a.customer?.full_name || customerContactLabel(a.customer, 'Müşteri'));
+  const phone = a.kind === 'off_day' ? '' : customerContactLabel(a.customer);
   const tr = a.tattoo_request || {};
   const detailParts = [tr.description, tr.body_area, tr.size].filter(Boolean);
   const detailLine = detailParts.join(' · ');
@@ -3881,7 +3923,7 @@ function renderPastAppointments(containerId, items) {
     return;
   }
   container.innerHTML = items.map((a) => {
-    const customer = a.customer?.full_name ? a.customer.full_name : (formatPhoneDisplay(a.customer?.phone) || '-');
+    const customer = customerDisplayName(a.customer);
     const artist   = a.staff?.name || '-';
     const tr       = a.tattoo_request || {};
     const price    = parseFloat(a.price || 0);
@@ -4773,6 +4815,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   $('manual-appointment-form')?.addEventListener('submit', submitManualAppointment);
   $('manual-appt-phone')?.addEventListener('input', scheduleManualApptCustomerLookup);
+  $('manual-appt-instagram')?.addEventListener('input', () => {
+    clearTimeout(_manualApptLookupTimer);
+    _manualApptLookupTimer = setTimeout(() => { lookupManualApptByInstagram().catch(() => {}); }, 250);
+  });
   $('manual-appt-phone')?.addEventListener('focus', () => {
     hideManualApptSuggestBox('manual-appt-name-suggest');
     if (($('manual-appt-phone')?.value || '').replace(/\D/g, '').length >= 3) {

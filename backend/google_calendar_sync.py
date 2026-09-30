@@ -25,6 +25,7 @@ from datetime import date, datetime, timedelta, timezone, time as dt_time
 import psycopg2
 
 from config import DATABASE_CONFIG, get_google_calendar_config
+from customer_contact import extract_instagram, is_placeholder_phone
 from error_codes import E_GCAL_001, E_GCAL_002, E_GCAL_003, E_GCAL_004
 from logging_setup import log_error
 from whatsapp_messages import format_try
@@ -1070,7 +1071,7 @@ def _time_off_window(off_date, start_time, end_time):
 
 
 def _phone_display(phone):
-    if not phone:
+    if not phone or is_placeholder_phone(phone):
         return '-'
     p = ''.join(ch for ch in str(phone).strip() if ch.isdigit())
     if len(p) == 10:
@@ -1117,10 +1118,13 @@ def _build_event_body(row):
         reference_number,
         google_event_id,
         source,
+        customer_instagram,
     ) = row
 
     customer = _customer_display(customer_name, customer_surname, customer_phone)
     phone = _phone_display(customer_phone)
+    if phone == '-' and customer_instagram:
+        phone = f'@{customer_instagram}'
     status_label = _STATUS_LABELS.get(str(status), str(status))
     style_label = _label_from_map(tattoo_style, _STYLE_LABELS)
     area_label = _label_from_map(body_area, _REGION_LABELS)
@@ -1152,7 +1156,7 @@ def _build_event_body(row):
         '',
         '— Müşteri —',
         f"Ad Soyad: {customer}",
-        f"Telefon: {phone}",
+        f"İletişim: {phone if phone != '-' else 'Tel no yok'}",
         '',
         '— Dövme —',
         f"Bölge: {area_label}",
@@ -1280,7 +1284,8 @@ def _fetch_appointment_row(cursor, appointment_id):
             tr.description,
             tr.reference_number,
             a.google_event_id,
-            a.source
+            a.source,
+            c.instagram
         FROM appointments a
         JOIN customers c ON a.customer_id = c.id
         JOIN artists s ON a.staff_id = s.id
@@ -3169,24 +3174,50 @@ def link_open_tattoo_request(cursor, appointment_id, customer_id, staff_id, tatt
     return request_id
 
 
-def _resolve_or_create_gcal_customer(cursor, name, surname, phone, event_id):
-    """Telefon varsa mevcut müşteriyi bağla; dolu adı/soyadı ezme."""
+def _resolve_or_create_gcal_customer(cursor, name, surname, phone, event_id, instagram=None):
+    """Telefon varsa mevcut müşteriyi bağla; yoksa Instagram adıyla; dolu adı/soyadı ezme."""
     name = (name or '').strip()
     surname = (surname or '').strip()
     if phone:
         cursor.execute('SELECT id FROM customers WHERE phone = %s', (phone,))
         found = cursor.fetchone()
         if found:
+            if instagram:
+                cursor.execute(
+                    'UPDATE customers SET instagram = COALESCE(instagram, %s) WHERE id = %s',
+                    (instagram, found[0]),
+                )
             return found[0]
         cursor.execute(
             """
-            INSERT INTO customers (phone, name, surname)
-            VALUES (%s, %s, %s)
+            INSERT INTO customers (phone, name, surname, instagram)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT (phone) DO UPDATE
                SET phone = customers.phone
             RETURNING id
             """,
-            (phone, name, surname),
+            (phone, name, surname, instagram),
+        )
+        return cursor.fetchone()[0]
+
+    if instagram:
+        # Telefonu olmayan musteri Instagram adiyla taninir: ayni ad = ayni kayit.
+        cursor.execute(
+            'SELECT id FROM customers WHERE instagram = %s ORDER BY id LIMIT 1',
+            (instagram,),
+        )
+        found = cursor.fetchone()
+        if found:
+            return found[0]
+        cursor.execute(
+            """
+            INSERT INTO customers (phone, name, surname, instagram)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (phone) DO UPDATE
+               SET phone = customers.phone
+            RETURNING id
+            """,
+            (_synthetic_gcal_phone(event_id), name, surname, instagram),
         )
         return cursor.fetchone()[0]
 
@@ -3457,7 +3488,9 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None, p
         logger.warning('Google manuel import: kitaplanabilir sanatci yok')
         return 'skip'
 
-    summary = event.get('summary') or ''
+    # "@kullanici" = Instagram adi (telefonu olmayan musteri); basliktan ayrilir ki
+    # musteri adina/soyadina karismasin.
+    instagram, summary = extract_instagram(event.get('summary') or '')
     staff_id, staff_name, has_keyword, phone, reason = _parse_off_day_from_title(
         summary, artists
     )
@@ -3553,7 +3586,7 @@ def _import_manual_google_event(cursor, event, calendar_id, imported_ids=None, p
     try:
         cursor.execute('SAVEPOINT gcal_import')
         customer_id = _resolve_or_create_gcal_customer(
-            cursor, cust_name, cust_surname, phone, event_id
+            cursor, cust_name, cust_surname, phone, event_id, instagram=instagram
         )
         cursor.execute(
             """
