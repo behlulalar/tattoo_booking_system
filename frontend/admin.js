@@ -5515,6 +5515,12 @@ function initPwaInstallBanner() {
 
 function initPwaServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
+  // İlk kurulumda controllerchange tetiklenir; yalnızca zaten bir service worker varken
+  // gelen değişiklik "yeni sürüm" demektir.
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) handlePanelUpdateAvailable(`sw-${Date.now() >> 16}`);
+  });
   navigator.serviceWorker.register('/admin-sw.js', { scope: '/' }).then((reg) => {
     if (reg.waiting) $('pwa-update-banner') && ($('pwa-update-banner').hidden = false);
     reg.addEventListener('updatefound', () => {
@@ -5540,13 +5546,26 @@ function initPwaServiceWorker() {
   $('pwa-update-btn')?.addEventListener('click', async () => {
     const reg = await navigator.serviceWorker.getRegistration();
     reg?.waiting?.postMessage({ type: 'SKIP_WAITING' });
-    window.location.reload();
+    reloadForUpdate();
   });
 }
 
 // Bildirime dokununca açılacak sayfa: ?page=<nav data-page> (soğuk açılış) ya da
 // service worker'dan gelen NAVIGATE mesajı (uygulama zaten açıksa).
-let _pendingDeepLinkPage = new URLSearchParams(window.location.search).get('page') || null;
+// Otomatik yenilemeden önce bakılan sayfa saklanır; yenilenince aynı sekmeye dönülür.
+const ADMIN_RESTORE_PAGE_KEY = 'adminRestorePage';
+
+function takeRestorePage() {
+  try {
+    const page = sessionStorage.getItem(ADMIN_RESTORE_PAGE_KEY);
+    sessionStorage.removeItem(ADMIN_RESTORE_PAGE_KEY);
+    return page || null;
+  } catch {
+    return null;
+  }
+}
+
+let _pendingDeepLinkPage = new URLSearchParams(window.location.search).get('page') || takeRestorePage();
 
 function pageFromUrl(url) {
   try {
@@ -5585,7 +5604,7 @@ function consumePendingDeepLink() {
 
 // Uygulama bir süre arka planda kaldıktan sonra öne gelince bildirimleri ve açık olan
 // liste sayfasını tazeler (mobilde arka plandaki zamanlayıcılar donar).
-const RESUME_REFRESH_MIN_AWAY_MS = 30 * 1000;
+const RESUME_REFRESH_MIN_AWAY_MS = 15 * 1000;
 const RESUME_REFRESH_PAGES = new Set([
   'dashboard', 'appointments', 'pending', 'my-tattoo-requests', 'undecided-requests',
   'preconsult-requests', 'all-tattoo-requests', 'all-appointments', 'past-appointments',
@@ -5600,6 +5619,107 @@ async function refreshOnResume() {
   if (page && RESUME_REFRESH_PAGES.has(page)) await loadPageData(page);
 }
 
+// ---- Panelin yeni sürümünü kendiliğinden yakala ve yenile ----
+// Arka planda açık kalan uygulama yeni sürümü kendi kendine göremez: service worker
+// denetimi yalnızca açılışta/navigasyonda yapılır. Bu yüzden öne gelince ve düzenli
+// aralıkla (1) service worker güncellemesini tetikler, (2) yayındaki sayfanın sürümünü
+// yüklü sürümle karşılaştırır; farklıysa ve yazılan bir şey yoksa sayfayı yeniler.
+const PANEL_UPDATE_CHECK_EVERY_MS = 10 * 60 * 1000;
+const PANEL_AUTO_RELOAD_GUARD_KEY = 'adminAutoReloadGuard';
+// Bu sayfalarda ayar formları var; kaydedilmemiş değişiklik kaybolmasın diye otomatik yenilenmez.
+const PANEL_FORM_PAGES = new Set(['message-settings', 'google-calendar', 'api-settings']);
+
+function currentPanelVersion() {
+  const tag = [...document.querySelectorAll('script[src]')].find((el) => /admin\.js\?v=/.test(el.getAttribute('src')));
+  const m = tag && tag.getAttribute('src').match(/admin\.js\?v=([0-9A-Za-z._-]+)/);
+  return m ? m[1] : null;
+}
+
+async function fetchLivePanelVersion() {
+  try {
+    const res = await fetch(`${window.location.pathname}?_v=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const m = (await res.text()).match(/admin\.js\?v=([0-9A-Za-z._-]+)/);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function isSafeToAutoReload() {
+  if (visibleAdminOverlays().length) return false;
+  const active = document.activeElement;
+  if (active && ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) && active.value) return false;
+  if (isAdminLoggedInView()) {
+    const page = document.querySelector('.nav-item.active')?.getAttribute('data-page');
+    if (page && PANEL_FORM_PAGES.has(page)) return false;
+  }
+  return true;
+}
+
+// Test edilebilsin diye ayrı fonksiyon.
+function reloadPanel() {
+  window.location.reload();
+}
+
+function reloadForUpdate() {
+  try {
+    const page = document.querySelector('.nav-item.active')?.getAttribute('data-page');
+    if (page && isAdminLoggedInView()) sessionStorage.setItem(ADMIN_RESTORE_PAGE_KEY, page);
+  } catch {
+    /* sayfa saklanamazsa panele dönülür */
+  }
+  reloadPanel();
+}
+
+function showPanelUpdateBanner() {
+  const bar = $('pwa-update-banner');
+  if (bar) bar.hidden = false;
+}
+
+function handlePanelUpdateAvailable(liveVersion) {
+  if (!isSafeToAutoReload()) {
+    showPanelUpdateBanner(); // kullanıcı bir şey yazıyor: bandı göster, sonraki kontrolde tekrar denenir
+    return false;
+  }
+  // Yenileme döngüsü koruması: aynı sürüm için 2 dakika içinde ikinci kez otomatik yenileme yok.
+  try {
+    const guard = JSON.parse(sessionStorage.getItem(PANEL_AUTO_RELOAD_GUARD_KEY) || 'null');
+    if (guard && guard.version === liveVersion && Date.now() - guard.at < 2 * 60 * 1000) {
+      showPanelUpdateBanner();
+      return false;
+    }
+    sessionStorage.setItem(PANEL_AUTO_RELOAD_GUARD_KEY, JSON.stringify({ version: liveVersion, at: Date.now() }));
+  } catch {
+    /* koruma saklanamazsa yine de yenile */
+  }
+  reloadForUpdate();
+  return true;
+}
+
+let _panelUpdateCheckRunning = false;
+
+async function checkForPanelUpdate() {
+  if (_panelUpdateCheckRunning || !navigator.onLine) return false;
+  _panelUpdateCheckRunning = true;
+  try {
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      await reg?.update();
+    } catch {
+      /* service worker güncellemesi başarısız olsa da sürüm karşılaştırması yapılır */
+    }
+    const installed = currentPanelVersion();
+    const live = await fetchLivePanelVersion();
+    if (installed && live && installed !== live) {
+      return handlePanelUpdateAvailable(live);
+    }
+    return false;
+  } finally {
+    _panelUpdateCheckRunning = false;
+  }
+}
+
 function initResumeRefresh() {
   let hiddenAt = 0;
   document.addEventListener('visibilitychange', () => {
@@ -5609,11 +5729,21 @@ function initResumeRefresh() {
     }
     const away = hiddenAt ? Date.now() - hiddenAt : 0;
     hiddenAt = 0;
-    if (away >= RESUME_REFRESH_MIN_AWAY_MS) refreshOnResume();
+    if (away >= RESUME_REFRESH_MIN_AWAY_MS) {
+      // Önce yeni sürüm var mı bakılır (varsa ve güvenliyse sayfa yenilenir), yoksa veri tazelenir.
+      checkForPanelUpdate().then((reloaded) => {
+        if (!reloaded) refreshOnResume();
+      });
+    }
   });
   window.addEventListener('pageshow', (e) => {
     if (e.persisted) refreshOnResume();
   });
+  window.addEventListener('online', () => { checkForPanelUpdate(); });
+  // Ekran açık ve uygulama öndeyken de arada bir yeni sürüm kontrolü.
+  setInterval(() => {
+    if (document.visibilityState === 'visible') checkForPanelUpdate();
+  }, PANEL_UPDATE_CHECK_EVERY_MS);
 }
 
 function initAdminPwa() {
