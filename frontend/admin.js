@@ -4234,6 +4234,8 @@ async function loadStaffSchedule() {
   }
 }
 
+let _staffStatsSeq = 0;
+
 async function loadStaffStats() {
   if (!_staffStatsTargetId) return;
 
@@ -4243,7 +4245,11 @@ async function loadStaffStats() {
   if (month) qs.set('month', month);
   if (year) qs.set('year', year);
 
-  const { ok, data } = await apiCall(`/admin/staff/${_staffStatsTargetId}/stats?${qs.toString()}`, { method: 'GET' });
+  const seq = ++_staffStatsSeq;
+  const targetId = _staffStatsTargetId;
+  const { ok, data } = await apiCall(`/admin/staff/${targetId}/stats?${qs.toString()}`, { method: 'GET' });
+  // Bu arada başka ay seçildiyse ya da pencere kapanıp başka personel açıldıysa eski cevabı yoksay.
+  if (seq !== _staffStatsSeq || targetId !== _staffStatsTargetId) return;
   if (!ok || !data.success) {
     showToast(data?.message || 'İstatistikler alınamadı', 'error');
     return;
@@ -4307,6 +4313,9 @@ async function loadStaffStats() {
   }
 }
 
+// Ay/yıl hızlı art arda değişirse yalnızca SON isteğin cevabı ekrana yazılır.
+let _incomeReportSeq = 0;
+
 async function loadIncomeReport() {
   if (!canAccessIncome()) {
     showToast('Bu rapora erişim yetkiniz yok', 'error');
@@ -4319,7 +4328,9 @@ async function loadIncomeReport() {
   if (month) qs.set('month', month);
   if (year)  qs.set('year',  year);
 
+  const seq = ++_incomeReportSeq;
   const { ok, data } = await apiCall(`/admin/reports/income?${qs.toString()}`, { method: 'GET' });
+  if (seq !== _incomeReportSeq) return;
   if (!ok || !data.success) {
     showToast(data?.message || 'Rapor alınamadı', 'error');
     return;
@@ -4646,6 +4657,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('staff-stats-overlay')?.addEventListener('click', (e) => {
     if (e.target === $('staff-stats-overlay')) closeStaffStatsModal();
   });
+  ['staff-stats-month', 'staff-stats-year'].forEach((id) => {
+    $(id)?.addEventListener('change', () => loadStaffStats());
+  });
   $('load-staff-stats-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     await loadStaffStats();
@@ -4674,7 +4688,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadStaffSchedule();
   });
 
-  // Reports
+  // Reports: ay ya da yıl seçilince rapor kendiliğinden yüklenir ("Yenile" düğmesine gerek yok)
+  ['report-month', 'report-year'].forEach((id) => {
+    $(id)?.addEventListener('change', () => loadIncomeReport());
+  });
   $('load-report-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     const now = new Date();
