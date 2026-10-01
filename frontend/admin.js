@@ -3673,7 +3673,7 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   const startMins = ev.start;
   const duration = a.duration_minutes || 30;
   const topPx = ((startMins - gridStartMins) / 30) * slotHeight;
-  const heightPx = Math.max((duration / 30) * slotHeight - 3, 28);
+  const heightPx = Math.max((duration / 30) * slotHeight - 3, slotHeight < 40 ? 14 : 28);
   const widthPct = 100 / ev.totalCols;
   const leftPct = ev.col * widthPct;
 
@@ -3706,7 +3706,8 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   const statusMark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ' }[a.status] || '';
   const fade = a.status === 'cancelled' ? 'opacity:0.45;' : '';
   const lightClass = colorStyle && isLightColor(a.staff.color_hex) ? ' gcal-event--light' : '';
-  return `<div class="gcal-event ${colorStyle ? '' : statusClass}${lightClass}" style="top:${topPx}px;height:${heightPx}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);${colorStyle}${fade}" title=""${escapeHtml(customer)} · ${escapeHtml(sourceLabel)}">
+  const refAttr = isOff ? '' : ` data-apt-ref="${escapeHtml(String(a.id))}"`;
+  return `<div class="gcal-event ${colorStyle ? '' : statusClass}${lightClass}"${refAttr} style="top:${topPx}px;height:${heightPx}px;left:calc(${leftPct}% + 2px);width:calc(${widthPct}% - 4px);${colorStyle}${fade}" title="${escapeHtml(customer)} · ${escapeHtml(sourceLabel)}">
     <div class="gcal-event-title">${statusMark}${escapeHtml(customer)}</div>
     ${phone ? `<div class="gcal-event-line">${escapeHtml(phone)}</div>` : ''}
     ${detailLine ? `<div class="gcal-event-line">${escapeHtml(detailLine)}</div>` : ''}
@@ -3716,7 +3717,7 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
 }
 
 async function renderAppointmentsTable(itemsRaw, tableContainerId) {
-  const SLOT_HEIGHT = 48;
+  let SLOT_HEIGHT = 48;
   let items = [...(itemsRaw || [])];
   const wrap = $(tableContainerId);
   if (!wrap) return;
@@ -3740,6 +3741,10 @@ async function renderAppointmentsTable(itemsRaw, tableContainerId) {
   times = ensureAppointmentTimesInGrid(times, items);
 
   if (!times.length) times = buildScheduleTimeSlots();
+  // Telefonda gun ekrana sigsin: yukseklik ekrana gore kucultulur (asagi kaydirma yok).
+  if (isMobileMonthView()) {
+    SLOT_HEIGHT = Math.max(16, Math.min(48, Math.floor((window.innerHeight * 0.62) / times.length)));
+  }
 
   const gridStartMins = timeToMinutes(times[0]);
   const gridEndMins = timeToMinutes(times[times.length - 1]) + 30;
@@ -3833,6 +3838,13 @@ async function renderAppointmentsTable(itemsRaw, tableContainerId) {
   wrap.querySelector('[data-week-nav="prev"]')?.addEventListener('click', () => nav('prev'));
   wrap.querySelector('[data-week-nav="next"]')?.addEventListener('click', () => nav('next'));
   wrap.querySelector('[data-week-nav="today"]')?.addEventListener('click', () => nav('today'));
+  wrap.querySelectorAll('.gcal-event[data-apt-ref]').forEach((el) => {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', () => {
+      const apt = items.find((x) => String(x.id) === el.getAttribute('data-apt-ref') && x.kind !== 'off_day');
+      if (apt) openAppointmentDetail(apt);
+    });
+  });
 }
 
 // =============================================
