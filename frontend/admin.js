@@ -3904,6 +3904,15 @@ function monthItemsFor(containerId) {
   return aptItems.concat(offItems);
 }
 
+// "14:00–16:30": baslangic + sure.
+function timeRangeLabel(a) {
+  const start = String(a.time || '').slice(0, 5);
+  const dur = parseInt(a.duration_minutes, 10);
+  if (!/^\d{2}:\d{2}$/.test(start) || !dur) return start;
+  const end = (timeToMinutes(start) + dur) % (24 * 60);
+  return `${start}–${minutesToTime(end)}`;
+}
+
 function monthChipHtml(a, mobile, showArtist = false) {
   const isOff = a.kind === 'off_day';
   const hex = isOff ? '#616161' : (a.staff?.color_hex || '#616161');
@@ -3911,7 +3920,10 @@ function monthChipHtml(a, mobile, showArtist = false) {
   const first = (a.customer?.full_name || '').trim() || customerContactLabel(a.customer, 'Müşteri');
   const mark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ' }[a.status] || '';
   // Tum Randevular: Google Takvim basligi gibi "Sanatci · Musteri" (renk de sanatciyi gosterir).
-  const artist = showArtist ? String(a.staff?.name || '').trim().split(/\s+/)[0] : '';
+  const artistName = String(a.staff?.name || '').trim();
+  const artist = showArtist === 'initial'
+    ? artistName.charAt(0).toLocaleUpperCase('tr-TR')
+    : (showArtist ? artistName.split(/\s+/)[0] : '');
   const who = artist ? `${artist} · ${first}` : first;
   const label = isOff ? a._offLabel : `${mobile ? '' : `${String(a.time).slice(0, 5)} `}${mark}${who}`;
   const fade = a.status === 'cancelled' ? 'opacity:.45;' : '';
@@ -3929,7 +3941,8 @@ function renderAppointmentsMonth(containerId) {
   const gridStart = getMondayOfWeek(start);
   const last = new Date(year, month + 1, 0);
   const weeks = Math.ceil(((getMondayOfWeek(last).getTime() - gridStart.getTime()) / 86400000 + 7) / 7);
-  const showArtist = containerId === 'all-appointments-month-container';
+  // Tum Randevular: sanatci adi; Randevularim: yalniz bas harf.
+  const showArtist = containerId === 'all-appointments-month-container' ? 'name' : 'initial';
   const items = monthItemsFor(containerId);
   const byDate = {};
   items.forEach((a) => { (byDate[a.date] = byDate[a.date] || []).push(a); });
@@ -4015,7 +4028,7 @@ function showAppointmentDetailOverlay(title, html) {
 
 function openAppointmentDetail(a) {
   const dateLabel = formatDateParts(a.date).label;
-  const body = showAppointmentDetailOverlay(`${dateLabel} · ${String(a.time).slice(0, 5)}`, appointmentCardHtml(a));
+  const body = showAppointmentDetailOverlay(`${dateLabel} · ${timeRangeLabel(a)}`, appointmentCardHtml(a));
   if (!body) return;
   const done = async () => { closeAppointmentDetail(); await reloadActiveAdminAppointments(); };
   bindAppointmentStatusControls(body, done);
@@ -4031,7 +4044,7 @@ function openMonthDaySheet(date, list) {
     const mark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ', cancelled: '✕ ' }[a.status] || '';
     return `<button type="button" class="day-sheet-row" data-apt-ref="${escapeHtml(String(a.id))}" ${isOff ? 'disabled' : ''}>
       <span class="day-sheet-dot" style="background:${escapeHtml(hex)}"></span>
-      <span class="day-sheet-time">${isOff ? 'Tüm gün' : escapeHtml(String(a.time).slice(0, 5))}</span>
+      <span class="day-sheet-time">${isOff ? 'Tüm gün' : escapeHtml(timeRangeLabel(a))}</span>
       <span class="day-sheet-main"><strong>${mark}${escapeHtml(name)}</strong>${isOff ? '' : `<small>${escapeHtml(a.staff?.name || '')} · ${a.duration_minutes || 30} dk</small>`}</span>
     </button>`;
   }).join('');
