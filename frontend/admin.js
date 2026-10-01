@@ -1180,7 +1180,19 @@ async function loadPageData(page) {
   if (page === 'past-appointments') await loadPastAppointments();
 }
 
+// Sidebar "Randevularım" sayaci: bugunden itibaren bekleyen/onayli kendi randevularim.
+async function refreshMyAppointmentsBadge() {
+  if (!isAdminLoggedInView()) return;
+  const { ok, data } = await apiCall(
+    `/admin/appointments?start_date=${localIsoDate()}&exclude_completed=true`,
+    { method: 'GET' },
+  );
+  if (!ok || !data?.success) return;
+  updateNewRequestsBadge('my-appointments-badge', (data.appointments || []).length);
+}
+
 async function reloadActiveAdminAppointments() {
+  void refreshMyAppointmentsBadge();
   const active = document.querySelector('.nav-item.active')?.getAttribute('data-page');
   if (active === 'dashboard') await loadDashboard();
   if (active === 'appointments') await loadAppointments();
@@ -2699,8 +2711,12 @@ $('notif-push-toggle-btn')?.addEventListener('click', async (e) => {
 
 function startNotificationsPolling() {
   fetchNotifications();
+  void refreshMyAppointmentsBadge();
   if (notifPollTimer) clearInterval(notifPollTimer);
-  notifPollTimer = setInterval(fetchNotifications, NOTIF_POLL_MS);
+  notifPollTimer = setInterval(() => {
+    fetchNotifications();
+    if (document.visibilityState === 'visible') void refreshMyAppointmentsBadge();
+  }, NOTIF_POLL_MS);
 }
 
 function stopNotificationsPolling() {
@@ -2709,6 +2725,7 @@ function stopNotificationsPolling() {
     notifPollTimer = null;
   }
   renderNotifBadge(0);
+  updateNewRequestsBadge('my-appointments-badge', 0);
   toggleNotifPanel(false);
 }
 
@@ -5883,6 +5900,7 @@ const RESUME_REFRESH_PAGES = new Set([
 async function refreshOnResume() {
   if (!isAdminLoggedInView()) return;
   fetchNotifications();
+  void refreshMyAppointmentsBadge();
   // Açık bir pencere (form/modal) varken listeyi yenileme: yazılanlar kaybolmasın.
   if (visibleAdminOverlays().length) return;
   const page = document.querySelector('.nav-item.active')?.getAttribute('data-page');
