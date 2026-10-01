@@ -7087,7 +7087,7 @@ select option.slot-busy:disabled {
 }
 .day-sheet-row[disabled] { cursor: default; opacity: .75; }
 .day-sheet-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
-.day-sheet-time { flex: none; min-width: 48px; font-variant-numeric: tabular-nums; opacity: .85; }
+.day-sheet-time { flex: none; min-width: 92px; white-space: nowrap; font-variant-numeric: tabular-nums; opacity: .85; }
 .day-sheet-main { display: flex; flex-direction: column; min-width: 0; }
 .day-sheet-main strong { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .day-sheet-main small { opacity: .65; }
@@ -7117,3 +7117,5 @@ select option.slot-busy:disabled {
     .gcal-event-line, .gcal-event-staff, .gcal-event-time { display: none; }
     .gcal-week-nav { gap: 4px; }
 }
+
+@media (max-width: 700px) { .day-sheet-time { min-width: 82px; font-size: .85rem; } }
