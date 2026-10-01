@@ -3904,15 +3904,18 @@ function monthItemsFor(containerId) {
   return aptItems.concat(offItems);
 }
 
-function monthChipHtml(a, mobile) {
+function monthChipHtml(a, mobile, showArtist = false) {
   const isOff = a.kind === 'off_day';
   const hex = isOff ? '#616161' : (a.staff?.color_hex || '#616161');
   const light = !isOff && isLightColor(hex);
   const first = (a.customer?.full_name || '').trim() || customerContactLabel(a.customer, 'Müşteri');
   const mark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ' }[a.status] || '';
-  const label = isOff ? a._offLabel : `${mobile ? '' : `${String(a.time).slice(0, 5)} `}${mark}${first}`;
+  // Tum Randevular: Google Takvim basligi gibi "Sanatci · Musteri" (renk de sanatciyi gosterir).
+  const artist = showArtist ? String(a.staff?.name || '').trim().split(/\s+/)[0] : '';
+  const who = artist ? `${artist} · ${first}` : first;
+  const label = isOff ? a._offLabel : `${mobile ? '' : `${String(a.time).slice(0, 5)} `}${mark}${who}`;
   const fade = a.status === 'cancelled' ? 'opacity:.45;' : '';
-  return `<button type="button" class="month-chip${light ? ' month-chip--light' : ''}${isOff ? ' month-chip--off' : ''}" data-apt-ref="${escapeHtml(String(a.id))}" style="background:${escapeHtml(hex)};${fade}" title="${escapeHtml(`${String(a.time).slice(0, 5)} · ${first}`)}">${escapeHtml(label)}</button>`;
+  return `<button type="button" class="month-chip${light ? ' month-chip--light' : ''}${isOff ? ' month-chip--off' : ''}" data-apt-ref="${escapeHtml(String(a.id))}" style="background:${escapeHtml(hex)};${fade}" title="${escapeHtml(`${String(a.time).slice(0, 5)} · ${a.staff?.name ? a.staff.name + ' · ' : ''}${first}`)}">${escapeHtml(label)}</button>`;
 }
 
 function renderAppointmentsMonth(containerId) {
@@ -3926,6 +3929,7 @@ function renderAppointmentsMonth(containerId) {
   const gridStart = getMondayOfWeek(start);
   const last = new Date(year, month + 1, 0);
   const weeks = Math.ceil(((getMondayOfWeek(last).getTime() - gridStart.getTime()) / 86400000 + 7) / 7);
+  const showArtist = containerId === 'all-appointments-month-container';
   const items = monthItemsFor(containerId);
   const byDate = {};
   items.forEach((a) => { (byDate[a.date] = byDate[a.date] || []).push(a); });
@@ -3940,7 +3944,7 @@ function renderAppointmentsMonth(containerId) {
     const ds = formatTrDate(d);
     const list = byDate[ds] || [];
     const outside = d.getMonth() !== month;
-    const shown = list.slice(0, limit).map((a) => monthChipHtml(a, mobile)).join('');
+    const shown = list.slice(0, limit).map((a) => monthChipHtml(a, mobile, showArtist)).join('');
     const more = list.length > limit ? `<span class="month-more">+${list.length - limit}</span>` : '';
     cells += `<div class="month-cell${outside ? ' is-outside' : ''}${ds === todayStr ? ' is-today' : ''}" data-date="${ds}">
       <span class="month-daynum">${d.getDate()}</span>${shown}${more}
