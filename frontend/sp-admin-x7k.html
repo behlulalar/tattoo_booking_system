@@ -17,7 +17,7 @@
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260818131000" />
-    <link rel="stylesheet" href="admin.css?v=20261001025540" />
+    <link rel="stylesheet" href="admin.css?v=20261001030001" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="vendor/flatpickr/flatpickr.min.css" />
     <script src="vendor/flatpickr/flatpickr.min.js"></script>
@@ -288,20 +288,20 @@
                     <button id="clear-filter-btn" class="filter-btn secondary"><i class="fas fa-times"></i>
                         Temizle</button>
                     <div class="view-toggle">
-                        <button id="view-list-btn" class="view-btn active" title="Kart Görünümü">
+                        <button id="view-list-btn" class="view-btn" title="Kart Görünümü">
                             <i class="fas fa-list"></i>
                         </button>
                         <button id="view-table-btn" class="view-btn" title="Tablo Görünümü">
                             <i class="fas fa-table"></i>
                         </button>
-                        <button id="view-month-btn" class="view-btn" title="Aylık Görünüm">
+                        <button id="view-month-btn" class="view-btn active" title="Aylık Görünüm">
                             <i class="fas fa-calendar-alt"></i>
                         </button>
                     </div>
                 </div>
 
                 <!-- Kart Görünümü -->
-                <div id="appointments-list-view" class="appointments-view-container">
+                <div id="appointments-list-view" class="appointments-view-container" style="display: none;">
                     <div id="all-appointments" class="appointments-list">
                         <p class="empty-message">Yükleniyor...</p>
                     </div>
@@ -315,7 +315,7 @@
                 </div>
 
                 <!-- Aylık Görünüm -->
-                <div id="appointments-month-view" class="appointments-view-container" style="display: none;">
+                <div id="appointments-month-view" class="appointments-view-container">
                     <div id="all-appointments-month" class="month-wrap"></div>
                 </div>
             </section>
@@ -420,20 +420,20 @@
                         <i class="fas fa-redo"></i> Sıfırla
                     </button>
                     <div class="view-toggle">
-                        <button id="all-view-list-btn" class="view-btn active" title="Kart Görünümü">
+                        <button id="all-view-list-btn" class="view-btn" title="Kart Görünümü">
                             <i class="fas fa-list"></i>
                         </button>
                         <button id="all-view-table-btn" class="view-btn" title="Tablo Görünümü">
                             <i class="fas fa-table"></i>
                         </button>
-                        <button id="all-view-month-btn" class="view-btn" title="Aylık Görünüm">
+                        <button id="all-view-month-btn" class="view-btn active" title="Aylık Görünüm">
                             <i class="fas fa-calendar-alt"></i>
                         </button>
                     </div>
                 </div>
 
                 <!-- Kart Görünümü -->
-                <div id="all-appointments-list-view" class="appointments-view-container">
+                <div id="all-appointments-list-view" class="appointments-view-container" style="display: none;">
                     <div id="all-appointments-container" class="all-appointments-container">
                         <p class="empty-message">Yükleniyor...</p>
                     </div>
@@ -447,7 +447,7 @@
                 </div>
 
                 <!-- Aylık Görünüm -->
-                <div id="all-appointments-month-view" class="appointments-view-container" style="display: none;">
+                <div id="all-appointments-month-view" class="appointments-view-container">
                     <div id="all-appointments-month-container" class="month-wrap"></div>
                 </div>
             </section>
@@ -1612,7 +1612,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20261001025540"></script>
+    <script src="admin.js?v=20261001030001"></script>
 </body>
 
 </html>

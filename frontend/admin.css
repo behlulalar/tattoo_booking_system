@@ -7099,3 +7099,21 @@ select option.slot-busy:disabled {
     .month-nav-btn, .month-today-btn { padding: 6px 10px; }
     .apt-detail-modal { max-height: 92vh; }
 }
+
+
+/* Haftalik takvim: telefonda ekrana sigar (yatay/dikey kaydirma yok) */
+@media (max-width: 700px) {
+    .gcal-grid { min-width: 0; }
+    .gcal-scroll { max-height: none; overflow-x: hidden; }
+    .gcal-corner, .gcal-times { width: 32px; min-width: 32px; }
+    .gcal-header { min-height: 46px; }
+    .gcal-day-head { padding: 4px 1px 3px; }
+    .gcal-day-name { font-size: .6rem; }
+    .gcal-day-num { font-size: .85rem; width: 24px; height: 24px; line-height: 24px; }
+    .gcal-time-slot--hour span { font-size: .58rem; right: 3px; }
+    .gcal-tz { display: none; }
+    .gcal-event { padding: 1px 3px; border-radius: 4px; border-left-width: 2px; }
+    .gcal-event-title { font-size: .6rem; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gcal-event-line, .gcal-event-staff, .gcal-event-time { display: none; }
+    .gcal-week-nav { gap: 4px; }
+}
