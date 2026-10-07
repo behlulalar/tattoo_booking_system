@@ -532,8 +532,7 @@ function getStatusText(status) {
         'pending': 'Bekliyor',
         'confirmed': 'Onaylandı',
         'completed': 'Tamamlandı',
-        'cancelled': 'İptal',
-        'no_show': 'Gelmedi'
+        'cancelled': 'İptal'
     };
     return statusMap[status] || status;
 }

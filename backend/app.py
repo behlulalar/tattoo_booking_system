@@ -4696,7 +4696,7 @@ def update_appointment_status(appointment_id):
     data = request.get_json(silent=True) or {}
     new_status = data.get('status')
     
-    valid_statuses = ['pending', 'confirmed', 'completed', 'cancelled', 'no_show']
+    valid_statuses = ['pending', 'confirmed', 'completed', 'cancelled']
     if new_status not in valid_statuses:
         return jsonify({'success': False, 'message': 'Geçersiz durum'}), 400
     

@@ -986,7 +986,6 @@ function statusText(status) {
     confirmed: 'Onaylandı',
     completed: 'Tamamlandı',
     cancelled: 'İptal',
-    no_show: 'Gelmedi',
   };
   return map[status] || status || '-';
 }
@@ -1015,7 +1014,6 @@ const APT_STATUS_OPTIONS = [
   { value: 'confirmed', label: 'Onaylandı' },
   { value: 'completed', label: 'Tamamlandı' },
   { value: 'cancelled', label: 'İptal' },
-  { value: 'no_show', label: 'Gelmedi' },
 ];
 
 function isAppointmentStartInFuture(appointment) {
@@ -1062,7 +1060,6 @@ function renderAppointmentStatusControls(appointmentId, currentStatus, appointme
 const APPT_STATUS_UPDATING_TITLES = {
   completed: 'Randevu Tamamlanıyor',
   cancelled: 'Randevu İptal Ediliyor',
-  no_show: 'Gelmedi Olarak İşaretleniyor',
 };
 
 function showApptStatusUpdatingOverlay(newStatus) {
@@ -2033,7 +2030,7 @@ function googleAppointmentNeedsPrice(appointment) {
   if (appointmentSourceKey(appointment.source) !== 'google') return false;
   if (parseFloat(appointment.price || 0) > 0) return false;
   const status = appointment.status;
-  return status !== 'completed' && status !== 'cancelled' && status !== 'no_show';
+  return status !== 'completed' && status !== 'cancelled';
 }
 
 function googlePriceHintRow(appointment) {
@@ -2101,11 +2098,10 @@ function bindAppointmentStatusControls(container, afterSuccess) {
         openGoogleCompletePriceModal(id, afterSuccess);
         return;
       }
-      if (status === 'cancelled' || status === 'no_show') {
-        const label = status === 'cancelled' ? 'iptal etmek' : 'gelmedi olarak işaretlemek';
+      if (status === 'cancelled') {
         const confirmed = await customConfirm(
           'Emin misiniz?',
-          `Bu randevuyu ${label} istediğinizden emin misiniz? Yanlışlıkla dokunulan bir durum düğmesi randevuyu geri alınamaz şekilde değiştirir.`,
+          `Bu randevuyu iptal etmek istediğinizden emin misiniz? Yanlışlıkla dokunulan bir durum düğmesi randevuyu geri alınamaz şekilde değiştirir.`,
         );
         if (!confirmed) return;
       }
@@ -3699,7 +3695,6 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
     pending: 'gcal-event--pending',
     completed: 'gcal-event--completed',
     cancelled: 'gcal-event--cancelled',
-    no_show: 'gcal-event--noshow',
     off_day: 'gcal-event--offday',
   };
   const statusClass = statusColors[a.status] || 'gcal-event--default';
@@ -3720,7 +3715,7 @@ function buildGcalEventBlock(ev, gridStartMins, slotHeight) {
   const colorStyle = !isOff && a.staff?.color_hex
     ? `background:${escapeHtml(a.staff.color_hex)};border-left-color:rgba(255,255,255,0.55);`
     : '';
-  const statusMark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ' }[a.status] || '';
+  const statusMark = { completed: '✓ ', pending: '⏳ ' }[a.status] || '';
   const fade = a.status === 'cancelled' ? 'opacity:0.45;' : '';
   const lightClass = colorStyle && isLightColor(a.staff.color_hex) ? ' gcal-event--light' : '';
   const refAttr = isOff ? '' : ` data-apt-ref="${escapeHtml(String(a.id))}"`;
@@ -3918,7 +3913,7 @@ function monthChipHtml(a, mobile, showArtist = false) {
   const hex = isOff ? '#616161' : (a.staff?.color_hex || '#616161');
   const light = !isOff && isLightColor(hex);
   const first = (a.customer?.full_name || '').trim() || customerContactLabel(a.customer, 'Müşteri');
-  const mark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ' }[a.status] || '';
+  const mark = { completed: '✓ ', pending: '⏳ ' }[a.status] || '';
   // Tum Randevular: Google Takvim basligi gibi "Sanatci · Musteri" (renk de sanatciyi gosterir).
   const artistName = String(a.staff?.name || '').trim();
   const artist = showArtist === 'initial'
@@ -4041,7 +4036,7 @@ function openMonthDaySheet(date, list) {
     const isOff = a.kind === 'off_day';
     const hex = isOff ? '#616161' : (a.staff?.color_hex || '#616161');
     const name = isOff ? a._offLabel : customerDisplayName(a.customer);
-    const mark = { completed: '✓ ', pending: '⏳ ', no_show: '🚫 ', cancelled: '✕ ' }[a.status] || '';
+    const mark = { completed: '✓ ', pending: '⏳ ', cancelled: '✕ ' }[a.status] || '';
     return `<button type="button" class="day-sheet-row" data-apt-ref="${escapeHtml(String(a.id))}" ${isOff ? 'disabled' : ''}>
       <span class="day-sheet-dot" style="background:${escapeHtml(hex)}"></span>
       <span class="day-sheet-time">${isOff ? 'Tüm gün' : escapeHtml(timeRangeLabel(a))}</span>
