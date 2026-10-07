@@ -6,7 +6,6 @@ import json
 import os
 import random
 import re
-from urllib.parse import urlparse
 
 from config import SITE_CONFIG, get_evolution_config
 from customer_contact import NO_PHONE_LABEL, is_placeholder_phone
@@ -692,28 +691,6 @@ def build_staff_cancel_notification_message(
 {b['name']}"""
 
 
-def _otp_web_origin() -> str:
-    """Web OTP / klavye önerisi için site host (RANDEVU_URL).
-
-    RANDEVU_URL yanlışlıkla localhost/staging'e ayarlı kalırsa (test
-    sonrası unutulmuş .env, vb.) bu host gerçek müşteriye giden OTP
-    mesajına sızmasın diye local/private görünen host'lar filtrelenir.
-    """
-    url = (_biz().get('url') or os.getenv('RANDEVU_URL') or '').strip()
-    if not url:
-        return ''
-    if '://' not in url:
-        url = f'https://{url}'
-    host = (urlparse(url).hostname or '').lower()
-    if not host or host in ('localhost', '127.0.0.1', '0.0.0.0', '::1'):
-        return ''
-    if host.endswith(('.local', '.test', '.internal')):
-        return ''
-    if re.match(r'^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)', host):
-        return ''
-    return host
-
-
 def build_verification_code_message(code) -> str:
     """Doğrulama kodu — klavye önerisi ve tek tık kopya için optimize metin."""
     code_str = str(code).strip()[:6]
@@ -732,15 +709,22 @@ def build_verification_code_message(code) -> str:
 Teşekkür ederiz,
 _{b['name']}_"""
 
-    origin = _otp_web_origin()
-    lines = [
-        f'{code_str} is your verification code.',
-        f'{code_str} {b["name"]} doğrulama kodunuz. 2 dakika geçerlidir.',
-        'Bu kodu kimseyle paylaşmayın.',
+    # Klavye onerisi acikken: kod mesajda yalnizca bir kez gecer, 3 varyasyondan
+    # biri rastgele secilir (ban riski azaltma). Her birinde "dogrulama kodu"
+    # ifadesi klavyenin kodu onermesi icin korunur.
+    name = b['name']
+    variants = [
+        f"""{name} doğrulama kodunuz: {code_str}
+
+Kod 2 dakika geçerlidir. Güvenliğiniz için kimseyle paylaşmayın.""",
+        f"""{code_str} {name} doğrulama kodunuzdur.
+
+2 dakika geçerlidir, kimseyle paylaşmayın.""",
+        f"""{code_str} is your {name} verification code.
+
+Doğrulama kodunuz 2 dakika geçerlidir. Kimseyle paylaşmayın.""",
     ]
-    if origin:
-        lines.extend(['', f'@{origin} #{code_str}'])
-    return '\n'.join(lines)
+    return random.choice(variants)
 
 
 def get_webhook_secret() -> str:
