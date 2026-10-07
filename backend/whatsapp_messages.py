@@ -709,22 +709,11 @@ def build_verification_code_message(code) -> str:
 Teşekkür ederiz,
 _{b['name']}_"""
 
-    # Klavye onerisi acikken: kod mesajda yalnizca bir kez gecer, 3 varyasyondan
-    # biri rastgele secilir (ban riski azaltma). Her birinde "dogrulama kodu"
+    # Klavye onerisi acikken: kod mesajda yalnizca bir kez gecer. "dogrulama kodu"
     # ifadesi klavyenin kodu onermesi icin korunur.
-    name = b['name']
-    variants = [
-        f"""{name} doğrulama kodunuz: {code_str}
+    return f"""{b['name']} doğrulama kodunuz: {code_str}
 
-Kod 2 dakika geçerlidir. Güvenliğiniz için kimseyle paylaşmayın.""",
-        f"""{code_str} {name} doğrulama kodunuzdur.
-
-2 dakika geçerlidir, kimseyle paylaşmayın.""",
-        f"""{code_str} is your {name} verification code.
-
-Doğrulama kodunuz 2 dakika geçerlidir. Kimseyle paylaşmayın.""",
-    ]
-    return random.choice(variants)
+Kod 2 dakika geçerlidir. Güvenliğiniz için kimseyle paylaşmayın."""
 
 
 def get_webhook_secret() -> str:
