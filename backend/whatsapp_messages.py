@@ -487,8 +487,8 @@ def build_aftercare_reminder_message(customer_name: str, staff_name: str, contac
 
     Ban riski azaltma: 3 varyasyon arasindan rastgele secilir; yalnizca baslik,
     giris ve kapanis cumleleri degisir, bakim adimlari (AFTERCARE_STEPS) sabittir.
-    staff_name: randevuyu tamamlayan sanatci. contact_phone: super_admin telefonu
-    (bos ise isletme telefonuna duser).
+    staff_name / contact_phone: randevuyu tamamlayan sanatcinin adi ve telefonu
+    (telefon bos ise isletme telefonuna duser).
     """
     b = _biz()
     phone = _phone_display(contact_phone) if contact_phone else (b['phone'] or '')

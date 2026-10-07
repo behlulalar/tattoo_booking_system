@@ -7275,8 +7275,7 @@ def send_aftercare_cream_reminders():
                 COALESCE(c.surname, ''),
                 CASE WHEN cb.role::text IN ('super_admin', 'staff') THEN cb.name ELSE s.name END as staff_name,
                 a.completed_at,
-                (SELECT sa.phone FROM artists sa WHERE sa.role::text = 'super_admin'
-                  ORDER BY sa.id LIMIT 1) as super_admin_phone
+                CASE WHEN cb.role::text IN ('super_admin', 'staff') THEN cb.phone ELSE s.phone END as contact_phone
             FROM appointments a
             JOIN customers c ON a.customer_id = c.id
             JOIN artists s ON a.staff_id = s.id
@@ -7291,7 +7290,7 @@ def send_aftercare_cream_reminders():
 
         rows = cursor.fetchall()
 
-        for apt_id, phone, name, surname, staff_name, completed_at, sa_phone in rows:
+        for apt_id, phone, name, surname, staff_name, completed_at, contact_phone in rows:
             cursor.execute(
                 """
                 UPDATE appointments
@@ -7302,7 +7301,7 @@ def send_aftercare_cream_reminders():
                 (apt_id,),
             )
             if cursor.rowcount > 0:
-                to_send.append((apt_id, phone, name, surname, staff_name, completed_at, sa_phone))
+                to_send.append((apt_id, phone, name, surname, staff_name, completed_at, contact_phone))
 
         conn.commit()
         cursor.close()
@@ -7310,12 +7309,12 @@ def send_aftercare_cream_reminders():
         conn = None
 
         sent_count = 0
-        for idx, (apt_id, phone, name, surname, staff_name, completed_at, sa_phone) in enumerate(to_send):
+        for idx, (apt_id, phone, name, surname, staff_name, completed_at, contact_phone) in enumerate(to_send):
             if idx > 0:
                 _bulk_send_delay()
             try:
                 customer_name = f"{name} {surname}".strip() or 'Müşterimiz'
-                message = build_aftercare_reminder_message(customer_name, staff_name, sa_phone)
+                message = build_aftercare_reminder_message(customer_name, staff_name, contact_phone)
 
                 # aftercare_reminder_sent bayragiyla kendi retry'i var, kuyruk gerekmez.
                 # count_for_cap=True: toplu gonderim tavanina dahil (ban riski).
