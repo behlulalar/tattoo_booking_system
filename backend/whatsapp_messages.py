@@ -474,61 +474,64 @@ Sizi stüdyomuzda ağırlamaktan mutluluk duyarız.
     return random.choice(variants)
 
 
-def build_aftercare_reminder_message(customer_name: str, staff_name: str) -> str:
-    """Tamamlanan randevudan sonra bakım hatırlatması.
+# Bakim adimlari: tum varyasyonlarda BIREBIR ayni kalmali (tibbi icerik, degistirmeyin).
+AFTERCARE_STEPS = """•  Dövmenizin üstündeki koruyucuyu streci en fazla 2 saat sonra çıkarın. (Bant ise 3 gün kalacak)
+•  Çıkardığınız gibi içme suyu ve AktiveX (Antibakteriyel Sabun) ile yıkayın.
+•  Kağıt havlu tampon şeklinde tamamen kuruladıktan sonra dövme bakım kreminizi masaj yaparak ve az miktarda dövmenize uygulayın.
+• Yıkama işlemini ilk 3 gün, günde 1 kere olacak şekilde uygulayın.
+• Krem sürme işlemini günde 3-4 kere, 3-3,5 hafta boyunca uygulayın."""
 
-    Ban riski azaltma: 3 varyasyon arasindan rastgele secilir (bkz.
-    build_appointment_reminder_message).
+
+def build_aftercare_reminder_message(customer_name: str, staff_name: str, contact_phone: str = '') -> str:
+    """Tamamlanan randevudan sonra dovme bakim hatirlatmasi.
+
+    Ban riski azaltma: 3 varyasyon arasindan rastgele secilir; yalnizca baslik,
+    giris ve kapanis cumleleri degisir, bakim adimlari (AFTERCARE_STEPS) sabittir.
+    staff_name: randevuyu tamamlayan sanatci. contact_phone: super_admin telefonu
+    (bos ise isletme telefonuna duser).
     """
     b = _biz()
-    contact = f'\n📞 {b["phone"]}' if b['phone'] else ''
+    phone = _phone_display(contact_phone) if contact_phone else (b['phone'] or '')
+    digits = ''.join(ch for ch in phone if ch.isdigit())
+    if len(digits) == 11 and digits.startswith('0'):
+        phone = f'{digits[:4]} {digits[4:7]} {digits[7:9]} {digits[9:]}'
+    footer = f"""👤 Sanatçı: {staff_name}
+📞 {phone}
+
+{b['name']}"""
 
     variants = [
-        f"""🧴 *Bakım Hatırlatması*
+        f"""Dövme Bakım Hatırlatması ✨
 
 Sayın {customer_name},
 
-Randevunuz tamamlandı. Bakım için kısa hatırlatmalar:
+{AFTERCARE_STEPS}
 
-• Dövme bölgesine ince tabaka *nötr, kokusuz nemlendirici krem* sürün (çok kalın sürmeyin).
-• Sanatçınızın önerdiği şekilde streç / örtü varsa süreye uyun.
-• Bol su için; güneş, havuz ve denizden bir süre kaçının.
+Google üzerinden stüdyomuza “Roof Tattoo Gallery” yazarak yorum bırakıp puanlarsanız çok seviniriz ☺️ Herhangi bir sorunuz olursa sormaktan çekinmeyin. Hayırlı olsun ✨
 
-Sorunuz olursa yazabilirsiniz.
+{footer}""",
+        f"""Dövme Bakım Bilgilendirmesi ✨
 
-👤 Sanatçı: {staff_name}{contact}
+Sayın {customer_name},
 
-{b['name']}""",
-        f"""🧴 *Bakım Önerileri*
+Dövmeniz için bakım adımlarını sizin için özetledik:
+
+{AFTERCARE_STEPS}
+
+Google'da “Roof Tattoo Gallery” yazarak yorum bırakıp puanlarsanız bizi çok mutlu edersiniz ☺️ Aklınıza takılan bir şey olursa bize yazabilirsiniz. Hayırlı olsun ✨
+
+{footer}""",
+        f"""Dövme Bakım Notları ✨
 
 Merhaba {customer_name},
 
-Dövmeniz tamamlandı, geçmiş olsun! Bakım için birkaç not:
+Dövmenizin sağlıklı iyileşmesi için dikkat etmeniz gerekenler:
 
-• Nötr, kokusuz nemlendiriciyi ince tabaka halinde sürün.
-• Sanatçınızın önerdiği streç/örtü süresine dikkat edin.
-• Bol su tüketin; güneş/havuz/denizden bir süre uzak durun.
+{AFTERCARE_STEPS}
 
-Her türlü sorunuzda buradayız.
+Stüdyomuzu Google üzerinden “Roof Tattoo Gallery” diye aratıp yorum ve puan bırakırsanız çok seviniriz ☺️ Sorularınız için her zaman buradayız. Hayırlı olsun ✨
 
-👤 Sanatçı: {staff_name}{contact}
-
-{b['name']}""",
-        f"""🧴 *Bakım Hatırlatmanız*
-
-Selam {customer_name},
-
-Dövmeniz için tamamlandı bilgisi geldi. Unutmayın:
-
-• Kokusuz, nötr krem ile ince bir tabaka nemlendirme yapın.
-• Örtü/streç önerisine uyum sağlayın.
-• Su tüketimini artırın; güneş, deniz, havuzdan kaçının.
-
-Aklınıza takılan olursa yazmaktan çekinmeyin.
-
-👤 Sanatçı: {staff_name}{contact}
-
-{b['name']}""",
+{footer}""",
     ]
     return random.choice(variants)
 
