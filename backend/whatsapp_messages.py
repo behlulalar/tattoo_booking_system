@@ -478,8 +478,8 @@ Sizi stüdyomuzda ağırlamaktan mutluluk duyarız.
 AFTERCARE_STEPS = """•  Dövmenizin üstündeki koruyucuyu streci en fazla 2 saat sonra çıkarın. (Bant ise 3 gün kalacak)
 •  Çıkardığınız gibi içme suyu ve AktiveX (Antibakteriyel Sabun) ile yıkayın.
 •  Kağıt havlu tampon şeklinde tamamen kuruladıktan sonra dövme bakım kreminizi masaj yaparak ve az miktarda dövmenize uygulayın.
-• Yıkama işlemini ilk 3 gün, günde 1 kere olacak şekilde uygulayın.
-• Krem sürme işlemini günde 3-4 kere, 3-3,5 hafta boyunca uygulayın."""
+•  Yıkama işlemini ilk 3 gün, günde 1 kere olacak şekilde uygulayın.
+•  Krem sürme işlemini günde 3-4 kere, 3-3,5 hafta boyunca uygulayın."""
 
 
 def build_aftercare_reminder_message(customer_name: str, staff_name: str, contact_phone: str = '') -> str:
