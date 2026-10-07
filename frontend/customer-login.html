@@ -7,9 +7,10 @@
     <title>Müşteri Girişi - Roof Tattoo Gallery</title>
     <meta name="robots" content="noindex, nofollow" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="format-detection" content="telephone=no" />
     <link rel="icon" type="image/png" href="img/logo.png" />
     <link rel="shortcut icon" type="image/png" href="img/logo.png" />
-    <link rel="stylesheet" href="style.css?v=20260922152122" />
+    <link rel="stylesheet" href="style.css?v=20261007170000" />
     <link rel="stylesheet" href="customer-login.css?v=20260826183000" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260826183000" />
     <link rel="prefetch" href="customer-panel.html" />
@@ -108,8 +109,16 @@
                 rel="noopener noreferrer">BehTech</a></p>
     </footer>
 
+    <div id="send-code-overlay" style="display: none;" role="status" aria-live="polite">
+        <div class="send-code-modal">
+            <i class="fas fa-spinner fa-spin send-code-spinner" aria-hidden="true"></i>
+            <h2>Kodunuz gönderiliyor</h2>
+            <p>Doğrulama kodu WhatsApp'a gönderiliyor. Bu birkaç saniye sürebilir, lütfen bekleyin.</p>
+        </div>
+    </div>
+
     <script src="otp-autofill.js?v=20260826183000"></script>
-    <script src="customer-login.js?v=20261007160000"></script>
+    <script src="customer-login.js?v=20261007170000"></script>
 </body>
 
 </html>

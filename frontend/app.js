@@ -757,6 +757,13 @@ document.getElementById('phone-intl-toggle')?.addEventListener('click', () => {
 
 let sendCodeInFlight = false;
 
+// WhatsApp'a kod gonderimi 5-10 sn surebiliyor; bu surede kullanici tekrar
+// tikliyordu. "Kodunuz gonderiliyor" penceresi bekledigini gostersin.
+const sendCodeOverlay = document.getElementById('send-code-overlay');
+function setSendingCode(on) {
+  if (sendCodeOverlay) sendCodeOverlay.style.display = on ? 'flex' : 'none';
+}
+
 phoneForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   // Cift dokunma / yavas ag yuzunden ikinci kez tiklama -> iki ayri
@@ -801,6 +808,7 @@ phoneForm?.addEventListener('submit', async (e) => {
 
   sendCodeInFlight = true;
   if (phoneCheckBtn) phoneCheckBtn.disabled = true;
+  setSendingCode(true);
   try {
     const { ok, data } = await api('/api/send-code', {
       method: 'POST',
@@ -817,6 +825,7 @@ phoneForm?.addEventListener('submit', async (e) => {
     startCountdown(120);
     verifyOtpApi.focusFirst();
   } finally {
+    setSendingCode(false);
     sendCodeInFlight = false;
     if (phoneCheckBtn) phoneCheckBtn.disabled = false;
   }
@@ -927,6 +936,7 @@ resendBtn?.addEventListener('click', async () => {
   if (sendCodeInFlight) return;
   sendCodeInFlight = true;
   resendBtn.disabled = true;
+  setSendingCode(true);
   try {
     const { ok, data } = await api('/api/send-code', {
       method: 'POST',
@@ -940,6 +950,7 @@ resendBtn?.addEventListener('click', async () => {
     startCountdown(120);
     showSuccess('Kod Gönderildi', 'Yeni doğrulama kodu WhatsApp üzerinden gönderildi.');
   } finally {
+    setSendingCode(false);
     sendCodeInFlight = false;
     resendBtn.disabled = false;
   }

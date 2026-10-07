@@ -169,6 +169,26 @@ function showErr(el, msg) {
 
   loginPhone?.addEventListener('focus', () => setTimeout(() => scrollActionIntoView(loginForm), 280));
 
+  // WhatsApp'a kod gonderimi 5-10 sn surebiliyor; bu surede kullanici tekrar
+  // tikliyordu. Istek surerken "Kodunuz gonderiliyor" penceresi gosterilir ve
+  // yeni gonderim engellenir. Donus: { ok, data } (istek hic gitmediyse null).
+  const sendCodeOverlay = document.getElementById('send-code-overlay');
+  let sendCodeInFlight = false;
+  async function sendCodeRequest(targetPhone) {
+    if (sendCodeInFlight) return null;
+    sendCodeInFlight = true;
+    if (sendCodeOverlay) sendCodeOverlay.style.display = 'flex';
+    try {
+      return await api('/api/send-code', {
+        method: 'POST',
+        body: JSON.stringify({ phone: targetPhone }),
+      });
+    } finally {
+      if (sendCodeOverlay) sendCodeOverlay.style.display = 'none';
+      sendCodeInFlight = false;
+    }
+  }
+
   loginForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const value = parseTrMobile(loginPhone?.value);
@@ -178,10 +198,9 @@ function showErr(el, msg) {
     }
     if (loginPhone) loginPhone.value = value;
     showErr(loginError, '');
-    const { ok, data } = await api('/api/send-code', {
-      method: 'POST',
-      body: JSON.stringify({ phone: value }),
-    });
+    const res = await sendCodeRequest(value);
+    if (!res) return;
+    const { ok, data } = res;
     if (!ok || !data.success) {
       showErr(loginError, data.message || 'Kod gönderilemedi');
       return;
@@ -240,10 +259,9 @@ function showErr(el, msg) {
   });
 
   resendBtn?.addEventListener('click', async () => {
-    const { ok, data } = await api('/api/send-code', {
-      method: 'POST',
-      body: JSON.stringify({ phone }),
-    });
+    const res = await sendCodeRequest(phone);
+    if (!res) return;
+    const { ok, data } = res;
     if (!ok || !data.success) {
       showErr(verifyError, data.message || 'Kod gönderilemedi');
       return;

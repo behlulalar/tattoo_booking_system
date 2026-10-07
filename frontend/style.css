@@ -3563,3 +3563,55 @@ body.success-modal-open .page-footer {
         z-index: 997;
     }
 }
+
+/* "Kodunuz gönderiliyor" bekleme penceresi (WhatsApp gönderimi 5-10 sn sürebiliyor) */
+#send-code-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 600 !important; /* verify-overlay (500) üstünde */
+    padding: max(12px, env(safe-area-inset-top)) 10px max(12px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
+}
+
+#send-code-overlay .send-code-modal {
+    background: #0a0a0a;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 24px;
+    padding: 32px 24px;
+    width: min(92vw, 360px);
+    box-sizing: border-box;
+    text-align: center;
+    color: #fff;
+}
+
+#send-code-overlay .send-code-spinner {
+    font-size: 2rem;
+    margin-bottom: 14px;
+}
+
+#send-code-overlay h2 {
+    margin: 0 0 8px;
+    font-size: 1.2rem;
+}
+
+#send-code-overlay p {
+    margin: 0;
+    opacity: 0.8;
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+
+/* Telefon numarası otomatik link olarak algılansa bile çevre metinle aynı görünsün */
+.help-text a,
+.help-text a[href^="tel"],
+.help-text a[x-apple-data-detectors] {
+    color: inherit !important;
+    text-decoration: none !important;
+    font: inherit !important;
+}
