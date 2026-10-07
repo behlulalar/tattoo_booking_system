@@ -6,6 +6,7 @@ import json
 import os
 import random
 import re
+from urllib.parse import urlparse
 
 from config import SITE_CONFIG, get_evolution_config
 from customer_contact import NO_PHONE_LABEL, is_placeholder_phone
@@ -691,6 +692,28 @@ def build_staff_cancel_notification_message(
 {b['name']}"""
 
 
+def _otp_web_origin() -> str:
+    """Web OTP / klavye önerisi için site host (RANDEVU_URL).
+
+    RANDEVU_URL yanlışlıkla localhost/staging'e ayarlı kalırsa (test
+    sonrası unutulmuş .env, vb.) bu host gerçek müşteriye giden OTP
+    mesajına sızmasın diye local/private görünen host'lar filtrelenir.
+    """
+    url = (_biz().get('url') or os.getenv('RANDEVU_URL') or '').strip()
+    if not url:
+        return ''
+    if '://' not in url:
+        url = f'https://{url}'
+    host = (urlparse(url).hostname or '').lower()
+    if not host or host in ('localhost', '127.0.0.1', '0.0.0.0', '::1'):
+        return ''
+    if host.endswith(('.local', '.test', '.internal')):
+        return ''
+    if re.match(r'^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)', host):
+        return ''
+    return host
+
+
 def build_verification_code_message(code) -> str:
     """Doğrulama kodu — klavye önerisi ve tek tık kopya için optimize metin."""
     code_str = str(code).strip()[:6]
@@ -709,14 +732,15 @@ def build_verification_code_message(code) -> str:
 Teşekkür ederiz,
 _{b['name']}_"""
 
-    # Klavye onerisi acikken: kod mesajda yalnizca bir kez gecer. Ilk satirdaki
-    # "is your verification code" ifadesi klavyenin kodu onermesi icin korunur;
-    # isletme adi bilerek ilk satirda degil, en altta.
-    return f"""{code_str} is your verification code.
-
-Doğrulama kodunuz 2 dakika geçerlidir. Kimseyle paylaşmayın.
-
-{b['name']}"""
+    origin = _otp_web_origin()
+    lines = [
+        f'{code_str} is your verification code.',
+        f'{code_str} {b["name"]} doğrulama kodunuz. 2 dakika geçerlidir.',
+        'Bu kodu kimseyle paylaşmayın.',
+    ]
+    if origin:
+        lines.extend(['', f'@{origin} #{code_str}'])
+    return '\n'.join(lines)
 
 
 def get_webhook_secret() -> str:
