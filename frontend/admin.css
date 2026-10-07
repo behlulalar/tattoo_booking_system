@@ -1261,10 +1261,6 @@ strong, b, th {
     border-left-color: #C97878;
 }
 
-.gcal-event--noshow {
-    background: rgba(80, 80, 80, 0.85);
-    border-left-color: #a3a3a3;
-}
 
 .gcal-event--default {
     background: rgba(60, 60, 60, 0.9);
@@ -1986,10 +1982,6 @@ strong, b, th {
     color: var(--danger);
 }
 
-.status-badge.no_show {
-    background: rgba(102, 102, 102, 0.15);
-    color: var(--text-muted);
-}
 
 .status-badge.preconsult {
     background: rgba(139, 92, 246, 0.15);
@@ -4703,10 +4695,6 @@ strong, b, th {
     opacity: 0.6;
 }
 
-.compact-appointment-card.status-no_show {
-    border-left: 3px solid var(--text-muted);
-    opacity: 0.6;
-}
 
 .compact-apt-time {
     display: flex;
@@ -5004,10 +4992,6 @@ strong, b, th {
     opacity: 0.6;
 }
 
-.calendar-appointment.status-no_show {
-    border-left-color: var(--text-muted);
-    opacity: 0.6;
-}
 
 .cal-apt-customer {
     font-weight: 400;
