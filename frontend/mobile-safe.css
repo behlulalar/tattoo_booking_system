@@ -521,3 +521,19 @@ a,
         transform: none;
     }
 }
+
+/* Telefon adımı (mobil): footer ayrılmış alt boşluğa (--page-footer-phone-clearance)
+   oturur; sayfanın altına eklenip 40px kaydırma yaratmaz. Sayfa yalnızca içerik
+   gerçekten sığmıyorsa (çok küçük ekran) kayar. */
+@media (max-width: 768px) {
+    body:has(.booking-page.is-phone-step) {
+        position: relative;
+    }
+
+    body:has(.booking-page.is-phone-step) .page-footer {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+    }
+}
