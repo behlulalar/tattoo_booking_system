@@ -822,18 +822,32 @@ phoneForm?.addEventListener('submit', async (e) => {
   }
 });
 
+let verifyCodeInFlight = false;
 verifyForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
+  // OTP otomatik doldurma formu kendisi gonderirken kullanici da butona basinca
+  // iki es zamanli verify-code istegi gidiyordu. Istek surerken yenisini engelle.
+  if (verifyCodeInFlight) return;
   const code = verifyOtpApi.getCode();
   if (!code || code.length !== 6) {
     showVerifyError('Lütfen 6 haneli doğrulama kodunu girin.');
     return;
   }
 
-  const { ok, data } = await api('/api/verify-code', {
-    method: 'POST',
-    body: JSON.stringify({ phone: savedPhone, code }),
-  });
+  verifyCodeInFlight = true;
+  const verifySubmitBtn = verifyForm.querySelector('button[type="submit"]');
+  if (verifySubmitBtn) verifySubmitBtn.disabled = true;
+  let ok;
+  let data;
+  try {
+    ({ ok, data } = await api('/api/verify-code', {
+      method: 'POST',
+      body: JSON.stringify({ phone: savedPhone, code }),
+    }));
+  } finally {
+    verifyCodeInFlight = false;
+    if (verifySubmitBtn) verifySubmitBtn.disabled = false;
+  }
 
   if (!ok || !data.success) {
     showVerifyError(data.message || 'Doğrulama başarısız');

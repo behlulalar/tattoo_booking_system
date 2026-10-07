@@ -2446,32 +2446,33 @@ def is_wapio_demo_mode():
 
 
 def verify_phone_code_from_db(phone, code):
-    """DB'deki doğrulama kodunu kontrol et; başarılıysa kodu siler."""
+    """DB'deki doğrulama kodunu kontrol et; başarılıysa kodu siler.
+
+    Kod iki satir olarak saklaniyor (orijinal + normalize telefon). Cift gonderim /
+    OTP otomatik doldurma ayni anda iki dogrulama istegi uretince satir kilitleri
+    ters sirayla alinip deadlock oluyor, FOR UPDATE SKIP LOCKED ise ikinci istege
+    sahte "kod bulunamadi" (404) donduruyordu. Cozum: ayni telefon icin istekleri
+    advisory lock ile sirala, satir kilidi kullanma.
+    """
     phone = str(phone).strip()
     normalized_phone = normalize_phone_for_storage(phone)
+    code = str(code).strip()
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        # Transaction sonunda (commit/rollback) otomatik birakilir.
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (normalized_phone,))
         cursor.execute("""
             SELECT code, expires_at FROM verification_codes
-            WHERE phone = %s AND expires_at > NOW()
+            WHERE phone IN (%s, %s) AND expires_at > NOW()
             ORDER BY created_at DESC LIMIT 1
-            FOR UPDATE SKIP LOCKED
-        """, (phone,))
+        """, (phone, normalized_phone))
         row = cursor.fetchone()
-        if not row and normalized_phone != phone:
-            cursor.execute("""
-                SELECT code, expires_at FROM verification_codes
-                WHERE phone = %s AND expires_at > NOW()
-                ORDER BY created_at DESC LIMIT 1
-                FOR UPDATE SKIP LOCKED
-            """, (normalized_phone,))
-            row = cursor.fetchone()
         if not row:
             return False, 'Doğrulama kodu bulunamadı. Lütfen kod isteyiniz', 404
         stored_code, expires_at = row
-        if str(stored_code) != str(code).strip():
+        if str(stored_code) != code:
             return False, 'Doğrulama kodu yanlış', 401
         if datetime.now() > expires_at:
             cursor.execute(
@@ -2482,7 +2483,7 @@ def verify_phone_code_from_db(phone, code):
             return False, 'Doğrulama kodu süresi dolmuş', 401
         cursor.execute(
             "DELETE FROM verification_codes WHERE phone IN (%s, %s) AND code = %s",
-            (phone, normalized_phone, str(code).strip()),
+            (phone, normalized_phone, code),
         )
         conn.commit()
         cursor.close()
