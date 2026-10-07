@@ -190,19 +190,31 @@ function showErr(el, msg) {
     showVerifyStep();
   });
 
+  let loginInFlight = false;
   verifyForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
+    // Otomatik doldurma + buton tiklamasi ayni anda iki istek gonderiyordu.
+    if (loginInFlight) return;
     const code = customerOtpApi.getCode();
     if (!code || code.length !== 6) {
       showErr(verifyError, 'Lütfen 6 haneli kodu girin.');
       return;
     }
     showErr(verifyError, '');
-    const { ok, data } = await api('/api/customer/login', {
-      method: 'POST',
-      body: JSON.stringify({ phone, code }),
-    });
+    loginInFlight = true;
+    let ok;
+    let data;
+    try {
+      ({ ok, data } = await api('/api/customer/login', {
+        method: 'POST',
+        body: JSON.stringify({ phone, code }),
+      }));
+    } catch (err) {
+      loginInFlight = false;
+      throw err;
+    }
     if (!ok || !data.success) {
+      loginInFlight = false;
       showErr(verifyError, data.message || 'Doğrulama başarısız');
       return;
     }
