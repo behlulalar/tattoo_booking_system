@@ -25,13 +25,15 @@
     <meta name="twitter:image" content="https://randevu-rooftattoogallery.com/img/splash-logo.jpg" />
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <!-- iOS Safari ornek telefon numarasini otomatik mavi/alti cizili linke cevirmesin -->
+    <meta name="format-detection" content="telephone=no" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <link rel="icon" type="image/png" sizes="512x512" href="img/pwa/maskable-512.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="img/pwa/maskable-192.png" />
     <link rel="shortcut icon" type="image/png" href="img/pwa/maskable-192.png" />
     <link rel="apple-touch-icon" href="img/pwa/apple-touch-180.png" />
-    <link rel="stylesheet" href="style.css?v=20260922152122" />
+    <link rel="stylesheet" href="style.css?v=20261007170000" />
     <link rel="stylesheet" href="mobile-safe.css?v=20260826183000" />
     <!-- Google Font -->
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600&display=swap" rel="stylesheet">
@@ -254,6 +256,14 @@
                 </div>
             </div>
 
+            <div id="send-code-overlay" style="display: none;" role="status" aria-live="polite">
+                <div class="send-code-modal">
+                    <i class="fas fa-spinner fa-spin send-code-spinner" aria-hidden="true"></i>
+                    <h2>Kodunuz gönderiliyor</h2>
+                    <p>Doğrulama kodu WhatsApp'a gönderiliyor. Bu birkaç saniye sürebilir, lütfen bekleyin.</p>
+                </div>
+            </div>
+
             <div id="verify-overlay" style="display: none;">
                 <div id="verify-modal" class="verify-code-modal">
                     <button id="verify-cancel-btn" class="verify-close-btn" type="button" aria-label="Kapat">
@@ -463,7 +473,7 @@
     </footer>
 
     <script src="otp-autofill.js?v=20260826183000"></script>
-    <script src="app.js?v=20261007160000"></script>
+    <script src="app.js?v=20261007170000"></script>
 </body>
 
 </html>
