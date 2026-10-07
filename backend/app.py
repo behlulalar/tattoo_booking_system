@@ -4800,11 +4800,12 @@ def update_appointment_status(appointment_id):
                     cursor.execute("""
                         UPDATE appointments
                         SET status = %s, completed_at = CURRENT_TIMESTAMP,
+                            completed_by_staff_id = %s,
                             staff_share_percent = (
                                 SELECT commission_percent FROM artists WHERE id = appointments.staff_id
                             )
                         WHERE id = %s
-                    """, (new_status, appointment_id))
+                    """, (new_status, request.staff_id, appointment_id))
                 else:
                     cursor.execute("""
                         UPDATE appointments SET status = %s WHERE id = %s
@@ -7272,11 +7273,14 @@ def send_aftercare_cream_reminders():
                 c.phone,
                 COALESCE(c.name, ''),
                 COALESCE(c.surname, ''),
-                s.name as staff_name,
-                a.completed_at
+                CASE WHEN cb.role::text IN ('super_admin', 'staff') THEN cb.name ELSE s.name END as staff_name,
+                a.completed_at,
+                (SELECT sa.phone FROM artists sa WHERE sa.role::text = 'super_admin'
+                  ORDER BY sa.id LIMIT 1) as super_admin_phone
             FROM appointments a
             JOIN customers c ON a.customer_id = c.id
             JOIN artists s ON a.staff_id = s.id
+            LEFT JOIN artists cb ON a.completed_by_staff_id = cb.id
             WHERE a.status = 'completed'
               AND a.completed_at IS NOT NULL
               AND a.completed_at <= %s
@@ -7287,7 +7291,7 @@ def send_aftercare_cream_reminders():
 
         rows = cursor.fetchall()
 
-        for apt_id, phone, name, surname, staff_name, completed_at in rows:
+        for apt_id, phone, name, surname, staff_name, completed_at, sa_phone in rows:
             cursor.execute(
                 """
                 UPDATE appointments
@@ -7298,7 +7302,7 @@ def send_aftercare_cream_reminders():
                 (apt_id,),
             )
             if cursor.rowcount > 0:
-                to_send.append((apt_id, phone, name, surname, staff_name, completed_at))
+                to_send.append((apt_id, phone, name, surname, staff_name, completed_at, sa_phone))
 
         conn.commit()
         cursor.close()
@@ -7306,12 +7310,12 @@ def send_aftercare_cream_reminders():
         conn = None
 
         sent_count = 0
-        for idx, (apt_id, phone, name, surname, staff_name, completed_at) in enumerate(to_send):
+        for idx, (apt_id, phone, name, surname, staff_name, completed_at, sa_phone) in enumerate(to_send):
             if idx > 0:
                 _bulk_send_delay()
             try:
                 customer_name = f"{name} {surname}".strip() or 'Müşterimiz'
-                message = build_aftercare_reminder_message(customer_name, staff_name)
+                message = build_aftercare_reminder_message(customer_name, staff_name, sa_phone)
 
                 # aftercare_reminder_sent bayragiyla kendi retry'i var, kuyruk gerekmez.
                 # count_for_cap=True: toplu gonderim tavanina dahil (ban riski).
