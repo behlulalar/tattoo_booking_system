@@ -177,8 +177,19 @@ function showErr(el, msg) {
   async function sendCodeRequest(targetPhone) {
     if (sendCodeInFlight) return null;
     sendCodeInFlight = true;
-    if (sendCodeOverlay) sendCodeOverlay.style.display = 'flex';
     try {
+      // WhatsApp oturumu yoksa "Kodunuz gonderiliyor" penceresi hic acilmasin.
+      // Kontrol cevap vermezse (ag hatasi) gonderim yine denenir.
+      try {
+        const chk = await api('/api/whatsapp/available', { method: 'GET' });
+        if (chk.ok && chk.data.available === false) {
+          return {
+            ok: false,
+            data: { success: false, message: 'Geçici olarak hizmet veremiyoruz. Lütfen daha sonra tekrar deneyin.' },
+          };
+        }
+      } catch (_) { /* gonderim denenecek */ }
+      if (sendCodeOverlay) sendCodeOverlay.style.display = 'flex';
       return await api('/api/send-code', {
         method: 'POST',
         body: JSON.stringify({ phone: targetPhone }),

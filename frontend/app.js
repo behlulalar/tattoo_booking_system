@@ -764,6 +764,18 @@ function setSendingCode(on) {
   if (sendCodeOverlay) sendCodeOverlay.style.display = on ? 'flex' : 'none';
 }
 
+// WhatsApp oturumu yoksa "Kodunuz gonderiliyor" penceresi hic acilmasin.
+// Kontrol cevap vermezse (ag hatasi) gonderim yine denenir.
+const WHATSAPP_UNAVAILABLE_MESSAGE = 'Geçici olarak hizmet veremiyoruz. Lütfen daha sonra tekrar deneyin.';
+async function isWhatsappAvailable() {
+  try {
+    const { ok, data } = await api('/api/whatsapp/available', { method: 'GET' });
+    return !(ok && data.available === false);
+  } catch (_) {
+    return true;
+  }
+}
+
 phoneForm?.addEventListener('submit', async (e) => {
   e.preventDefault();
   // Cift dokunma / yavas ag yuzunden ikinci kez tiklama -> iki ayri
@@ -808,8 +820,12 @@ phoneForm?.addEventListener('submit', async (e) => {
 
   sendCodeInFlight = true;
   if (phoneCheckBtn) phoneCheckBtn.disabled = true;
-  setSendingCode(true);
   try {
+    if (!(await isWhatsappAvailable())) {
+      showInlineError(document.getElementById('phone-form-error'), WHATSAPP_UNAVAILABLE_MESSAGE);
+      return;
+    }
+    setSendingCode(true);
     const { ok, data } = await api('/api/send-code', {
       method: 'POST',
       body: JSON.stringify({ phone: value }),
@@ -936,8 +952,12 @@ resendBtn?.addEventListener('click', async () => {
   if (sendCodeInFlight) return;
   sendCodeInFlight = true;
   resendBtn.disabled = true;
-  setSendingCode(true);
   try {
+    if (!(await isWhatsappAvailable())) {
+      showVerifyError(WHATSAPP_UNAVAILABLE_MESSAGE);
+      return;
+    }
+    setSendingCode(true);
     const { ok, data } = await api('/api/send-code', {
       method: 'POST',
       body: JSON.stringify({ phone: savedPhone }),

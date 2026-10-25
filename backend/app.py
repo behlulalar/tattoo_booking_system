@@ -1243,11 +1243,13 @@ def check_google_calendar_connection():
         return credentials_file_ok() and google_api_reachable()
 
     try:
-        if _reachable():
-            return
-        time.sleep(5)
-        if _reachable():
-            return
+        # Barindiricinin agi Google'a yeni baglantida ara sira paket dusuruyor
+        # (bkz. google_api_reachable); 2 olcum yetmedi, 4 olcumle yalanci alarm azalir.
+        for attempt in range(4):
+            if _reachable():
+                return
+            if attempt < 3:
+                time.sleep(8)
         log_error(
             logger, E_GCAL_005,
             "Google Takvim bağlantısı kopuk (kimlik dosyası veya Google API'ye erişilemiyor)",
@@ -2575,6 +2577,42 @@ def send_whatsapp_code(phone):
     
     return (message_sent, code)
 
+WHATSAPP_UNAVAILABLE_MESSAGE = 'Geçici olarak hizmet veremiyoruz. Lütfen daha sonra tekrar deneyin.'
+_WA_AVAILABLE_CACHE_SECONDS = 15
+_wa_available_cache = {'ts': 0.0, 'value': True}
+
+
+def whatsapp_available_for_otp():
+    """OTP gonderiminden once WhatsApp oturumu ayakta mi (15 sn onbellekli).
+
+    Evolution yapilandirilmamissa (test modu) ya da demo modda True doner;
+    saglik kontrolunun kendisi hata verirse de kullaniciyi bloklamamak icin
+    True doner (gonderim denenir, gercek hata send-code'da yakalanir).
+    """
+    if is_wapio_demo_mode():
+        return True
+    evo_cfg = get_evolution_config()
+    if not ((evo_cfg.get('api_key') or '').strip() and (evo_cfg.get('instance_name') or '').strip()):
+        return True
+    now = time.time()
+    if now - _wa_available_cache['ts'] < _WA_AVAILABLE_CACHE_SECONDS:
+        return _wa_available_cache['value']
+    try:
+        value = bool(check_whatsapp_health().get('healthy'))
+    except Exception as e:
+        logger.warning(f"WhatsApp uygunluk kontrolu basarisiz, gonderim denenecek: {e}")
+        return True
+    _wa_available_cache.update(ts=now, value=value)
+    return value
+
+
+@app.route('/api/whatsapp/available', methods=['GET'])
+@limiter.exempt
+def whatsapp_available():
+    """Frontend: "Kodunuz gonderiliyor" penceresini acmadan once oturum var mi."""
+    return jsonify({'available': whatsapp_available_for_otp()}), 200
+
+
 # Doğrulama kodu gönder
 @app.route('/api/send-code', methods=['POST'])
 @limiter.limit("5 per minute")  # Dakikada max 5 kod
@@ -2633,11 +2671,19 @@ def send_code():
             logger.info(f"DEMO doğrulama kodu: {phone} -> {demo_code}")
             return jsonify({'success': True, 'message': 'Demo doğrulama kodu: 123456'})
 
+        if not whatsapp_available_for_otp():
+            return jsonify({
+                'success': False,
+                'code': 'whatsapp_unavailable',
+                'message': WHATSAPP_UNAVAILABLE_MESSAGE,
+            }), 503
+
         message_sent, _code = send_whatsapp_code(phone)
         if not message_sent:
             return jsonify({
                 'success': False,
-                'message': 'WhatsApp doğrulama kodu gönderilemedi. WhatsApp API bağlantısını kontrol edin.',
+                'code': 'whatsapp_unavailable',
+                'message': WHATSAPP_UNAVAILABLE_MESSAGE,
             }), 503
         return jsonify({'success': True, 'message': 'Doğrulama kodu WhatsApp ile gönderildi'})
     except Exception as e:
