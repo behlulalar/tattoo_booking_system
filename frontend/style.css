@@ -1077,6 +1077,47 @@ label {
     color: #666666;
 }
 
+/* GEÇİCİ: WhatsApp kesintisi uyarısı (index.html #wa-down-notice) */
+.wa-down-notice {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: #f3d9a4;
+    background: rgba(212, 160, 23, 0.12);
+    border: 1px solid rgba(212, 160, 23, 0.45);
+    border-radius: 8px;
+}
+
+.wa-down-notice strong {
+    display: block;
+    color: #ffd166;
+}
+
+.wa-down-notice a {
+    color: #ffd166;
+    text-decoration: underline;
+    white-space: nowrap;
+}
+
+/* Kısa telefonlarda uyarı, yardım metninin yerini alır: sayfa yüksekliği artmaz */
+@media (max-width: 600px) and (max-height: 780px) {
+    .wa-down-notice {
+        margin-top: 6px;
+        padding: 4px 8px;
+        font-size: 11px;
+        line-height: 1.2;
+    }
+
+    .wa-down-notice strong {
+        display: inline;
+    }
+
+    .booking-page.is-phone-step #phone-help-text {
+        display: none;
+    }
+}
+
 .phone-intl-toggle {
     display: inline-block;
     margin-top: 12px;
