@@ -1,5 +1,4 @@
 # randevu-rooftattoogallery.com → /opt/roof_tattoo (Roof Tattoo Gallery)
-# Host: <SUNUCU_IP>
 
 # Catch-all: reject any hostname that isn't explicitly configured below
 # (old/leftover domains, direct-IP requests, scanners). Must stay first

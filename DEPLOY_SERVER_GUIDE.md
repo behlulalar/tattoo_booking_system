@@ -1,6 +1,6 @@
 ## Sunucuya Çakışmasız Deployment (Ubuntu + Nginx + Systemd)
 
-Canlı kurulum: `<SUNUCU_IP>` — `https://randevu-rooftattoogallery.com`  
+Canlı kurulum: `https://randevu-rooftattoogallery.com`  
 Kod: `/opt/roof_tattoo` · servis: `roof-tattoo-backend`
 
 Bu rehber, aynı sunucuda başka sistemler varken güvenli deployment içindir.

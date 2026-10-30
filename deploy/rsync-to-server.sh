@@ -2,7 +2,8 @@
 # Production deploy: proje dosyalarını sunucuya gönder (.env dahil)
 set -euo pipefail
 
-SERVER="${DEPLOY_SERVER:-root@<SUNUCU_IP>}"
+# Hedef: DEPLOY_SERVER=root@<SUNUCU_IP> (veya ~/.ssh/config takma adı). Varsayılan: "roof" takma adı
+SERVER="${DEPLOY_SERVER:-roof}"
 REMOTE_DIR="${DEPLOY_REMOTE_DIR:-/opt/roof_tattoo}"
 EXPECTED_DIR="/opt/roof_tattoo"
 EXPECTED_TITLE="Roof Tattoo Gallery"

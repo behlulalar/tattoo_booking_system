@@ -129,7 +129,7 @@ cd backend && ../venv/bin/python scripts/setup_uptimerobot.py
 
 Sunucuya güvenli kurulum: [`DEPLOY_SERVER_GUIDE.md`](DEPLOY_SERVER_GUIDE.md)
 
-Canlı: [randevu-rooftattoogallery.com](https://randevu-rooftattoogallery.com) (`<SUNUCU_IP>`), kod `/opt/roof_tattoo`.
+Canlı: [randevu-rooftattoogallery.com](https://randevu-rooftattoogallery.com), kod `/opt/roof_tattoo`.
 
 Özet: kod `rsync` → `deploy/fix-roof-only-on-server.sh` → systemd (`roof-tattoo-backend`) + nginx.
 
