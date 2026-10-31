@@ -3235,6 +3235,56 @@ strong, b, th {
 .trend-details span { display: flex; align-items: center; gap: 5px; }
 .trend-details i { color: var(--accent); }
 
+/* Personel Gelirleri */
+.staff-breakdown-list {
+    overflow-x: auto;
+}
+
+.staff-earn-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.staff-earn-table th,
+.staff-earn-table td {
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--glass-border);
+    white-space: nowrap;
+}
+
+.staff-earn-table th {
+    color: var(--text-secondary);
+    font-size: .85rem;
+    font-weight: 400;
+}
+
+.staff-earn-table td { color: var(--text-primary); }
+.staff-earn-table tbody tr:last-child td { border-bottom: none; }
+.staff-earn-table tbody tr:hover td { background: var(--bg-card-hover); }
+.staff-earn-table td small { display: block; color: var(--text-secondary); font-size: .8rem; }
+.staff-earn-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 600px) {
+    .staff-earn-table th,
+    .staff-earn-table td { padding: 10px 6px; font-size: .8rem; }
+    .staff-earn-table th { white-space: normal; vertical-align: bottom; }
+    .staff-earn-table td:first-child { white-space: normal; }
+}
+
+.staff-breakdown-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 32px;
+    margin-top: 16px;
+    padding: 15px;
+    background: var(--dark-bg);
+    border-radius: 8px;
+}
+.staff-breakdown-summary div { display: flex; gap: 10px; align-items: baseline; }
+.staff-breakdown-summary span { color: var(--text-secondary); }
+.staff-breakdown-summary strong { color: var(--accent); font-weight: 400; font-variant-numeric: tabular-nums; }
+
 /* Manuel Ayarlamalar */
 .adjustments-list {
     display: flex;

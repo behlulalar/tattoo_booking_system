@@ -1549,6 +1549,12 @@ def can_access_income(role=None):
     return r == 'super_admin'
 
 
+def can_view_income_report(role=None):
+    """Gelir raporu sekmesi: Super Admin tam, Teknik Destek tutarlar sansürlü görür."""
+    r = request.staff_role if role is None else role
+    return r in STUDIO_ADMIN_ROLES
+
+
 def can_access_tattoo_requests(role=None):
     """Dövme talepleri: personel ve super admin. Teknik destek göremez."""
     r = request.staff_role if role is None else role
@@ -5933,8 +5939,10 @@ def get_income_reports():
     month = int(month)
     year = int(year)
 
-    if not can_access_income():
+    if not can_view_income_report():
         return jsonify({'success': False, 'message': 'Bu rapora erişim yetkiniz yok'}), 403
+    # Teknik destek raporu görür ama tutarlar sunucudan hiç gönderilmez (None).
+    masked = not can_access_income()
 
     query_params = [month, year]
 
@@ -6028,6 +6036,51 @@ def get_income_reports():
                 'staff_name': row[6] or '',
             })
 
+        # Personel bazlı döküm: brüt gelir, toplam içindeki payı, personel kazancı, stüdyo payı.
+        # Yüzde, randevunun tamamlandığı andaki staff_share_percent; yoksa personelin şimdiki yüzdesi.
+        # Super admin (stüdyo sahibi) için personel payı uygulanmaz (personel kartıyla aynı kural).
+        cursor.execute("""
+            SELECT
+                s.id, s.name, s.role, s.commission_percent,
+                a.price, a.staff_share_percent, a.duration_minutes
+            FROM appointments a
+            JOIN artists s ON a.staff_id = s.id
+            WHERE a.status = 'completed'
+              AND EXTRACT(MONTH FROM a.appointment_date) = %s
+              AND EXTRACT(YEAR FROM a.appointment_date) = %s
+        """, query_params)
+        staff_map = {}
+        for sid, sname, srole, scomm, price, share_pct, minutes in cursor.fetchall():
+            apply_commission = (srole or '') != 'super_admin'
+            entry = staff_map.setdefault(sid, {
+                'staff_id': sid,
+                'name': sname,
+                'role': srole,
+                'commission_percent': int(scomm or staff_settings.DEFAULT_COMMISSION_PERCENT) if apply_commission else None,
+                'appointment_count': 0,
+                'total_minutes': 0,
+                'income': Decimal('0'),
+                'staff_share': Decimal('0') if apply_commission else None,
+            })
+            full_amount = Decimal(price or 0)
+            entry['appointment_count'] += 1
+            entry['total_minutes'] += int(minutes or 0)
+            entry['income'] += full_amount
+            if apply_commission:
+                pct = int(share_pct) if share_pct else entry['commission_percent']
+                entry['staff_share'] += _staff_share_amount(full_amount, pct)
+
+        staff_breakdown = []
+        staff_payout_total = Decimal('0')
+        for entry in sorted(staff_map.values(), key=lambda e: e['income'], reverse=True):
+            share = entry['staff_share']
+            staff_payout_total += share or 0
+            entry['studio_share'] = entry['income'] - (share or 0)
+            entry['income_ratio'] = (
+                round(float(entry['income'] / appointment_income * 100), 1) if appointment_income else 0.0
+            )
+            staff_breakdown.append(entry)
+
         # Manuel ayarlamalar (Randevu # ile otomatik eklenenler hariç — çift sayım olmasın)
         manual_adjustments = []
         manual_adjustments_total = Decimal('0')
@@ -6083,24 +6136,47 @@ def get_income_reports():
 
         total_income = appointment_income + manual_adjustments_total
 
-        logger.info(f"Gelir raporu alındı: {month}/{year}")
+        logger.info(f"Gelir raporu alındı: {month}/{year}" + (" (sansürlü)" if masked else ""))
+
+        if masked:
+            for r in daily_trend:
+                r['income'] = None
+            for item in completed_revenue_items:
+                item['amount'] = None
+            for adj in manual_adjustments:
+                adj['amount'] = None
+
+        def _money(v):
+            return None if masked or v is None else float(v)
+
+        # Teknik destek: personel adı ve randevu sayısı görünür; tutar, oran ve yüzdeler gizli.
+        for entry in staff_breakdown:
+            for key in ('income', 'staff_share', 'studio_share'):
+                entry[key] = _money(entry[key])
+            if masked:
+                entry['income_ratio'] = None
+                entry['commission_percent'] = None
 
         return jsonify({
             'success': True,
+            'masked': masked,
             'month': month,
             'year': year,
-            'total_income': float(total_income),
-            'appointment_income': float(appointment_income),
+            'total_income': _money(total_income),
+            'appointment_income': _money(appointment_income),
             'total_duration_minutes': total_minutes,
-            'manual_adjustments_total': float(manual_adjustments_total),
+            'manual_adjustments_total': _money(manual_adjustments_total),
             'appointment_count': appointment_count,
             'total_minutes': total_minutes,
             'service_breakdown': service_breakdown,
             'daily_trend': daily_trend,
             'manual_adjustments': manual_adjustments,
             'completed_revenue_items': completed_revenue_items,
+            'staff_breakdown': staff_breakdown,
+            'staff_payout_total': _money(staff_payout_total),
+            'studio_net_income': _money(appointment_income - staff_payout_total),
         })
-        
+
     except Exception as e:
         logger.error(f"get_income_reports hatası: {e}")
         return jsonify({'success': False, 'message': 'Rapor alınamadı'}), 500

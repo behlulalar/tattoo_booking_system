@@ -31,6 +31,11 @@ function canAccessIncome(role = getLoggedInStaff()?.role) {
   return role === 'super_admin';
 }
 
+// Gelir raporu sekmesi: teknik destek de görür ama tutarlar sunucudan sansürlü gelir.
+function canViewIncomeReport(role = getLoggedInStaff()?.role) {
+  return hasStudioAccess(role);
+}
+
 function canAccessTattooRequests(role = getLoggedInStaff()?.role) {
   return role === 'super_admin' || role === 'staff';
 }
@@ -960,7 +965,7 @@ function setRoleVisibility(role) {
     const tattooOnly = page === 'all-tattoo-requests' || el.classList.contains('tattoo-request-nav');
     const ownerHoursOnly = page === 'schedule' || el.classList.contains('owner-hours-only');
     let show = studio;
-    if (incomeOnly) show = income;
+    if (incomeOnly) show = page === 'reports' ? canViewIncomeReport(role) : income;
     if (tattooOnly) show = role === 'super_admin';
     if (ownerHoursOnly) show = role === 'super_admin';
     el.style.display = show ? '' : 'none';
@@ -1140,7 +1145,7 @@ async function loadPageData(page) {
 
   // Degraded/disabled sections in tattoo demo build
   if (page === 'reports') {
-    if (!canAccessIncome()) {
+    if (!canViewIncomeReport()) {
       showToast('Bu sayfaya erişim yetkiniz yok', 'error');
       showSection('dashboard');
       await loadDashboard();
@@ -4444,6 +4449,8 @@ async function loadStaff() {
   renderStaff((data.staff || []).filter((s) => isBookableStaffRole(s.role)));
 }
 
+const MASKED_MONEY = '••••• ₺';
+
 function fmtMoney(value) {
   const n = Number(value || 0);
   return `${n.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺`;
@@ -4607,7 +4614,7 @@ async function loadStaffStats() {
 let _incomeReportSeq = 0;
 
 async function loadIncomeReport() {
-  if (!canAccessIncome()) {
+  if (!canViewIncomeReport()) {
     showToast('Bu rapora erişim yetkiniz yok', 'error');
     return;
   }
@@ -4626,12 +4633,19 @@ async function loadIncomeReport() {
     return;
   }
 
+  // Teknik destek: tutarlar null gelir, ekleme/silme gizli
+  const masked = !!data.masked;
+  const money = (v) => (masked ? MASKED_MONEY : fmtMoney(v));
+  const addAdjBtn = $('add-adjustment-btn');
+  if (addAdjBtn) addAdjBtn.style.display = masked ? 'none' : '';
+  $('section-reports')?.classList.toggle('income-masked', masked);
+
   // Özet kartları
   const totalEl = $('report-total-income');
   const aptIncomeEl = $('report-appointment-income');
   const countEl = $('report-appointment-count');
-  if (totalEl) totalEl.textContent = fmtMoney(data.total_income);
-  if (aptIncomeEl) aptIncomeEl.textContent = fmtMoney(data.appointment_income);
+  if (totalEl) totalEl.textContent = money(data.total_income);
+  if (aptIncomeEl) aptIncomeEl.textContent = money(data.appointment_income);
   if (countEl) countEl.textContent = String(data.appointment_count || 0);
 
   const sb = $('service-breakdown');
@@ -4639,10 +4653,46 @@ async function loadIncomeReport() {
     const durText = data.total_duration_minutes
       ? `Toplam dövme süresi: <strong>${data.total_duration_minutes} dk</strong>`
       : 'Bu dönemde tamamlanmış randevu yok.';
-    const manualExtra = data.manual_adjustments_total
-      ? `<br>Manuel ayarlamalar (net): <strong>${fmtMoney(data.manual_adjustments_total)}</strong>`
+    const manualExtra = (masked ? (data.manual_adjustments || []).length : data.manual_adjustments_total)
+      ? `<br>Manuel ayarlamalar (net): <strong>${money(data.manual_adjustments_total)}</strong>`
       : '';
     sb.innerHTML = `<p class="empty-message" style="text-align:left;">${durText}${manualExtra}</p>`;
+  }
+
+  // Personel gelirleri: brüt, toplam içindeki oran, personel kazancı, stüdyo payı
+  const staffBox = $('staff-breakdown');
+  const staffSum = $('staff-breakdown-summary');
+  if (staffBox) {
+    const rows = data.staff_breakdown || [];
+    if (!rows.length) {
+      staffBox.innerHTML = '<p class="empty-message">Bu dönemde tamamlanan randevu yok.</p>';
+    } else {
+      // Tablo: personel, yaptığı toplam iş, pay yüzdesi, personele düşen tutar.
+      // Stüdyo sahibine pay uygulanmaz: işin tamamı ona kalır.
+      const body = rows.map((s) => {
+        const owner = s.role === 'super_admin';
+        const pct = owner ? 'Sahip' : (masked ? '%••' : `%${s.commission_percent}`);
+        return `
+          <tr>
+            <td>${escapeHtml(s.name || '')}<small>${s.appointment_count} randevu</small></td>
+            <td class="num">${money(s.income)}</td>
+            <td class="num">${pct}</td>
+            <td class="num">${money(owner ? s.income : s.staff_share)}</td>
+          </tr>
+        `;
+      }).join('');
+      staffBox.innerHTML = `
+        <table class="staff-earn-table">
+          <thead><tr><th>Personel</th><th class="num">Toplam Kazanç</th><th class="num">Pay</th><th class="num">Personele Düşen</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      `;
+    }
+  }
+  if (staffSum) {
+    staffSum.style.display = (data.staff_breakdown || []).length ? '' : 'none';
+    if ($('staff-payout-total')) $('staff-payout-total').textContent = money(data.staff_payout_total);
+    if ($('studio-net-income')) $('studio-net-income').textContent = money(data.studio_net_income);
   }
 
   const revList = $('completed-revenue-list');
@@ -4658,7 +4708,7 @@ async function loadIncomeReport() {
             <div class="adj-meta">${escapeHtml(item.date)} ${escapeHtml(item.time)} · ${escapeHtml(item.staff_name || '')}</div>
           </div>
           <div class="adj-right">
-            <span class="adj-amount" style="color:var(--success, #4caf50);">+${fmtMoney(item.amount)}</span>
+            <span class="adj-amount" style="color:var(--success, #4caf50);">+${money(item.amount)}</span>
           </div>
         </div>
       `).join('');
@@ -4677,7 +4727,7 @@ async function loadIncomeReport() {
           <span class="trend-date">${escapeHtml(r.date)}</span>
           <span class="trend-details">
             <span><i class="fas fa-calendar-check"></i> ${r.count} randevu</span>
-            <span><i class="fas fa-money-bill-wave"></i> ${fmtMoney(r.income)}</span>
+            <span><i class="fas fa-money-bill-wave"></i> ${money(r.income)}</span>
           </span>
         </div>
       `).join('');
@@ -4704,10 +4754,10 @@ async function loadIncomeReport() {
               <div class="adj-meta">${escapeHtml(a.date)} · ${escapeHtml(a.created_by_name || 'Admin')}</div>
             </div>
             <div class="adj-right">
-              <span class="adj-amount" style="color:${color};">${sign}${fmtMoney(a.amount)}</span>
-              <button class="icon-btn delete-adj-btn" data-id="${a.id}" title="Sil">
+              <span class="adj-amount" style="color:${color};">${sign}${money(a.amount)}</span>
+              ${masked ? '' : `<button class="icon-btn delete-adj-btn" data-id="${a.id}" title="Sil">
                 <i class="fas fa-trash"></i>
-              </button>
+              </button>`}
             </div>
           </div>
         `;
@@ -4718,7 +4768,7 @@ async function loadIncomeReport() {
       });
     }
   }
-  if (adjTotal) adjTotal.textContent = fmtMoney(data.manual_adjustments_total);
+  if (adjTotal) adjTotal.textContent = money(data.manual_adjustments_total);
   if (sumBox)   sumBox.style.display = 'block';
 }
 
