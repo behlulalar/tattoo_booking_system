@@ -1156,7 +1156,8 @@ async function loadPageData(page) {
     const monthSel = $('report-month');
     const yearSel  = $('report-year');
     if (monthSel) monthSel.value = String(now.getMonth() + 1);
-    if (yearSel)  yearSel.value  = String(now.getFullYear());
+    // Liste her açılışta yeniden kurulur: panel yıl dönümünde açık kalsa da yeni yıl görünür
+    populateYearSelect(yearSel, now.getFullYear());
     await loadIncomeReport();
   }
   if (page === 'api-settings') await loadWapioSettingsPage();
@@ -4671,7 +4672,11 @@ async function loadIncomeReport() {
       // Stüdyo sahibine pay uygulanmaz: işin tamamı ona kalır.
       const body = rows.map((s) => {
         const owner = s.role === 'super_admin';
-        const pct = owner ? 'Sahip' : (masked ? '%••' : `%${s.commission_percent}`);
+        const applied = s.applied_percents || [];
+        const pct = owner ? 'Sahip'
+          : masked ? '%••'
+          : applied.length ? applied.map((p) => `%${p}`).join(' / ')
+          : `%${s.commission_percent}`;
         return `
           <tr>
             <td>${escapeHtml(s.name || '')}<small>${s.appointment_count} randevu</small></td>

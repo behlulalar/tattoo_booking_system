@@ -6061,6 +6061,7 @@ def get_income_reports():
                 'total_minutes': 0,
                 'income': Decimal('0'),
                 'staff_share': Decimal('0') if apply_commission else None,
+                'applied_percents': set(),
             })
             full_amount = Decimal(price or 0)
             entry['appointment_count'] += 1
@@ -6069,6 +6070,7 @@ def get_income_reports():
             if apply_commission:
                 pct = int(share_pct) if share_pct else entry['commission_percent']
                 entry['staff_share'] += _staff_share_amount(full_amount, pct)
+                entry['applied_percents'].add(pct)
 
         staff_breakdown = []
         staff_payout_total = Decimal('0')
@@ -6079,6 +6081,8 @@ def get_income_reports():
             entry['income_ratio'] = (
                 round(float(entry['income'] / appointment_income * 100), 1) if appointment_income else 0.0
             )
+            # Tabloda gösterilen yüzde: o ay randevulara gerçekten uygulanan oran(lar)
+            entry['applied_percents'] = sorted(entry['applied_percents'])
             staff_breakdown.append(entry)
 
         # Manuel ayarlamalar (Randevu # ile otomatik eklenenler hariç — çift sayım olmasın)
@@ -6156,6 +6160,7 @@ def get_income_reports():
             if masked:
                 entry['income_ratio'] = None
                 entry['commission_percent'] = None
+                entry['applied_percents'] = []
 
         return jsonify({
             'success': True,
