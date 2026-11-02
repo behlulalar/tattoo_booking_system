@@ -633,7 +633,7 @@ async function confirmCancel() {
     const progress = document.getElementById('cancel-progress-overlay');
     if (confirmBtn) confirmBtn.disabled = true;
     document.getElementById('cancel-modal-overlay').classList.remove('show');
-    if (progress) progress.classList.add('show');
+    showProgressModal('Randevu iptal ediliyor');
 
     let data;
     try {
@@ -757,11 +757,32 @@ function renderLoyaltyCard(loyalty) {
     }
 }
 
+function showProgressModal(title) {
+    const t = document.getElementById('cancel-progress-title');
+    if (t) t.textContent = title;
+    document.getElementById('cancel-progress-overlay')?.classList.add('show');
+}
+
+function hideProgressModal() {
+    document.getElementById('cancel-progress-overlay')?.classList.remove('show');
+}
+
+let redeemInProgress = false;
+
 async function redeemLoyaltyDiscount() {
+    if (redeemInProgress) return;
+    redeemInProgress = true;
     const btn = document.getElementById('loyalty-redeem-btn');
     if (btn) btn.disabled = true;
-    const data = await apiCall('/customer/loyalty/redeem', { method: 'POST', body: '{}' });
-    if (btn) btn.disabled = false;
+    showProgressModal('İndirim kodu oluşturuluyor');
+    let data;
+    try {
+        data = await apiCall('/customer/loyalty/redeem', { method: 'POST', body: '{}' });
+    } finally {
+        hideProgressModal();
+        if (btn) btn.disabled = false;
+        redeemInProgress = false;
+    }
     if (data && data.success) {
         showToast(data.message, 'success');
         if (data.loyalty) renderLoyaltyCard(data.loyalty);
