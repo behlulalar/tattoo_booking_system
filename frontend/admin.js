@@ -706,9 +706,68 @@ function stopInactivityWatcher() {
 }
 
 // =============================================
+// GENEL BEKLEME MODALI
+// =============================================
+// Kaydet/sil/güncelle (GET olmayan) istekleri BUSY_DELAY_MS'den uzun sürerse
+// "İşleniyor" modalı açılır; hızlı işlemlerde hiç görünmez (yanıp sönmesin).
+// Kendi bekleme modalı açık olan akışlar (manuel randevu, durum değiştirme)
+// ve arka plan istekleri (bildirim okundu vb.) için gösterilmez.
+const BUSY_DELAY_MS = 400;
+const OWN_BUSY_OVERLAYS = ['manual-appt-creating-overlay', 'appt-status-updating-overlay'];
+let _busyCount = 0;
+let _busyTimer = null;
+
+function isOwnBusyOverlayVisible() {
+  return OWN_BUSY_OVERLAYS.some((id) => {
+    const el = $(id);
+    return el && el.style.display && el.style.display !== 'none';
+  });
+}
+
+function beginBusy(title) {
+  _busyCount += 1;
+  if (_busyCount > 1) return;
+  clearTimeout(_busyTimer);
+  _busyTimer = setTimeout(() => {
+    if (_busyCount < 1 || isOwnBusyOverlayVisible()) return;
+    const t = $('global-busy-title');
+    if (t) t.textContent = title || 'İşleniyor';
+    const el = $('global-busy-overlay');
+    if (el) el.style.display = 'flex';
+  }, BUSY_DELAY_MS);
+}
+
+function endBusy() {
+  _busyCount = Math.max(0, _busyCount - 1);
+  if (_busyCount > 0) return;
+  clearTimeout(_busyTimer);
+  const el = $('global-busy-overlay');
+  if (el) el.style.display = 'none';
+}
+
+const BUSY_TITLE_BY_METHOD = {
+  DELETE: 'Siliniyor',
+  POST: 'Kaydediliyor',
+  PUT: 'Güncelleniyor',
+  PATCH: 'Güncelleniyor',
+};
+
+// =============================================
 // API CALL
 // =============================================
 async function apiCall(endpoint, options = {}) {
+  const method = String(options.method || 'GET').toUpperCase();
+  const showBusy = method !== 'GET' && !options.noBusy;
+  if (!showBusy) return apiCallInner(endpoint, options);
+  beginBusy(options.busyTitle || BUSY_TITLE_BY_METHOD[method]);
+  try {
+    return await apiCallInner(endpoint, options);
+  } finally {
+    endBusy();
+  }
+}
+
+async function apiCallInner(endpoint, options = {}) {
   if (!navigator.onLine) {
     showToast('İnternet yok — bu işlem çevrimiçi gerekir', 'error');
     return { ok: false, status: 0, data: { success: false, message: 'İnternet bağlantısı yok', networkError: true } };
@@ -723,7 +782,7 @@ async function apiCall(endpoint, options = {}) {
 
   // timeoutMs verilirse istek o süre sonunda iptal edilir (mobilde aracı
   // sunucu/Cloudflare bağlantısı takılırsa dakikalarca beklenmesin).
-  const { timeoutMs, silentNetworkError, ...fetchOptions } = options;
+  const { timeoutMs, silentNetworkError, noBusy, busyTitle, ...fetchOptions } = options;
   const controller = timeoutMs ? new AbortController() : null;
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
 
@@ -1135,7 +1194,9 @@ function hideApptStatusUpdatingOverlay() {
   if (overlay) overlay.style.display = 'none';
 }
 
-async function updateAppointmentStatus(appointmentId, newStatus, extra) {
+// afterSuccess verilirse (liste yenileme vb.) bekleme modalı o da bitene kadar açık kalır;
+// aksi halde istek bitince modal kapanır ve liste sessizce yüklenirken ekran tepkisiz görünür.
+async function updateAppointmentStatus(appointmentId, newStatus, extra, afterSuccess) {
   showApptStatusUpdatingOverlay(newStatus);
   try {
     const body = Object.assign({ status: newStatus }, extra || {});
@@ -1164,6 +1225,11 @@ async function updateAppointmentStatus(appointmentId, newStatus, extra) {
         try { await reloadActiveAdminAppointments(); } catch { /* yoksay */ }
       }
       return false;
+    }
+    if (typeof afterSuccess === 'function') {
+      const title = $('appt-status-updating-title');
+      if (title) title.textContent = 'Liste Güncelleniyor';
+      try { await afterSuccess(); } catch (e) { console.error(e); }
     }
     showToast('Durum güncellendi', 'success');
     return true;
@@ -2217,13 +2283,14 @@ async function submitGoogleCompletePrice() {
   }
   const btn = $('gcal-complete-price-submit');
   if (btn) btn.disabled = true;
-  const ok = await updateAppointmentStatus(ctx.appointmentId, 'completed', { price });
+  const afterSuccess = ctx.afterSuccess;
+  const ok = await updateAppointmentStatus(ctx.appointmentId, 'completed', { price }, async () => {
+    closeGoogleCompletePriceModal();
+    if (typeof afterSuccess === 'function') await afterSuccess();
+    else await reloadActiveAdminAppointments();
+  });
   if (btn) btn.disabled = false;
   if (!ok) return;
-  const afterSuccess = ctx.afterSuccess;
-  closeGoogleCompletePriceModal();
-  if (typeof afterSuccess === 'function') await afterSuccess();
-  else await reloadActiveAdminAppointments();
 }
 
 function bindAppointmentStatusControls(container, afterSuccess) {
@@ -2246,11 +2313,11 @@ function bindAppointmentStatusControls(container, afterSuccess) {
         if (!confirmed) return;
       }
       btn.disabled = true;
-      const ok = await updateAppointmentStatus(id, status);
+      await updateAppointmentStatus(id, status, null, async () => {
+        if (typeof afterSuccess === 'function') await afterSuccess();
+        else await reloadActiveAdminAppointments();
+      });
       btn.disabled = false;
-      if (!ok) return;
-      if (typeof afterSuccess === 'function') await afterSuccess();
-      else await reloadActiveAdminAppointments();
     });
   });
   container.querySelectorAll('.apt-edit-btn[data-apt-id]').forEach((btn) => {
@@ -2703,7 +2770,7 @@ async function fetchNotifications() {
 
 async function markNotificationRead(id) {
   try {
-    await apiCall(`/admin/notifications/${id}/read`, { method: 'POST' });
+    await apiCall(`/admin/notifications/${id}/read`, { method: 'POST', noBusy: true });
   } catch (e) {
     console.error(e);
   }
@@ -2792,7 +2859,7 @@ async function enablePushOnThisDevice() {
     });
     const json = sub.toJSON();
     const res = await apiCall('/admin/push/subscribe', {
-      method: 'POST',
+      method: 'POST', noBusy: true,
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
     });
     if (!res.ok || !res.data.success) throw new Error(res.data?.message || 'Kaydedilemedi');
@@ -2817,7 +2884,7 @@ async function disablePushOnThisDevice() {
     console.error('Push unsubscribe hatası:', e);
   }
   await apiCall('/admin/push/unsubscribe', {
-    method: 'POST',
+    method: 'POST', noBusy: true,
     body: JSON.stringify({ endpoint }),
   });
   showToast('Bu cihazda bildirimler kapatıldı', 'success');
@@ -4513,7 +4580,7 @@ function renderStaff(items) {
       const id = input.getAttribute('data-staff-order');
       const display_order = parseInt(input.value || '0', 10);
       const { ok, data } = await apiCall(`/admin/staff/${id}/display-order`, {
-        method: 'PATCH',
+        method: 'PATCH', noBusy: true,
         body: JSON.stringify({ display_order }),
       });
       if (!ok || !data.success) {
@@ -5893,7 +5960,7 @@ $('notif-panel-overlay')?.addEventListener('click', () => {
 });
 
 $('notif-mark-all-read-btn')?.addEventListener('click', async () => {
-  await apiCall('/admin/notifications/read-all', { method: 'POST' });
+  await apiCall('/admin/notifications/read-all', { method: 'POST', noBusy: true });
   await fetchNotifications();
 });
 
