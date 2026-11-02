@@ -4159,12 +4159,35 @@ def admin_create_manual_appointment():
     surname = format_person_name(data.get('surname'))
     date_str = (data.get('date') or '').strip()  # dd.mm.yyyy
     time_str = (data.get('time') or '').strip()[:5]
-    duration_minutes = int(data.get('duration_minutes') or 0)
-    price = float(data.get('price') or 0)
     status = (data.get('status') or 'confirmed').strip()
     send_whatsapp = data.get('send_whatsapp', True) not in (False, 'false', 0, '0')
     staff_id_raw = data.get('staff_id')
     tattoo_request_id_raw = data.get('tattoo_request_id')
+    # None: kayıttaki ad farklıysa sor (409 name_mismatch); True: güncelle;
+    # False: kayıttaki adı koru.
+    update_name_raw = data.get('update_name')
+    update_name = None if update_name_raw is None else (
+        update_name_raw not in (False, 'false', 0, '0')
+    )
+
+    try:
+        duration_minutes = int(data.get('duration_minutes') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Süre geçersiz (dakika olarak sayı girin)'}), 400
+    try:
+        # "1.500" / "1500,50" gibi Türkçe yazımları da kabul et.
+        price_raw = str(data.get('price') or '0').strip().replace(' ', '')
+        if ',' in price_raw:
+            price_raw = price_raw.replace('.', '').replace(',', '.')
+        elif price_raw.count('.') == 1 and len(price_raw.split('.')[1]) == 3:
+            price_raw = price_raw.replace('.', '')
+        price = float(price_raw)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Ücret geçersiz (sadece sayı girin)'}), 400
+    try:
+        staff_id_override = int(staff_id_raw) if staff_id_raw not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'Personel seçimi geçersiz'}), 400
 
     try:
         instagram = normalize_instagram(data.get('instagram'))
@@ -4194,8 +4217,8 @@ def admin_create_manual_appointment():
     if not formatted_date:
         return jsonify({'success': False, 'message': TR_DATE_ERROR}), 400
 
-    if is_studio_admin() and staff_id_raw:
-        staff_id = int(staff_id_raw)
+    if is_studio_admin() and staff_id_override:
+        staff_id = staff_id_override
     else:
         staff_id = int(request.staff_id)
 
@@ -4214,20 +4237,7 @@ def admin_create_manual_appointment():
             cursor.close()
             return jsonify({'success': False, 'message': 'Bu personel için randevu oluşturamazsınız'}), 403
 
-        available_starts, is_day_closed = compute_available_start_slots(
-            cursor, staff_id, formatted_date, duration_minutes
-        )
-        if is_day_closed:
-            cursor.close()
-            return jsonify({'success': False, 'message': 'Seçilen gün kapalı (izin / kapalı gün)'}), 400
-        if time_str not in available_starts:
-            cursor.close()
-            return jsonify({
-                'success': False,
-                'message': 'Seçilen saat takvimde uygun değil veya dolu. Lütfen listeden başka saat seçin.'
-            }), 409
-
-        # Kayıt anında tekrar kilitle ve çakışma kontrolü (aynı takvim kuralları).
+        # Kilitle ve çakışma kontrolü (aynı takvim kuralları).
         # FOR UPDATE tek başına yetmez: yalnızca var olan satırları kilitler,
         # boş bir güne eşzamanlı iki INSERT'i engellemez.
         lock_staff_day(cursor, staff_id, formatted_date)
@@ -4247,11 +4257,14 @@ def admin_create_manual_appointment():
         available_starts_locked, is_day_closed_locked = compute_available_start_slots(
             cursor, staff_id, formatted_date, duration_minutes
         )
-        if is_day_closed_locked or time_str not in available_starts_locked:
+        if is_day_closed_locked:
+            conn.rollback()
+            return jsonify({'success': False, 'message': 'Seçilen gün kapalı (izin / kapalı gün)'}), 400
+        if time_str not in available_starts_locked:
             conn.rollback()
             return jsonify({
                 'success': False,
-                'message': 'Saat artık uygun değil (takvim güncellendi). Lütfen saatleri yenileyip tekrar deneyin.'
+                'message': 'Seçilen saat takvimde uygun değil veya dolu. Lütfen listeden başka saat seçin.'
             }), 409
 
         if phone:
@@ -4264,12 +4277,37 @@ def admin_create_manual_appointment():
             )
             existing = cursor.fetchone()
         if existing:
+            cursor.execute(
+                "SELECT name, surname FROM customers WHERE id = %s",
+                (existing[0],),
+            )
+            old_name, old_surname = cursor.fetchone()
+            old_name = (old_name or '').strip()
+            old_surname = (old_surname or '').strip()
+            name_differs = bool(old_name or old_surname) and (
+                old_name.casefold() != name.casefold()
+                or old_surname.casefold() != surname.casefold()
+            )
+            # Kayıttaki dolu ad, personel açıkça onaylamadan ezilmez
+            # (yanlış girilen numara başka müşterinin adını değiştirmesin).
+            if name_differs and update_name is None:
+                conn.rollback()
+                return jsonify({
+                    'success': False,
+                    'code': 'name_mismatch',
+                    'message': 'Bu numara/Instagram başka bir adla kayıtlı',
+                    'existing_name': old_name,
+                    'existing_surname': old_surname,
+                }), 409
+            overwrite = bool(update_name) or not (old_name or old_surname)
             cursor.execute("""
-                UPDATE customers SET name = %s, surname = %s,
+                UPDATE customers
+                   SET name = CASE WHEN %s THEN %s ELSE name END,
+                       surname = CASE WHEN %s THEN %s ELSE surname END,
                        instagram = COALESCE(%s, instagram)
                 WHERE id = %s
                 RETURNING id, phone, name, surname, instagram
-            """, (name, surname, instagram, existing[0]))
+            """, (overwrite, name, overwrite, surname, instagram, existing[0]))
         else:
             cursor.execute("""
                 INSERT INTO customers (phone, name, surname, instagram)
@@ -4337,33 +4375,55 @@ def admin_create_manual_appointment():
         customer_phone_display = cust[1]
         customer_has_phone = not is_placeholder_phone(customer_phone_display)
 
+        # Kayıttaki gerçek ad (ad korunduysa formdaki değil, kayıttaki).
+        saved_full_name = f"{cust[2] or ''} {cust[3] or ''}".strip()
+
         if send_whatsapp:
-            try:
-                customer_msg = build_appointment_created_customer_message(
-                    date_str,
-                    time_str,
-                    duration_minutes,
-                    price,
-                    staff_name=staff_name,
-                    customer_name=f'{name} {surname}'.strip() or None,
-                    discount_info=discount_info,
-                )
-                if customer_has_phone:
-                    send_wapio_message(customer_phone_display, customer_msg)
-                if staff_phone:
-                    staff_msg = build_appointment_created_staff_message(
-                        customer_phone_display,
-                        date_str,
-                        time_str,
-                        duration_minutes,
-                        price,
-                        customer_name=f'{name} {surname}'.strip(),
-                        manual=True,
-                        customer_instagram=cust[4],
+            def _send_manual_appt_notifications():
+                # Randevu zaten kaydedildi; WhatsApp yavaş/kapalıysa panel beklemesin.
+                try:
+                    if customer_has_phone:
+                        customer_msg = build_appointment_created_customer_message(
+                            date_str,
+                            time_str,
+                            duration_minutes,
+                            price,
+                            staff_name=staff_name,
+                            customer_name=saved_full_name or None,
+                            discount_info=discount_info,
+                        )
+                        send_wapio_message(customer_phone_display, customer_msg)
+                    if staff_phone:
+                        staff_msg = build_appointment_created_staff_message(
+                            customer_phone_display,
+                            date_str,
+                            time_str,
+                            duration_minutes,
+                            price,
+                            customer_name=saved_full_name,
+                            manual=True,
+                            customer_instagram=cust[4],
+                        )
+                        send_wapio_message(staff_phone, staff_msg)
+                except Exception as wa_err:
+                    logger.warning(
+                        f"Manuel randevu WhatsApp bildirimi gönderilemedi apt={appointment_id}: {wa_err}"
                     )
-                    send_wapio_message(staff_phone, staff_msg)
-            except Exception as wa_err:
-                logger.warning(f"Manuel randevu WhatsApp bildirimi gönderilemedi: {wa_err}")
+
+            Thread(
+                target=_send_manual_appt_notifications,
+                name='manual-appt-notify',
+                daemon=True,
+            ).start()
+
+        # "Randevu Ver" ile belirli bir talep için açıldı ama o talep bağlanamadıysa
+        # (ör. telefon değiştirildi, başka müşteriye yazıldı) kullanıcı uyarılır.
+        request_link_warning = None
+        if explicit_request_id and linked_request_id != explicit_request_id:
+            request_link_warning = (
+                'Randevu oluşturuldu ancak açılan talebe bağlanamadı: talep başka bir '
+                'müşteriye ait ya da artık açık değil. Telefon numarasını kontrol edin.'
+            )
 
         cursor.close()
         logger.info(
@@ -4385,6 +4445,7 @@ def admin_create_manual_appointment():
                 'tattoo_request_id': linked_request_id,
             },
             'loyalty_discount': discount_info,
+            'request_link_warning': request_link_warning,
             'customer': {
                 'id': cust[0],
                 'phone': cust[1] if customer_has_phone else '',
@@ -4397,10 +4458,16 @@ def admin_create_manual_appointment():
         if conn:
             conn.rollback()
         logger.warning(f"admin_create_manual_appointment IntegrityError: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Bu saat takvimde dolu. Lütfen başka saat seçin.'
-        }), 409
+        constraint = (getattr(getattr(e, 'diag', None), 'constraint_name', None) or '').lower()
+        if 'appointments_no_overlap' in constraint or 'appointments_staff_date_time' in constraint:
+            message = 'Bu saat takvimde dolu. Lütfen başka saat seçin.'
+        elif 'phone' in constraint:
+            message = 'Bu telefon numarası başka bir müşteri kaydında kullanılıyor.'
+        elif 'instagram' in constraint:
+            message = 'Bu Instagram kullanıcı adı başka bir müşteri kaydında kullanılıyor.'
+        else:
+            message = 'Kayıt veritabanı kuralına takıldı. Bilgileri kontrol edip tekrar deneyin.'
+        return jsonify({'success': False, 'message': message}), 409
     except Exception as e:
         if conn:
             conn.rollback()

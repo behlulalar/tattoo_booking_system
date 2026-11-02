@@ -1534,6 +1534,30 @@
         </div>
     </div>
 
+    <!-- ===== MANUEL RANDEVU: KAYITLI AD FARKLI ===== -->
+    <div id="name-mismatch-overlay" class="modal-overlay" style="display:none;">
+        <div class="profile-modal" style="max-width:420px;">
+            <div class="modal-header">
+                <h2>Kayıtlı Müşteri</h2>
+                <button type="button" class="close-btn" onclick="resolveNameMismatch(null)"><i class="fas fa-times"></i></button>
+            </div>
+            <div class="modal-body">
+                <p style="margin:0 0 14px;color:var(--text-secondary);font-size:0.9rem;">
+                    <span id="name-mismatch-contact" style="color:#fff;"></span> numarası/hesabı sistemde farklı bir adla kayıtlı.
+                </p>
+                <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0 0 22px;padding:12px 14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;font-size:0.88rem;">
+                    <span style="color:var(--text-secondary);">Kayıttaki ad</span><span id="name-mismatch-old" style="color:#fff;"></span>
+                    <span style="color:var(--text-secondary);">Formdaki ad</span><span id="name-mismatch-new" style="color:#fff;"></span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;">
+                    <button type="button" onclick="resolveNameMismatch(true)" style="padding:11px 20px;background:#fff;border:none;border-radius:8px;color:#000;cursor:pointer;font-family:inherit;">Adı güncelle ve randevuyu oluştur</button>
+                    <button type="button" onclick="resolveNameMismatch(false)" style="padding:11px 20px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;cursor:pointer;font-family:inherit;">Kayıttaki adla oluştur</button>
+                    <button type="button" onclick="resolveNameMismatch(null)" style="padding:11px 20px;background:none;border:none;color:var(--text-secondary);cursor:pointer;font-family:inherit;text-decoration:underline;">Numarayı kontrol et (forma dön)</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ===== TIME-OFF FORM MODAL ===== -->
     <div id="time-off-form-overlay" class="modal-overlay" style="display:none;">
         <div class="profile-modal" style="max-width:440px;">
@@ -1624,7 +1648,7 @@
         </div>
     </div>
 
-    <script src="admin.js?v=20261101150000"></script>
+    <script src="admin.js?v=20261102120000"></script>
 </body>
 
 </html>
