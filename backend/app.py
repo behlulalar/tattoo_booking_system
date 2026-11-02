@@ -8619,8 +8619,6 @@ def cancel_customer_appointment(appointment_id):
             price_line,
         )
         
-        send_wapio_message(staff_phone, staff_message)
-        
         # Send WhatsApp notification to customer
         customer_phone = appointment[6]
         customer_message = build_customer_cancel_confirmation_message(
@@ -8632,9 +8630,22 @@ def cancel_customer_appointment(appointment_id):
             tattoo_line,
             price_line,
         )
-        
-        send_wapio_message(customer_phone, customer_message)
-        
+
+        def _send_cancel_notifications():
+            # İptal zaten kaydedildi; WhatsApp gönderimi (birkaç sn) müşteriyi
+            # bekletmesin — bekleme, butona tekrar basılmasına yol açıyordu.
+            for phone, msg in ((staff_phone, staff_message), (customer_phone, customer_message)):
+                if not phone:
+                    continue
+                try:
+                    send_wapio_message(phone, msg)
+                except Exception as wa_err:
+                    logger.warning(
+                        f"İptal WhatsApp bildirimi gönderilemedi apt={appointment_id}: {wa_err}"
+                    )
+
+        Thread(target=_send_cancel_notifications, name='customer-cancel-notify', daemon=True).start()
+
         cursor.close()
         logger.info(f"Randevu iptal edildi: {appointment_id} by customer {request.customer_id}")
         

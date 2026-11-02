@@ -621,19 +621,42 @@ function closeCancelModal() {
     currentAppointmentIdForCancel = null;
 }
 
-async function confirmCancel() {
-    if (!currentAppointmentIdForCancel) return;
+let cancelInProgress = false;
 
-    const data = await apiCall(`/customer/appointments/${currentAppointmentIdForCancel}/cancel`, {
-        method: 'PUT'
-    });
+async function confirmCancel() {
+    // Çift tıklama / tekrar basma: ikinci istek "zaten iptal" hatası veriyordu.
+    if (!currentAppointmentIdForCancel || cancelInProgress) return;
+    cancelInProgress = true;
+
+    const appointmentId = currentAppointmentIdForCancel;
+    const confirmBtn = document.getElementById('confirm-cancel-btn');
+    const progress = document.getElementById('cancel-progress-overlay');
+    if (confirmBtn) confirmBtn.disabled = true;
+    document.getElementById('cancel-modal-overlay').classList.remove('show');
+    if (progress) progress.classList.add('show');
+
+    let data;
+    try {
+        data = await apiCall(`/customer/appointments/${appointmentId}/cancel`, {
+            method: 'PUT'
+        });
+    } finally {
+        if (progress) progress.classList.remove('show');
+        if (confirmBtn) confirmBtn.disabled = false;
+        cancelInProgress = false;
+    }
 
     if (data && data.success) {
+        currentAppointmentIdForCancel = null;
         showToast(data.message, 'success');
-        closeCancelModal();
         loadAppointments(currentFilter);
     } else {
-        showToast(data?.message || 'İptal işlemi başarısız', 'error');
+        // Başarısızsa onay penceresine geri dön (apiCall bağlantı hatasını zaten gösterir).
+        if (data) {
+            document.getElementById('cancel-modal-overlay').classList.add('show');
+            showToast(data.message || 'İptal işlemi başarısız', 'error');
+        }
+        loadAppointments(currentFilter);
     }
 }
 
