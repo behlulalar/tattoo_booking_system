@@ -235,6 +235,26 @@ function customConfirmResolve(value) {
   if (_confirmResolve) { _confirmResolve(value); _confirmResolve = null; }
 }
 
+// Manuel randevu: numara başka adla kayıtlı. Sonuç: true = güncelle,
+// false = kayıttaki adı koru, null = forma dön.
+let _nameMismatchResolve = null;
+
+function askNameMismatch(contact, oldFull, newFull) {
+  return new Promise((resolve) => {
+    _nameMismatchResolve = resolve;
+    $('name-mismatch-contact').textContent = contact;
+    $('name-mismatch-old').textContent = oldFull;
+    $('name-mismatch-new').textContent = newFull;
+    $('name-mismatch-overlay').style.display = 'flex';
+  });
+}
+
+function resolveNameMismatch(value) {
+  $('name-mismatch-overlay').style.display = 'none';
+  if (_nameMismatchResolve) { _nameMismatchResolve(value); _nameMismatchResolve = null; }
+}
+window.resolveNameMismatch = resolveNameMismatch;
+
 const TATTOO_REQUEST_SIZES = [
   'Minimal (2–5 cm)',
   'Küçük - Orta (5–10 cm)',
@@ -1319,10 +1339,22 @@ function syncManualApptPastNotice() {
   }
 }
 
-async function loadManualAppointmentTimeSlots() {
+// Üst üste gelen yüklemelerde yalnızca en son isteğin cevabı listeye yazılır.
+let _manualApptSlotsSeq = 0;
+let _manualApptSlotsKey = '';
+let _manualApptDurationTimer = null;
+
+function scheduleManualApptSlotsReload() {
+  clearTimeout(_manualApptDurationTimer);
+  _manualApptDurationTimer = setTimeout(() => loadManualAppointmentTimeSlots(), 400);
+}
+
+async function loadManualAppointmentTimeSlots({ force = false } = {}) {
+  clearTimeout(_manualApptDurationTimer);
   const timeSel = $('manual-appt-time');
   const errEl = $('manual-appt-error');
   if (!timeSel) return;
+  const prevTime = timeSel.value;
 
   const dateIso = manualApptDatePicker?.selectedDates?.[0]
     ? manualApptDatePicker.formatDate(manualApptDatePicker.selectedDates[0], 'Y-m-d')
@@ -1331,10 +1363,20 @@ async function loadManualAppointmentTimeSlots() {
   const staffId = getManualApptStaffId();
 
   if (!dateIso || !staffId || !duration || duration < 60) {
+    _manualApptSlotsSeq += 1;
+    _manualApptSlotsKey = '';
     timeSel.innerHTML = '<option value="">Önce tarih ve süre seçin</option>';
     timeSel.disabled = true;
     return;
   }
+
+  // Aynı tarih/sanatçı/süre için liste zaten yüklüyse yeniden yükleme:
+  // süre alanından saat listesine geçerken (blur -> change) açılan liste
+  // altından değiştirilip seçim silinmesin.
+  const key = `${staffId}|${dateIso}|${duration}`;
+  if (!force && key === _manualApptSlotsKey && !timeSel.disabled) return;
+  _manualApptSlotsKey = key;
+  const seq = ++_manualApptSlotsSeq;
 
   timeSel.disabled = true;
   timeSel.innerHTML = '<option value="">Saatler yükleniyor...</option>';
@@ -1351,7 +1393,9 @@ async function loadManualAppointmentTimeSlots() {
     const { ok, data } = await apiCall(`/admin/manual-appointment/available-slots?${qs.toString()}`, {
       method: 'GET',
     });
+    if (seq !== _manualApptSlotsSeq) return; // daha yeni bir yükleme başladı
     if (!ok || !data.success) {
+      _manualApptSlotsKey = '';
       timeSel.innerHTML = '<option value="">Uygun saat bulunamadı</option>';
       return;
     }
@@ -1366,8 +1410,12 @@ async function loadManualAppointmentTimeSlots() {
       return;
     }
     timeSel.innerHTML = buildTimeSlotOptionsHtml(slots, busySlots, duration);
+    // Önceki seçim hâlâ uygunsa koru.
+    if (prevTime && slots.includes(prevTime)) timeSel.value = prevTime;
     timeSel.disabled = false;
   } catch (e) {
+    if (seq !== _manualApptSlotsSeq) return;
+    _manualApptSlotsKey = '';
     console.error(e);
     timeSel.innerHTML = '<option value="">Yükleme hatası</option>';
   }
@@ -1406,7 +1454,7 @@ function openManualAppointmentModal(prefill = null) {
         sel.value = String(pre.staffId);
       }
     }
-    return loadManualAppointmentTimeSlots();
+    return loadManualAppointmentTimeSlots({ force: true });
   });
   if (pre) {
     const parsed = parseTrMobile(pre.phone);
@@ -1669,7 +1717,7 @@ async function submitManualAppointment(e) {
   if (errEl) errEl.style.display = 'none';
 
   // Gönderimden hemen önce takvimi yeniden kontrol et
-  await loadManualAppointmentTimeSlots();
+  await loadManualAppointmentTimeSlots({ force: true });
   const timeSel = $('manual-appt-time');
   const stillValid = timeSel && Array.from(timeSel.options).some(
     (o) => o.value === time && !o.disabled
@@ -1708,6 +1756,23 @@ async function submitManualAppointment(e) {
       method: 'POST',
       body: JSON.stringify(body),
     }));
+    // Numara/Instagram başka adla kayıtlıysa: personele sor, sonra tekrar gönder.
+    if (!ok && data?.code === 'name_mismatch') {
+      if (creatingOverlay) creatingOverlay.style.display = 'none';
+      const oldFull = `${data.existing_name || ''} ${data.existing_surname || ''}`.trim();
+      const contact = phone || (instagram ? `@${instagram.replace(/^@/, '')}` : '');
+      const choice = await askNameMismatch(contact, oldFull, `${name} ${surname}`.trim());
+      if (choice === null) {
+        data = { success: false, message: 'Telefon / Instagram bilgisini kontrol edin.' };
+      } else {
+        body.update_name = choice;
+        if (creatingOverlay) creatingOverlay.style.display = 'flex';
+        ({ ok, data } = await apiCall('/admin/appointments/manual', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }));
+      }
+    }
   } finally {
     if (creatingOverlay) creatingOverlay.style.display = 'none';
     if (btn) btn.disabled = false;
@@ -1726,9 +1791,11 @@ async function submitManualAppointment(e) {
   const detailEl = $('manual-appt-success-detail');
   if (detailEl) {
     const disc = data.loyalty_discount;
-    detailEl.textContent = `${name} ${surname} — ${isoDateToTr(dateIso)} ${time}` + (disc
+    const savedName = `${data.customer?.name || name} ${data.customer?.surname || surname}`.trim();
+    detailEl.textContent = `${savedName} — ${isoDateToTr(dateIso)} ${time}` + (disc
       ? ` · %${disc.percent} sadakat indirimi (${disc.code}): ${disc.original_price} ₺ → ${disc.final_price} ₺`
-      : '');
+      : '') + (data.request_link_warning ? `\n⚠️ ${data.request_link_warning}` : '');
+    detailEl.style.whiteSpace = 'pre-line';
   }
   const successOverlay = $('manual-appt-success-overlay');
   if (successOverlay) successOverlay.style.display = 'flex';
@@ -5143,9 +5210,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
   $('manual-appt-date-btn')?.addEventListener('click', () => manualApptDatePicker?.open());
-  ['manual-appt-duration', 'manual-appt-staff'].forEach((id) => {
-    $(id)?.addEventListener('change', loadManualAppointmentTimeSlots);
-  });
+  // Süre yazılırken (input) kısa gecikmeyle yüklenir; alandan çıkınca (change)
+  // aynı değer zaten yüklüyse loadManualAppointmentTimeSlots hiçbir şey yapmaz.
+  $('manual-appt-duration')?.addEventListener('input', scheduleManualApptSlotsReload);
+  $('manual-appt-duration')?.addEventListener('change', () => loadManualAppointmentTimeSlots());
+  $('manual-appt-staff')?.addEventListener('change', () => loadManualAppointmentTimeSlots());
   $('manual-appt-time')?.addEventListener('change', syncManualApptPastNotice);
 
   // Randevu düzenleme modalı
