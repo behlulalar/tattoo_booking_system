@@ -711,7 +711,7 @@ function stopInactivityWatcher() {
 async function apiCall(endpoint, options = {}) {
   if (!navigator.onLine) {
     showToast('İnternet yok — bu işlem çevrimiçi gerekir', 'error');
-    return { ok: false, status: 0, data: { success: false, message: 'offline' } };
+    return { ok: false, status: 0, data: { success: false, message: 'İnternet bağlantısı yok', networkError: true } };
   }
 
   const token = getAdminToken();
@@ -746,7 +746,9 @@ async function apiCall(endpoint, options = {}) {
       status: 0,
       data: {
         success: false,
-        message: timedOut ? 'timeout' : 'network',
+        message: timedOut
+          ? 'Sunucu zamanında yanıt vermedi. Bağlantınızı kontrol edin.'
+          : 'Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.',
         networkError: true,
       },
     };
@@ -1137,12 +1139,30 @@ async function updateAppointmentStatus(appointmentId, newStatus, extra) {
   showApptStatusUpdatingOverlay(newStatus);
   try {
     const body = Object.assign({ status: newStatus }, extra || {});
-    const { ok, data } = await apiCall(`/admin/appointments/${appointmentId}/status`, {
+    const send = () => apiCall(`/admin/appointments/${appointmentId}/status`, {
       method: 'PUT',
       body: JSON.stringify(body),
+      timeoutMs: 20000,
+      silentNetworkError: true,
     });
+    let { ok, data } = await send();
+    // Bağlantı koptuysa bir kez tekrar dene: sunucu aynı durumu tekrar
+    // uygulamaz (gelir/puan/mesaj ikinci kez oluşmaz), tekrar güvenli.
+    if (data?.networkError && navigator.onLine) {
+      await new Promise((r) => setTimeout(r, 1500));
+      ({ ok, data } = await send());
+    }
     if (!ok || !data.success) {
-      showToast(data?.message || 'Durum güncellenemedi', 'error');
+      showToast(
+        data?.networkError
+          ? 'Bağlantı koptu. İşlem kaydedilmiş olabilir; liste yenilendi, durumu kontrol edin.'
+          : (data?.message || 'Durum güncellenemedi'),
+        'error'
+      );
+      // Gerçek durumu göstermek için aktif listeyi tazele.
+      if (data?.networkError) {
+        try { await reloadActiveAdminAppointments(); } catch { /* yoksay */ }
+      }
       return false;
     }
     showToast('Durum güncellendi', 'success');

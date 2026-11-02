@@ -4999,11 +4999,16 @@ Tekrar görüşmek üzere,
         # Eğer aynı duruma tekrar güncelleniyorsa mesaj gönderme
         # Google kaynaklı randevularda inbound kararı: WhatsApp yok
         if message and old_status != new_status and apt_source != 'google':
-            try:
-                send_wapio_message(customer_phone, message)
-                logger.info(f"Durum değişikliği mesajı gönderildi: {customer_phone} - {old_status} -> {new_status}")
-            except Exception as wapio_err:
-                logger.warning(f"WhatsApp mesajı gönderilemedi (durum kaydedildi): {wapio_err}")
+            # Durum zaten kaydedildi; WhatsApp gönderimi cevabı geciktirmesin
+            # (mobilde uzun bekleme bağlantı kopmasına ve "network" hatasına yol açıyordu).
+            def _send_status_notification():
+                try:
+                    send_wapio_message(customer_phone, message)
+                    logger.info(f"Durum değişikliği mesajı gönderildi: {customer_phone} - {old_status} -> {new_status}")
+                except Exception as wapio_err:
+                    logger.warning(f"WhatsApp mesajı gönderilemedi (durum kaydedildi): {wapio_err}")
+
+            Thread(target=_send_status_notification, name='status-change-notify', daemon=True).start()
         elif old_status == new_status:
             logger.info(
                 "Durum degismedi, mesaj gonderilmedi | phone=%s status=%s",
