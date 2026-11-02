@@ -1778,21 +1778,8 @@ async function submitManualAppointment(e) {
   if (btn) btn.disabled = true;
   if (errEl) errEl.style.display = 'none';
 
-  // Gönderimden hemen önce takvimi yeniden kontrol et
-  await loadManualAppointmentTimeSlots({ force: true });
-  const timeSel = $('manual-appt-time');
-  const stillValid = timeSel && Array.from(timeSel.options).some(
-    (o) => o.value === time && !o.disabled
-  );
-  if (!stillValid) {
-    if (btn) btn.disabled = false;
-    if (errEl) {
-      errEl.textContent = 'Seçilen saat artık uygun değil. Lütfen listeden yeni saat seçin.';
-      errEl.style.display = 'block';
-    }
-    return;
-  }
-
+  // Saat uygunluğu burada ayrıca sorgulanmaz: backend kayıt anında kilitli
+  // kontrol yapar ve doluysa 409 döner. Ek istek mobilde sessiz bekleme yaratıyordu.
   const body = {
     name,
     surname,
@@ -1812,9 +1799,9 @@ async function submitManualAppointment(e) {
   const creatingOverlay = $('manual-appt-creating-overlay');
   if (creatingOverlay) creatingOverlay.style.display = 'flex';
 
-  let ok, data;
+  let ok, data, status;
   try {
-    ({ ok, data } = await postManualAppointment(body));
+    ({ ok, data, status } = await postManualAppointment(body));
     // Numara/Instagram başka adla kayıtlıysa: personele sor, sonra tekrar gönder.
     if (!ok && data?.code === 'name_mismatch') {
       if (creatingOverlay) creatingOverlay.style.display = 'none';
@@ -1826,7 +1813,7 @@ async function submitManualAppointment(e) {
       } else {
         body.update_name = choice;
         if (creatingOverlay) creatingOverlay.style.display = 'flex';
-        ({ ok, data } = await postManualAppointment(body));
+        ({ ok, data, status } = await postManualAppointment(body));
       }
     }
   } finally {
@@ -1840,6 +1827,10 @@ async function submitManualAppointment(e) {
     if (errEl) {
       errEl.textContent = data?.message || 'Randevu oluşturulamadı';
       errEl.style.display = 'block';
+    }
+    // Saat dolu / gün kapalı: güncel listeyi getir (seçim hâlâ uygunsa korunur).
+    if (data?.code !== 'name_mismatch' && (status === 409 || status === 400)) {
+      loadManualAppointmentTimeSlots({ force: true });
     }
     return;
   }
