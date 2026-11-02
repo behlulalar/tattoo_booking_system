@@ -721,14 +721,48 @@ async function apiCall(endpoint, options = {}) {
     ...(options.headers || {}),
   };
 
+  // timeoutMs verilirse istek o süre sonunda iptal edilir (mobilde aracı
+  // sunucu/Cloudflare bağlantısı takılırsa dakikalarca beklenmesin).
+  const { timeoutMs, silentNetworkError, ...fetchOptions } = options;
+  const controller = timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+
   let res;
   try {
-    res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers });
-  } catch {
-    showToast('Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.', 'error');
-    return { ok: false, status: 0, data: { success: false, message: 'network' } };
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      ...fetchOptions,
+      headers,
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+  } catch (err) {
+    const timedOut = err?.name === 'AbortError';
+    if (!silentNetworkError) {
+      showToast(timedOut
+        ? 'Sunucu zamanında yanıt vermedi. Bağlantınızı kontrol edin.'
+        : 'Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.', 'error');
+    }
+    return {
+      ok: false,
+      status: 0,
+      data: {
+        success: false,
+        message: timedOut ? 'timeout' : 'network',
+        networkError: true,
+      },
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  const data = await res.json().catch(() => ({}));
+  let data = await res.json().catch(() => null);
+  if (!data) {
+    // JSON olmayan cevap: genelde Cloudflare/nginx hata sayfası (502, 522, 524...).
+    console.warn(`API JSON olmayan yanıt: ${endpoint} HTTP ${res.status}`);
+    data = {
+      success: false,
+      message: `Sunucu yanıtı okunamadı (HTTP ${res.status}). Bağlantınızı kontrol edip tekrar deneyin.`,
+      networkError: res.status >= 500,
+    };
+  }
 
   // 401 gelirse token geçersiz/süresi dolmuş — login ekranına at
   if (res.status === 401 && endpoint !== '/admin/login') {
@@ -1666,6 +1700,34 @@ function isPlausibleIntlPhoneAdmin(value) {
   return /^\+[1-9]\d{7,14}$/.test(v.replace(/[\s()-]/g, ''));
 }
 
+// Manuel randevu gönderimi: 25 sn süre sınırı + bağlantı hatasında bir kez
+// tekrar. Tekrar güvenli: aynı sanatçıya çakışan randevuyu veritabanı reddeder.
+async function postManualAppointment(body) {
+  const send = () => apiCall('/admin/appointments/manual', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    timeoutMs: 25000,
+    silentNetworkError: true,
+  });
+  let result = await send();
+  if (result.data?.networkError) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const retry = await send();
+    if (retry.status === 409 && retry.data?.code !== 'name_mismatch') {
+      // İlk istek aslında ulaşmış ve randevu oluşmuş olabilir.
+      retry.data = {
+        ...retry.data,
+        message: 'Bağlantı koptu. Randevu oluşmuş olabilir; lütfen randevu listesini kontrol edin.',
+      };
+    }
+    result = retry;
+  }
+  if (result.data?.networkError && !result.data?.message?.startsWith('Sunucu yanıtı')) {
+    result.data.message = 'Sunucuya ulaşılamadı (bağlantı koptu veya zaman aşımı). Önce randevu listesini kontrol edin, randevu yoksa tekrar deneyin.';
+  }
+  return result;
+}
+
 async function submitManualAppointment(e) {
   e.preventDefault();
   const errEl = $('manual-appt-error');
@@ -1752,10 +1814,7 @@ async function submitManualAppointment(e) {
 
   let ok, data;
   try {
-    ({ ok, data } = await apiCall('/admin/appointments/manual', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }));
+    ({ ok, data } = await postManualAppointment(body));
     // Numara/Instagram başka adla kayıtlıysa: personele sor, sonra tekrar gönder.
     if (!ok && data?.code === 'name_mismatch') {
       if (creatingOverlay) creatingOverlay.style.display = 'none';
@@ -1767,10 +1826,7 @@ async function submitManualAppointment(e) {
       } else {
         body.update_name = choice;
         if (creatingOverlay) creatingOverlay.style.display = 'flex';
-        ({ ok, data } = await apiCall('/admin/appointments/manual', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        }));
+        ({ ok, data } = await postManualAppointment(body));
       }
     }
   } finally {
